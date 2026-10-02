@@ -99,7 +99,7 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
 
 def card(S, x, n, sev, here_file, with_block, short=False):
     """Заголовок — оранжевый с оранжевой линией (как «Проверка» на индексе), тема — маркером справа.
-    Строки: Из показаний → Что делать → Признак устранения → «Расследование и улики» (второй уровень).
+    Строки: Из показаний → Что делать → Признак устранения → «Расследование и улики» (второй уровень: Основание, Обстоятельства, Доказательство).
     Ссылка на подробности — под карточкой. short=True (Остальные): без «Признака устранения» и расследования."""
     ws = S.ws
     title = f"{n}. {cap(x.get('заголовок') or x['что_происходит'])}"
@@ -121,7 +121,7 @@ def card(S, x, n, sev, here_file, with_block, short=False):
     crit, check = meta(x)
     if short: crit, check = None, None
     if check and check != '—': S.pair('Признак устранения', check, fill=F_LIGHT)
-    rows = [(k, v) for k, v in (('Основание', crit), ('Доказательство', x.get('доказательство'))) if v and not short]
+    rows = [(k, v) for k, v in (('Основание', crit), ('Обстоятельства', cap(x.get('почему') or '')), ('Доказательство', x.get('доказательство'))) if v and not short]
     if rows:
         S.pair('Расследование и улики', '', height=20, fill=F_CARD)
         for k, v in rows: S.pair(k, v, level=2, fill=F_LIGHT)

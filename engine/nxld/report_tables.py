@@ -79,9 +79,7 @@ def conversions(wb, C, name='Конверсии'):
         'IP': C['ip'].astype(str),
         'Сеть': C['сеть'].astype(str),
         'Обработчик': C['цель'].astype(str),
-    })
-    d['_k'] = d['Кто'].map({'Люди': 0, 'Боты': 1}).fillna(2)
-    d = d.sort_values(['_k', '_t']).drop(columns=['_t', '_k'])   # сначала люди, потом боты, потом свои; внутри — по времени
+    }).sort_values('_t').drop(columns='_t')   # по времени
     d = d.astype(object).where(d.notna(), None)
     n_ = lambda g: int((C['группа'] == g).sum())
     note = (f"Все отправки форм за период — {len(C)}: люди — {n_('Люди')}, боты — {n_('Боты')}, свои — {n_('Свои')}. "
@@ -90,5 +88,5 @@ def conversions(wb, C, name='Конверсии'):
               'Страниц до отправки': 11, 'Секунд от входа': 10, 'Почему бот': 34, 'IP': 16, 'Сеть': 22, 'Обработчик': 50}
     fill = lambda col, v: F_NOTE if (col == 'Кто' and v == 'Боты') else ('EFEFEF' if (col == 'Кто' and str(v).startswith('Свои')) else None)
     bold = lambda col, v: col == 'Принята' and v == 'да'
-    data_sheet(wb, name, d, 'Конверсии', note + ' Порядок: люди, боты, свои; внутри — по времени. Фильтр и сортировка — в шапке таблицы.', widths,
+    data_sheet(wb, name, d, 'Конверсии', note, widths,
                wrap=('Почему бот',), fill_rule=fill, bold_rule=bold, center=('IP', 'Код ответа', 'Принята'))

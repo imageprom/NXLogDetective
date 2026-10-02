@@ -235,6 +235,14 @@ def errors(c, F):
             F.add('Ошибки', 'Важно', 'degradation', str(w['деградация_с'])[:16], f"Деградация {str(w['деградация_с'])[:16]}–{str(w['деградация_по'])[11:16]}: рост 5xx/499 или провал трафика",
                   f"{w['минут_всего']} мин; {w['страниц_с_5xx']} страниц с 5xx, {w['обрывов_499']} обрывов 499; причина: {w['вероятная_причина']}",
                   'сервер', 'Проверить нагрузку и логи сервера за это окно', int(w['минут_всего']), 'Сбои')
+    # данные окна для правил важности: когда кончилось, сколько длилось, задело ли рекламу и заявки
+    for w in outages:
+        for x in F.items:
+            if x['key'] in (f"Ошибки:outage:{str(w['начало'])[:16]}", f"Ошибки:degradation:{str(w['деградация_с'])[:16]}"):
+                a, b = pd.Timestamp(w['деградация_с']).timestamp(), pd.Timestamp(w['деградация_по']).timestamp()
+                vw = V[(V['group'] == 'Люди') & (V['start'] <= b) & (V['end'] >= a)]
+                x['окно'] = dict(с=a, по=b, минут=int(w['минут_всего']), час=pd.Timestamp(w['деградация_с']).hour,
+                                 реклама=int((vw['channel'] == 'Реклама').sum()), заявки=int((vw['n_goal'] > 0).sum()))
     # 5xx по шаблонам
     page = R['is_page'].values | (R['method'].values == 'POST')
     m5 = (st >= 500) & page
@@ -290,17 +298,22 @@ def errors(c, F):
             F.add('Ошибки', 'Важно', 'broken_links', 'site', f"Битые ссылки на сайте: {int(bt['визитов'].sum())} визитов людей упёрлись в 404",
                   f"Главные: {', '.join(bt.head(5).index.astype(str))}", 'содержимое/шаблоны сайта', 'Исправить ссылки; начать со страниц-источников', int(bt['визитов'].sum()), 'Битые ссылки')
     # отсутствующие ресурсы
-    mr = c.human & (st == 404) & R['is_static'].values
+    mr = c.human & (st == 404) & R['is_static'].values & ~vuln_b
     MR = R.loc[mr, ['base', 'ref_path', 'vid']]
     if len(MR):
+        from .findings import load_rules
+        invis = re.compile(load_rules().get('невидимые_файлы', 'placeholder|lazy|blank|spacer'), re.I)
         mt = MR.groupby('base', observed=True).agg(запросов=('vid', 'size'), визитов=('vid', 'nunique'), страниц=('ref_path', 'nunique')).sort_values('визитов', ascending=False)
-        mt['группа'] = [re.sub(r'[^/]+$', '*', b) if n >= 1 else b for b, n in zip(mt.index.astype(str), mt['запросов'])]
+        mt['группа'] = [b if invis.search(b) else re.sub(r'[^/]+$', '*', b) for b in mt.index.astype(str)]   # заглушки — отдельной проблемой
         S['Отсутствующие ресурсы'] = mt.head(500).reset_index().rename(columns={'base': 'файл'})
         mg = mt.groupby('группа').agg(файлов=('запросов', 'size'), запросов=('запросов', 'sum'), визитов=('визитов', 'max')).sort_values('запросов', ascending=False)
         for gname, r in mg.head(5).iterrows():
             if r['визитов'] >= 100:
                 F.add('Ошибки', 'Важно', 'missing_static', gname, f'Отсутствующие файлы, которые запрашивают страницы: {gname}',
-                      f"{int(r['файлов'])} файлов, {int(r['запросов'])} запросов людей", 'код/вёрстка сайта', 'Вернуть файлы или убрать ссылки на них из шаблона', int(r['запросов']), 'Отсутствующие ресурсы')
+                      f"{int(r['файлов'])} файлов, {int(r['визитов'])} визитов людей, {int(r['запросов'])} запросов", 'код/вёрстка сайта', 'Вернуть файлы или убрать ссылки на них из шаблона', int(r['визитов']), 'Отсутствующие ресурсы')
+                for x in F.items:
+                    if x['key'] == f'Ошибки:missing_static:{gname}':
+                        x['файлы'] = mt[mt['группа'] == gname].index.astype(str).tolist()[:20]
     # служебные файлы по дням
     sv = R['base'].cat.categories.to_series().str.contains(r'^/robots\.txt$|sitemap[\w-]*\.xml|\.yml$|/export/|feed|\.xml$', regex=True, case=False).values[R['base'].cat.codes.values]
     SV = R.loc[sv, ['base', 'day', 'status', 'bytes', 'fam']]
@@ -451,18 +464,51 @@ def load_security(c, F):
         if len(susp):
             F.add('Нагрузка и безопасность', 'Срочно', 'admin_foreign', 'all', 'Успешные входы в админку из-за рубежа', ', '.join(f"{r.ip} ({r.страна}, {r.org})" for r in susp.head(5).itertuples()),
                   'доступ к админке', 'Проверить, свои ли это входы', len(susp), 'Админка')
-    # служебные разделы, открытые всем (не админка движка): /manager/, /admin/ и т.п.
+    # служебные разделы (не админка движка): /manager/, /admin/ и т.п. — форму входа узнаём по поведению (ТЗ, «Служебные разделы и формы входа»)
     gen = R['base'].cat.categories.to_series().str.contains(r'^/(manager|admin|administrator|panel|cp|backend|dashboard|crm|lk-admin)/', regex=True).values[R['base'].cat.codes.values] & ~R['is_admin'].values
-    GA = R.loc[gen & (st == 200) & ~R['is_static'].values, ['ip', 'base', 'fam', 'day']]
+    GA = R.loc[gen & ~R['is_static'].values, ['ip', 'base', 'fam', 'day', 'method', 'status', 'bytes']]
     if len(GA):
         staff = set(c.m.get('staff_ips', []))
-        GA = GA[~GA['ip'].astype(str).isin(staff)]
-        sec = GA.assign(раздел=GA['base'].astype(str).str.extract(r'^(/[^/]+/)')[0]).groupby('раздел').agg(ответов_200=('ip', 'size'), IP=('ip', 'nunique'),
-              поисковики=('fam', lambda s: int(s.astype(str).isin(['YandexBot', 'Googlebot', 'Bingbot']).sum())), страниц=('base', 'nunique'), последний=('day', 'max')).reset_index()
+        GA = GA[~GA['ip'].astype(str).isin(staff)].assign(ip=lambda d: d['ip'].astype(str), base=lambda d: d['base'].astype(str))
+        GA['раздел'] = GA['base'].str.extract(r'^(/[^/]+/)')[0]
+        SE = {'YandexBot', 'Googlebot', 'Bingbot'}
+        rows = []
+        for sec_, g in GA.groupby('раздел'):
+            root = g[g['base'] == sec_]
+            posters = set(root.loc[root['method'] == 'POST', 'ip'])
+            fp_src = root[(root['method'] == 'GET') & (root['status'] == 200) & (root['bytes'] > 0) & ~root['ip'].isin(posters)]['bytes']
+            fp = float(fp_src.median()) if len(fp_src) else 0.0
+            tol = max(300.0, 0.05 * fp)
+            r200 = root[(root['status'] == 200) & (root['bytes'] > 0)]
+            logged = set(r200.loc[(r200['bytes'] - fp).abs() > tol, 'ip']) if fp else set()
+            pr = root[root['method'] == 'POST']
+            fail = pr[(pr['status'] == 200) & ((pr['bytes'] - fp).abs() <= tol)] if fp else pr.iloc[0:0]
+            inner = g[(g['base'] != sec_) & (g['status'] == 200)]
+            inner_open = inner[~inner['ip'].isin(logged)]
+            rows.append(dict(раздел=sec_, ответов_200=int((g['status'] == 200).sum()), IP=g['ip'].nunique(), IP_с_200=g.loc[g['status'] == 200, 'ip'].nunique(),
+                             поисковики=int(g.loc[g['status'] == 200, 'fam'].astype(str).isin(SE).sum()),
+                             отпечаток_формы_байт=round(fp), POST_входов=len(pr), неудачных=len(fail), адресов_вошло=len(logged),
+                             форма_входа='да' if len(pr) else 'не видно', внутренних_без_входа=len(inner_open), адресов_без_входа=inner_open['ip'].nunique(),
+                             страницы_без_входа=', '.join(sorted(inner_open['base'].unique())[:5]),
+                             кто_без_входа=', '.join(f"{k} — {v}" for k, v in inner_open['fam'].astype(str).replace('', 'не робот').value_counts().head(4).items()), подбор_IP=fail['ip'].nunique(), последний=g['day'].max()))
+        sec = pd.DataFrame(rows)
         S['Открытые служебные разделы'] = sec
-        for _, r in sec[(sec['IP'] >= 5)].iterrows():
-            F.add('Нагрузка и безопасность', 'Важно', 'open_section', r['раздел'], f"Служебный раздел {r['раздел']} открыт всем" + (' и индексируется поисковиками' if r['поисковики'] else ''),
-                  f"{int(r['ответов_200'])} ответов 200 для {int(r['IP'])} IP, страниц {int(r['страниц'])}; поисковики: {int(r['поисковики'])}", 'nginx / настройки доступа', 'Закрыть паролем или по IP, запретить индексацию', int(r['IP']), 'Открытые служебные разделы')
+        for _, r in sec[sec['IP'] >= 5].iterrows():
+            nm = r['раздел']
+            if r['адресов_без_входа'] >= 3:
+                F.add('Нагрузка и безопасность', 'Важно', 'open_section', nm, f"Страницы раздела {nm} отдаются без входа",
+                      f"{int(r['внутренних_без_входа'])} ответов 200 для {int(r['адресов_без_входа'])} адресов, которые не входили; кто: {r['кто_без_входа']}; страницы: {r['страницы_без_входа']}",
+                      'nginx / настройки доступа', 'Проверить, должны ли эти страницы быть доступны без входа; если нет — закрыть', int(r['адресов_без_входа']), 'Открытые служебные разделы')
+            if r['подбор_IP'] >= 10:
+                F.add('Нагрузка и безопасность', 'Важно', 'login_bruteforce', nm, f"Подбор пароля к форме входа {nm}",
+                      f"{int(r['неудачных'])} неудачных входов с {int(r['подбор_IP'])} адресов", 'настройки защиты', 'Ограничить число попыток входа, закрыть форму по IP', int(r['неудачных']), 'Открытые служебные разделы')
+            if r['форма_входа'] == 'да' and r['поисковики']:
+                F.add('Нагрузка и безопасность', 'К сведению', 'login_indexed', nm, f"Страница входа {nm} видна поисковикам",
+                      f"поисковые роботы открывали её {int(r['поисковики'])} раз; к форме обращались {int(r['IP_с_200'])} адресов", 'robots.txt',
+                      f'Закрыть от индексации: Disallow: {nm} в robots.txt', int(r['поисковики']), 'Открытые служебные разделы')
+            elif r['форма_входа'] != 'да' and r['адресов_без_входа'] < 3 and r['IP_с_200'] >= 5:
+                F.add('Нагрузка и безопасность', 'К сведению', 'open_section_unknown', nm, f"Служебный раздел {nm} отвечает посторонним — проверить, что там",
+                      f"{int(r['ответов_200'])} ответов 200 для {int(r['IP_с_200'])} адресов; формы входа по логу не видно", 'настройки доступа', 'Открыть адрес и проверить, что он показывает', int(r['IP']), 'Открытые служебные разделы')
     # служебные файлы и сканеры
     bs = R['base'].cat.categories.to_series()
     vm = bs.str.contains(VULN, regex=True, case=False).values[R['base'].cat.codes.values]
@@ -513,7 +559,7 @@ def load_security(c, F):
     am = qc.str.contains(ATTACK, regex=True).values[R['query'].cat.codes.values] | vm & bs.str.contains(ATTACK, regex=True).values[R['base'].cat.codes.values]
     AQ = R.loc[am, ['ip', 'base', 'query', 'status', 'bytes', 'day']]
     if len(AQ):
-        S['Атаки в параметрах'] = AQ.assign(запрос=AQ['query'].astype(str).str.slice(0, 200)).groupby(['base', 'status'], observed=True).agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), пример=('запрос', 'first')).sort_values('запросов', ascending=False).reset_index().head(300)
+        S['Атаки в параметрах'] = AQ.assign(запрос=AQ['query'].astype(str).str.slice(0, 200)).groupby(['base', 'status'], observed=True).agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), адрес=('ip', 'first'), пример=('запрос', 'first')).sort_values('запросов', ascending=False).reset_index().head(300)
         a5 = AQ[AQ['status'] >= 500]
         if len(a5):
             F.add('Нагрузка и безопасность', 'Срочно', 'attack_500', 'params', f'Атаки через параметры вызвали 500 ({len(a5)} раз)',

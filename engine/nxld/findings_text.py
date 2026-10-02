@@ -11,7 +11,7 @@ THEME = {
     'ad_landing_errors': 'Реклама', 'campaign_zero': 'Реклама', 'placements_off': 'Реклама', 'placement_type_low': 'Реклама', 'placement_type_zero': 'Реклама',
     '5xx': 'Сайт', '5xx_section': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт', 'no_service': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
-    'exposed': 'Безопасность', 'open_section': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
+    'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
     'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность',
     'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
     'search_errors': 'Поиск',
@@ -31,7 +31,7 @@ def pl(k, one, few_, many):
 
 
 def nw(k, one, few_, many):
-    return f'{n(k)} {pl(k, one, few_, many)}'
+    return f'{n(k)} {many if float(k) >= 1e4 else pl(k, one, few_, many)}'
 
 
 def n(x):
@@ -105,6 +105,8 @@ def humanize(items, sheets, summary):
                         f = (f"С {pd.Timestamp(w['деградация_с']):%H:%M} до {pd.Timestamp(w['деградация_по']):%H:%M}: "
                              f"{nw(w['страниц_с_5xx'], 'страница отдала', 'страницы отдали', 'страниц отдали')} ошибку сервера, "
                              f"{nw(w['обрывов_499'], 'запрос оборвался', 'запроса оборвались', 'запросов оборвались')}: {why}.")
+                    if x['важность'] == 'К сведению' and str(x.get('почему', '')).startswith('короткий'):
+                        f += ' Сбой единичный, после него сайт работает: возможно, перезагрузка или плановые работы — уточнить у хостинга.'
             elif t == '5xx_section':
                 T5 = S('Ошибки', '5xx по шаблонам'); g = T5[T5['шаблон'].astype(str).str.startswith(obj)] if len(T5) else T5
                 ch = S('Ошибки', 'Изменения статусов'); ch = ch[ch['шаблон'].astype(str).str.startswith(obj) & (ch['стало'].astype(str) == '404')] if len(ch) else ch
@@ -129,10 +131,12 @@ def humanize(items, sheets, summary):
                 if any(not a.endswith('/') for a in (adr.group(1).split(', ') if adr else [])):
                     f += ' Часть адресов — без «/» в конце, а с «/» страницы работают.'
             elif t == 'ad_landing_errors':
-                v = re.findall(r'(\d{3}): (\d+)', x['факты'])
-                parts = {'404': 'на «не найдено»', '499': 'человек не дождался ответа', '500': 'на ошибку сервера', '502': 'на ошибку сервера', '503': 'на ошибку сервера', '504': 'на ошибку сервера'}
+                v = [(k, int(c_)) for k, c_ in re.findall(r'(\d{3}): (\d+)', x['факты'])]
+                five = [(k, c_) for k, c_ in v if k.startswith('5')]
+                parts = [f"{c_} — {k}" + (', человек не дождался ответа' if k == '499' else '') for k, c_ in v if not k.startswith('5')]
+                if five: parts.append(f"{sum(c_ for _, c_ in five)} — {'/'.join(sorted(k for k, _ in five))}")
                 h = 'Клики по рекламе ведут на страницы с ошибкой'
-                f = f"{n(x['главная_цифра'])} рекламных кликов не открыли страницу: " + '; '.join(f"{c_} — {parts.get(k, k)}" for k, c_ in v) + '.'
+                f = f"{n(x['главная_цифра'])} рекламных кликов не открыли страницу: " + '; '.join(parts) + '.'
             elif t == 'service_err':
                 v = re.findall(r'(\d{3}): (\d+)', x['факты']); who = re.search(r'кто запрашивает: ([^:;]+)', x['факты'])
                 h = f"Фид {obj} не отдаётся" if re.search(r'\.(xml|yml|csv)$', obj) else f"{obj} отдаёт ошибку"
@@ -145,8 +149,14 @@ def humanize(items, sheets, summary):
                 M = S('Ошибки', 'Отсутствующие ресурсы')
                 h = 'Страницы запрашивают файлы, которых нет на сервере'
                 if len(M):
-                    g = M.groupby('группа').agg(запросов=('запросов', 'sum'), пример=('файл', 'first')).sort_values('запросов', ascending=False)
-                    f = 'Чаще всего: ' + '; '.join(f"{r['пример']} — {n(r['запросов'])} запросов" for _, r in g.head(3).iterrows()) + '.'
+                    fl = set(x.get('файлы') or [])
+                    M = M[M['файл'].astype(str).isin(fl)] if fl else M
+                    g = M.groupby('группа').agg(визитов=('визитов', 'max'), пример=('файл', 'first')).sort_values('визитов', ascending=False)
+                    hv = sm.get('Визитов людей') or 0
+                    f = 'Файлы не найдены (404): ' + '; '.join(f"{r['пример']} — {nw(r['визитов'], 'визит', 'визита', 'визитов')}" + (f" ({r['визитов'] / hv * 100:.0f}% визитов людей)" if hv and r['визитов'] / hv >= 0.01 else '') for _, r in g.head(3).iterrows()) + '.'
+                    if str(x.get('почему', '')).startswith('файл-заглушка'):
+                        h = f"Не найден файл-заглушка {obj}"
+                        f += ' Это заглушка для подгружаемых картинок: человек её, скорее всего, не видит, но страницы делают лишний запрос.'
             elif t == 'blocked_people':
                 h = 'Защита сервера отказывает людям'
                 f = f"Люди {n(x['главная_цифра'])} раз получили отказ в доступе ({x['факты']})."
@@ -155,12 +165,26 @@ def humanize(items, sheets, summary):
                 h = f"Ошибки в error-логе: {obj}"
                 f = f"{n(v[0])} сообщений «{obj}»" + (f" с {d(per[0])} по {d(per[1])}" if len(per) >= 2 else '') + '.'
             elif t == 'attack_500':
-                h = 'Атака через параметры вызвала ошибку сервера'
-                f = f"Запросы с вредным содержимым в параметрах {nw(x['главная_цифра'], 'раз', 'раза', 'раз')} вызвали ошибку сервера на {x['факты']}."
-            elif t == 'open_section':
+                A = S('Нагрузка и безопасность', 'Атаки в параметрах'); A = A[A['status'] >= 500] if len(A) else A
+                parts = []
+                for kind, g in (A.assign(вид=A['пример'].map(attack_kind)).groupby('вид') if len(A) else []):
+                    prm = attack_param(str(g.iloc[0]['пример']))
+                    who = g.iloc[0]['адрес'] if g['IP'].sum() == 1 and 'адрес' in g else nw(g['IP'].sum(), 'адреса', 'адресов', 'адресов')
+                    codes = '/'.join(sorted(set(str(int(c_)) for c_ in g['status'])))
+                    parts.append(f"{kind}" + (f" в параметре {prm}" if prm else '') + f": {nw(g['запросов'].sum(), 'запрос', 'запроса', 'запросов')} с {who}, ответ {codes}")
+                kinds = sorted(set(attack_kind(q) for q in A['пример'])) if len(A) else []
+                h = (f"{kinds[0]} вызывает ошибку сервера" if len(kinds) == 1 else 'Атаки через параметры вызывают ошибку сервера')
+                f = '; '.join(parts) + '.' if parts else x['факты']
+            elif t == 'login_indexed':
                 v = nums(x['факты'])
-                h = f"Служебный раздел {obj} открыт без пароля"
-                f = f"{obj} отвечал посторонним адресам {nw(v[0], 'раз', 'раза', 'раз')} ({nw(v[2], 'адрес', 'адреса', 'адресов')}); поисковые роботы открывали его {nw(v[-1], 'раз', 'раза', 'раз')}."
+                h = f"Страница входа {obj} видна поисковикам"
+                f = f"Поисковые роботы открывали форму входа {nw(v[0], 'раз', 'раза', 'раз')}; к ней обращались {nw(v[1], 'посторонний адрес', 'посторонних адреса', 'посторонних адресов')}."
+            elif t == 'open_section':
+                v = re.match(r'(\d+) ответов 200 для (\d+) адресов', x['факты']); pages = re.search(r'страницы: (.*)$', x['факты'])
+                h = f"Страницы раздела {obj} отдаются без входа"
+                who = re.search(r'кто: ([^;]+);', x['факты'])
+                f = (f"{nw(int(v.group(1)), 'ответ', 'ответа', 'ответов')} 200 получили {nw(int(v.group(2)), 'адрес', 'адреса', 'адресов')}, которые в разделе не входили"
+                     + (f" ({who.group(1)})" if who else '') + (f". Страницы: {pages.group(1)}." if pages else '.'))
             elif t == 'exposed':
                 h = 'Служебные файлы отданы посторонним'; f = x['факты']
             elif t == 'fake_crawlers':
@@ -197,17 +221,17 @@ def humanize(items, sheets, summary):
                 f = (f"{len(g)} кампаний дали {n(sum(int(v_) for _, _, v_ in g))} визитов и ни одной заявки: " + '; '.join(f"{i} {nm} — {n(v_)}" for i, nm, v_ in g[:3]) + (f" и ещё {len(g) - 3}" if len(g) > 3 else '') + '.') if g else x['факты']
         except Exception:
             h, f = None, None
-        if ':группа' in x['key'] and t == '5xx':
+        if re.search(r':(группа|мелочи)$', x['key']) and t == '5xx':
             vs = re.findall(r'— (\d+) ошибок у людей', x['факты'])
             T5 = S('Ошибки', '5xx по шаблонам'); T5 = T5[T5['у_людей'] < 20].sort_values('у_людей', ascending=False) if len(T5) else T5
             h = f"Ещё {nw(len(vs), 'страница изредка отдаёт', 'страницы изредка отдают', 'страниц изредка отдают')} ошибку сервера" if vs else 'Редкие ошибки сервера на отдельных страницах'
             f = (f"На каждой от {min(map(int, vs))} до {nw(max(map(int, vs)), 'ошибки', 'ошибок', 'ошибок')} за период"
                  + (f", чаще всего на {T5.iloc[0]['пример']}" if len(T5) else '') + '. Это единичные случаи, а не поломка раздела.') if vs else x['факты']
-        if ':группа' in x['key'] and t == '404_entry':
+        if re.search(r':(группа|мелочи)$', x['key']) and t == '404_entry':
             g = re.findall(r'страницы: ([^—]+) — (\d+) визитов', x['факты'])
             E = S('Ошибки', '404: входы извне'); E = E[E['канал'].isin([a.strip() for a, _ in g])].sort_values('визитов', ascending=False) if len(E) else E
             chs = [a.strip() for a, _ in g]
-            h = 'Люди изредка приходят на несуществующие страницы' + (f" из {' и '.join({'Карты': 'Карт', 'Поиск': 'Поиска'}.get(c_, c_) for c_ in chs)}" if chs else '')
+            h = ('Люди изредка приходят' if x['важность'] == 'К сведению' else 'Люди приходят') + ' на несуществующие страницы' + (f" из {' и '.join({'Карты': 'Карт', 'Поиск': 'Поиска'}.get(c_, c_) for c_ in chs)}" if chs else '')
             tot = sum(int(c_) for _, c_ in g)
             f = (f"За период {nw(tot, 'такой вход', 'таких входа', 'таких входов')}"
                  + (f", больше всего на {E.iloc[0]['адрес']} ({nw(E.iloc[0]['визитов'], 'переход', 'перехода', 'переходов')})" if len(E) else '')
@@ -223,3 +247,23 @@ def clean(s):
     s = re.sub(r'(\d{4})-(\d\d)-(\d\d)', lambda m: f'{m.group(3)}.{m.group(2)}', s)
     s = s.replace('5xx', 'ошибка сервера')
     return s[:400] + ('…' if len(s) > 400 else '')
+
+
+def attack_kind(q):
+    q = str(q)
+    from urllib.parse import unquote
+    u = unquote(unquote(q)).lower()
+    if re.search(r"union\s+select|select\s.+from|\b(and|or)\s+\d+=\d+|sleep\(|benchmark\(|'--|information_schema", u): return 'SQL-инъекция'
+    if re.search(r'<script|onerror=|onload=|javascript:|<svg', u): return 'XSS'
+    if re.search(r'\.\./|etc/passwd|win\.ini', u): return 'Обход каталогов'
+    if re.search(r'\$\{jndi', u): return 'Log4Shell'
+    if re.search(r'\{\{|\$\{', u): return 'Инъекция шаблона'
+    return 'Атака'
+
+
+def attack_param(q):
+    from urllib.parse import unquote
+    for part in str(q).split('&'):
+        k, _, v = part.partition('=')
+        if v and attack_kind(v) != 'Атака': return unquote(k)
+    return ''

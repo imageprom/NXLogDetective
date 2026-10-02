@@ -228,6 +228,8 @@ def apply_edits(res, edits):
         for k in ('факты', 'где_править', 'что_сделать', 'лист', 'также_в', 'статус'): a.setdefault(k, '')
         a.setdefault('главная_цифра', None)
         res['findings'].append(a)
+    if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
+        res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res
 
 

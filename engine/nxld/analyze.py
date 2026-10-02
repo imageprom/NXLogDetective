@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import coverage, visits, blocks, brief, recon, findings_meta, findings_text
+from . import coverage, profile, visits, blocks, brief, recon, findings_meta, findings_text
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -111,6 +111,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
                 rows.append(dict(блок=b, показатель=k, было=ov, стало=v))
         res['compare'] = pd.DataFrame(rows)
         res['prev_period'] = prev.get('period')
+    try:
+        res['site_profile'] = profile.detect(c, res.get('site_map') or {})
+    except Exception as e:
+        res['site_profile'] = {'назначение': 'не определено', 'ошибка': str(e)}
     findings_meta.proofs(c, F.items, res['sheets'])
     flood_circumstance(F.items, res['sheets'])
     findings_text.humanize(F.items, res['sheets'], res['summary'])

@@ -10,6 +10,7 @@ from openpyxl.styles import Font, Alignment, Border, PatternFill
 from .report_index import Sheet, ORANGE, ORANGE2, GREY, DARK, INK, F_NOTE, F_CARD, SEP, BLOCK_FILES, cap, row_height
 from .findings import SEV_ORDER
 from .findings_meta import meta
+from .findings_text import GRADE
 
 STATUS_STYLE = {'стала хуже': (ORANGE, True, None), 'новая': (ORANGE, False, None), 'исправлена частично': (DARK, False, F_NOTE), 'сохраняется': (DARK, False, None)}
 
@@ -38,7 +39,7 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     act = [x for x in items if x.get('статус_вид') != 'исправлена' and x.get('статус') != 'отмечено как норма']
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
     ws.merge_cells('B3:F3')
-    sub = f"Срочно — {cnt['Срочно']} · Важно — {cnt['Важно']} · К сведению — {cnt['К сведению']}"
+    sub = f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}"
     if not with_block: sub = f"Блок «{items[0]['блок'] if items else ''}» · " + sub
     S.cell('B', sub, Font(name='Arial', size=11, color=INK), row=3)
     ws.row_dimensions[3].height = 20
@@ -49,23 +50,23 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     for sev in ('Срочно', 'Важно'):
         xs = sorted([x for x in act if x['важность'] == sev], key=key)
         if not xs: continue
-        S.section(f'{sev} — {len(xs)}')
+        S.section(f'{GRADE[sev]} — {len(xs)}')
         for x in xs:
             n += 1
             card(S, x, n, sev, here_file, with_block)
     xs = sorted([x for x in act if x['важность'] == 'К сведению'], key=key)
     if xs:
-        S.section(f"К сведению — {len(xs)}")
+        S.section(f"{GRADE['К сведению']} — {len(xs)}")
         for x in xs:
             n += 1
             text, target = link_for(x, here_file)
-            line = f"{n}. {cap(x['что_происходит'])}" + (f" — {'[' + x['блок'] + '] ' if with_block else ''}подробно: {text} →" if text else '')
+            line = f"{n}. {x.get('тема', '')}: {cap(x.get('заголовок') or x['что_происходит'])}" + (f" — подробно: {text} →" if text else '')
             one_line(S, line, target, status=x.get('статус_вид'), status_text=x.get('статус'))
     fixed = [x for x in items if x.get('статус_вид') == 'исправлена']
     if fixed:
         S.section(f'Исправлено с прошлой проверки — {len(fixed)}')
         for x in fixed:
-            one_line(S, f"✓ {cap(x['что_происходит'])} — в новом периоде не обнаружено (если запросов к этим адресам не было, исправление не подтверждено)", None)
+            one_line(S, f"✓ {cap(x.get('заголовок') or x['что_происходит'])} — в новом периоде не обнаружено (если запросов к этим адресам не было, исправление не подтверждено)", None)
     norm = [x for x in items if x.get('статус') == 'отмечено как норма']
     if norm:
         S.section(f'Отмечено как норма — {len(norm)}')
@@ -78,34 +79,33 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
 
 
 def card(S, x, n, sev, here_file, with_block):
+    """Карточка как на индексе: заголовок одной строкой, затем Тема / Факт / Что сделать,
+    ниже — «Расследование и улики» со строками второго уровня."""
     ws = S.ws
-    fill, color = (ORANGE, 'FFFFFF') if sev == 'Срочно' else (F_NOTE, '000000')
-    # заголовок карточки: номер и проблема; справа — метка статуса (повторная проверка)
     st_kind, st_text = x.get('статус_вид'), x.get('статус')
     last = 'F' if not st_kind else 'E'
     ws.merge_cells(f'B{S.r}:{last}{S.r}')
-    for col in 'BCDEF':
-        ws[f'{col}{S.r}'].fill = PatternFill('solid', fgColor=fill)
-    title = f"{n}. {cap(x['что_происходит'])}"
-    S.cell('B', title, Font(name='Arial', size=11, bold=True, color=color), fill, Alignment(vertical='center', wrap_text=True, indent=1))
+    title = f"{n}. {cap(x.get('заголовок') or x['что_происходит'])}"
+    S.cell('B', title, Font(name='Arial', size=11, bold=True, color='000000'), None, Alignment(vertical='center', wrap_text=True, indent=1))
     if st_kind:
         c_, b_, f_ = STATUS_STYLE.get(st_kind, (DARK, False, None))
-        S.cell('F', cap(st_text), Font(name='Arial', size=10, bold=b_ or True, color='FFFFFF' if fill == ORANGE else c_), f_ if fill != ORANGE else fill,
-               Alignment(horizontal='right', vertical='center', wrap_text=True, indent=1))
-    ws.row_dimensions[S.r].height = row_height(title, 95 if not st_kind else 62) + 2
+        S.cell('F', cap(st_text), Font(name='Arial', size=10, bold=b_, color=c_), f_, Alignment(horizontal='right', vertical='center', wrap_text=True, indent=1))
+    ws.row_dimensions[S.r].height = row_height(title, 95 if not st_kind else 62)
     S.r += 1
+    S.pair('Тема', x.get('тема') or x['блок'])
+    S.pair('Факт', cap(x.get('факт') or x.get('факты') or ''))
+    todo = cap(x.get('что_сделать') or '')
+    if x.get('где_править'): todo += f" (где: {x['где_править']})"
+    if todo: S.pair('Что сделать', todo)
     crit, check = meta(x)
-    if with_block: S.pair('Блок', x['блок'])
-    if x.get('факты'): S.pair('Что происходит', cap(x['факты']))
-    if x.get('доказательство'): S.pair('Доказательство', x['доказательство'])
-    if crit: S.pair('Как найдено', crit)
-    if x.get('что_сделать'): S.pair('Что сделать', cap(x['что_сделать']))
-    if x.get('где_править'): S.pair('Где править', cap(x['где_править']))
-    if check and check != '—': S.pair('Как проверить', check)
     text, target = link_for(x, here_file)
-    if text: S.pair('Подробно', text + ' →', link=target)
-    if x.get('также_в'): S.pair('Также в блоках', x['также_в'])
-    ws.row_dimensions[S.r].height = 10
+    rows = [('Доказательство', x.get('доказательство')), ('Как найдено', crit), ('Как проверить', check if check != '—' else '')]
+    rows = [(k, v) for k, v in rows if v]
+    if rows or text:
+        S.pair('Расследование и улики', '', height=20)
+        for k, v in rows: S.pair(k, v, level=2)
+        if text: S.pair('Подробно', text + ' →', link=target, level=2)
+    ws.row_dimensions[S.r].height = 12
     S.r += 1
 
 

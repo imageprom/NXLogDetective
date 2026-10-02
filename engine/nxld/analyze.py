@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import visits, blocks, brief, recon, findings_meta
+from . import visits, blocks, brief, recon, findings_meta, findings_text
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -112,6 +112,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['compare'] = pd.DataFrame(rows)
         res['prev_period'] = prev.get('period')
     findings_meta.proofs(c, F.items, res['sheets'])
+    findings_text.humanize(F.items, res['sheets'], res['summary'])
     res['findings'] = F.items
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)

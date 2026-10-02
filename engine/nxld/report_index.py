@@ -285,8 +285,9 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
     pr = sheet_names.get('Проблемы', 'Проблемы')
     for k, color in (('Срочно', ORANGE), ('Важно', DARK), ('К сведению', DARK)):
+        label = {'Срочно': 'Приоритетные', 'Важно': 'Важные', 'К сведению': 'Остальные'}[k]
         S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
-        S.cell('B', k, Font(name='Arial', size=11, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
+        S.cell('B', label, Font(name='Arial', size=11, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
         S.cell('C', cnt[k], Font(name='Arial', size=12 if k == 'Срочно' else 11, bold=(k == 'Срочно'), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
         ws.merge_cells(f'C{S.r}:F{S.r}')
         ws.row_dimensions[S.r].height = 22

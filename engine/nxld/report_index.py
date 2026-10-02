@@ -198,8 +198,8 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         cx, cy = 2000250, 457200                     # ~210×48 px: меньше прежнего, крупнее образца (EMU)
         img.anchor = OneCellAnchor(_from=AnchorMarker(col=1, colOff=1905, row=0, rowOff=123825), ext=XDRPositiveSize2D(cx, cy))
         ws.add_image(img)
-    S.cell('F', COMPANY_URL, Font(name='Arial', size=11, color=INK), align=Alignment(horizontal='right', vertical='center'), row=1)
-    ws['F1'].hyperlink = COMPANY_URL; ws['F1'].font = Font(name='Arial', size=11, color=INK)
+    S.cell('F', COMPANY_URL, Font(name='Arial', size=11, color=GREY), align=Alignment(horizontal='right', vertical='center'), row=1)
+    ws['F1'].hyperlink = COMPANY_URL; ws['F1'].font = Font(name='Arial', size=11, color=GREY)
     S.r = 5
     ws.merge_cells('B5:F5')
     S.cell('B', f'NX LOG DETECTIVE — САЙТ {site.upper()}', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[5].height = 30

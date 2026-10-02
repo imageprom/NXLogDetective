@@ -162,7 +162,20 @@ def mark_form_spam(V, R):
     ext_nosearch = ~V['entry_ref_internal'] & ~direct & ~V['entry_ref_host'].str.contains(SEARCH, regex=True)
     cls = pd.Series('', index=V.index, dtype=object)
     cls[g & (V['entry_status'] == 404) & (direct | ext_nosearch) & (V['n_pages'] <= 6)] = 'спам форм: битый адрес → главная → форма'
-    cls[g & (V['n_pages'] == 0) & (V['n_static'] == 0) & (cls == '')] = 'спам форм: отправка без просмотра страниц'
+    nopage = g & (V['n_pages'] == 0) & (cls == '')
+    # исключение: тот же человек сменил IP (мобильная сеть, прокси браузера) — страницу из реферера за ≤30 мин до отправки
+    # открыл другой IP с тем же самым UA и это обычный визит человека; путь «/» не в счёт — слишком частый
+    same_user = pd.Series(False, index=V.index)
+    for vid in V.index[nopage & V['entry_ref_internal']]:
+        path = re.sub(r'^https?://[^/]+', '', V.at[vid, 'entry_ref']).split('?')[0]
+        if path in ('', '/'): continue
+        t, ua, ip = V.at[vid, 'start'], V.at[vid, 'ua'], V.at[vid, 'ip']
+        o = V[(V['ua'] == ua) & (V['ip'] != ip) & (V['group'] == 'Люди') & (V['start'] <= t) & (V['end'] >= t - 1800) & (V['n_pages'] > 0)]
+        if len(o) and path in set(R.loc[R['vid'].isin(o.index) & (R['base'] == path), 'base'].astype(str)):
+            same_user[vid] = True
+    cls[nopage & (V['n_static'] == 0) & ~same_user] = 'спам форм: отправка без просмотра страниц'
+    # страница открыта другим IP: этот IP грузил только картинки/скрипты и отправил форму, а саму страницу не открывал (хостинг/VPN)
+    cls[nopage & (V['n_static'] > 0) & V['entry_ref_internal'] & ~same_user & V['nettype'].isin(['хостинг/облако', 'VPN/прокси-релей']) & (cls == '')] = 'спам форм: страницу открыл другой IP'
     fast = g & (V['n_goal'] >= 2) & (V['n_pages'] >= 5) & (V['n_pages'] / V['dur'].clip(lower=1) > 0.4)
     cls[fast & (cls == '')] = 'спам форм: быстрый обход и пачка отправок'
     # смена IP посреди визита: вход со страницы сайта, которую за <= 2 ч до этого открыл ДРУГОЙ IP и получил 404

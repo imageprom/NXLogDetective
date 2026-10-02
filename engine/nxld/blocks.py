@@ -3,6 +3,7 @@ import re
 from collections import Counter, defaultdict
 import numpy as np, pandas as pd
 from .recon import mask_pd
+from . import operators
 
 KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 VULN = r'(^/\.env|/\.git/|/\.aws|/\.ssh|/\.svn|/\.DS_Store|phpinfo|/wp-login\.php|/wp-admin|/xmlrpc\.php|/wp-content/plugins|/phpmyadmin|/pma/|/adminer|/vendor/phpunit|/actuator|/cgi-bin/|/server-status|/config\.(json|yml|yaml|php)|/backup|\.(sql|bak|old|swp|tar|tar\.gz|tgz|zip|rar)$|/shell|/eval-stdin|/boaform|/HNAP1|/owa/|/autodiscover|/\.well-known/(?!acme)|/restore\.php|/bitrixsetup\.php|/install\.php|/setup\.php|/telescope|/_profiler|/debug|/console)'
@@ -235,6 +236,7 @@ def errors(c, F):
                   f"{w['минут_всего']} мин; {w['страниц_с_5xx']} страниц с 5xx, {w['обрывов_499']} обрывов 499; причина: {w['вероятная_причина']}",
                   'сервер', 'Проверить нагрузку и логи сервера за это окно', int(w['минут_всего']), 'Сбои')
     # 5xx по шаблонам
+    page = R['is_page'].values | (R['method'].values == 'POST')
     m5 = (st >= 500) & page
     Q = R.loc[m5, ['tpl', 'base', 'day', 'vid', 'ts']].assign(чел=c.human[m5])
     if len(Q):
@@ -581,44 +583,10 @@ def bots(c, F, check_ips=()):
             sv['org'] = T.reindex(sv['ip'])['org'].values
             sv['начало'] = dt(sv['start'])
             S['Спам форм: визиты'] = sv.drop(columns='start').sort_values('начало')
-    # операторы: связываем IP спама форм (1) общими битыми входами и (2) сменой IP посреди визита:
-    # визит начался со страницы, которую за <= 2 ч до этого открыл другой IP и получил 404 (этот IP — разведка оператора)
+    # операторы: связываем IP спама форм по уликам (см. operators.py); таблица улик — отдельным листом
     spam_ips = set(V.loc[V['subgroup'].str.startswith('спам форм'), 'ip'])
-    sv = V[V['ip'].isin(spam_ips)]
-    links = defaultdict(set)
-    why = defaultdict(set)
-    for ent, g in sv[sv['entry_status'] == 404].groupby('entry'):
-        ips = set(g['ip'])
-        for i in ips:
-            links[i] |= ips - {i}
-        if len(ips) > 1: why[frozenset(ips)].add(f'общий битый вход {ent}')
-    e404 = V[(V['entry_status'] == 404) & (V['fam_verified'] != 'да')][['ip', 'start', 'entry', 'group']]
-    recon = set()
-    for _, r in sv[sv['entry_ref_internal']].iterrows():
-        pth = re.sub(r'^https?://[^/]+', '', r['entry_ref']).split('?')[0]
-        mm = e404[(e404['entry'] == pth) & (e404['ip'] != r['ip']) & (r['start'] - e404['start']).between(0, 7200)]
-        for o in mm['ip'].unique():
-            links[r['ip']].add(o); links[o].add(r['ip'])
-            if o not in spam_ips: recon.add(o)
-    # разведка, вошедшая через те же битые адреса, что и спам (если люди на них почти не попадают) — связывает группы
-    hum404 = V[(V['group'] == 'Люди') & (V['entry_status'] == 404)].groupby('entry')['ip'].nunique()
-    spam_ent = defaultdict(set)
-    for _, r in sv[sv['entry_status'] == 404].iterrows():
-        spam_ent[r['entry']].add(r['ip'])
-    for _, r in e404[e404['ip'].isin(recon)].iterrows():
-        if r['entry'] in spam_ent and hum404.get(r['entry'], 0) <= 5:
-            for o in spam_ent[r['entry']]:
-                links[r['ip']].add(o); links[o].add(r['ip'])
-    comp, seen = [], set()
-    for i in spam_ips:
-        if i in seen: continue
-        st_, grp = [i], set()
-        while st_:
-            x = st_.pop()
-            if x in grp: continue
-            grp.add(x); st_ += list(links[x] - grp)
-        seen |= grp
-        comp.append(grp)
+    comp, recon, EV = operators.link(V, spam_ips)
+    S['Операторы: улики'] = EV
     ops = []
     k = 0
     for grp in sorted(comp, key=lambda g_: len(g_ & spam_ips), reverse=True):
@@ -626,14 +594,20 @@ def bots(c, F, check_ips=()):
         core = sorted(grp & spam_ips); rc = sorted(grp & recon)
         k += 1
         label = f'Оператор {k}' if len(grp) >= 2 else f'Одиночный спамер {k}'
-        ops.append(dict(оператор=label, IP_спама=len(core), IP_разведки=len(rc), сети=topn(T.reindex(sorted(grp))['org'].astype(str), 3),
+        ev = EV[(EV['IP_A'].isin(grp) | EV['IP_B'].isin(grp))]
+        used = ev[ev['учтена'].str.startswith('да')]
+        kinds = Counter(k for x in used['улика'] for k in x.split('; '))
+        sp404 = gv[gv['ip'].isin(core) & (gv['entry_status'] == 404)]['entry']
+        okey = sp404.value_counts().index[0] if len(sp404) else (core[0] if core else label)
+        ops.append(dict(_key=okey, оператор=label, улики=', '.join(f'{t} ({n})' for t, n in kinds.most_common()) or '—',
+                        слабые_связи_с_другими=int((~ev['учтена'].str.startswith('да')).sum()), IP_спама=len(core), IP_разведки=len(rc), сети=topn(T.reindex(sorted(grp))['org'].astype(str), 3),
                         дни=', '.join(sorted(gv['day'].unique())[:20]), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
                         битые_входы=', '.join(sorted(set(gv.loc[gv['entry_status'] == 404, 'entry']))[:6]), адреса_спама=', '.join(core), адреса_разведки=', '.join(rc)))
-    S['Операторы'] = pd.DataFrame(ops)
+    S['Операторы'] = pd.DataFrame(ops).drop(columns='_key', errors='ignore')
     for o in ops:
         if o['оператор'].startswith('Оператор') and o['отправок'] > 0:
-            F.add('Боты', 'Срочно' if o['принято'] else 'Важно', 'operator', o['битые_входы'][:60], f"{o['оператор']}: {o['IP_спама']} IP спама форм" + (f" и {o['IP_разведки']} IP разведки" if o['IP_разведки'] else '') + ', связанных между собой',
-                  f"Отправок {o['отправок']}, принято {o['принято']}; дни: {o['дни']}; сети: {o['сети']}; общие битые входы: {o['битые_входы']}", 'защита форм + бан хостинговых подсетей', 'Защитить формы, отсеять заявки', o['принято'], 'Операторы')
+            F.add('Боты', 'Срочно' if o['принято'] else 'Важно', 'operator', o['_key'], f"{o['оператор']}: {o['IP_спама']} IP спама форм" + (f" и {o['IP_разведки']} IP разведки" if o['IP_разведки'] else '') + ', связанных между собой',
+                  f"Отправок {o['отправок']}, принято {o['принято']}; дни: {o['дни']}; сети: {o['сети']}; улики: {o['улики']}; общие битые входы: {o['битые_входы']}", 'защита форм + бан хостинговых подсетей', 'Защитить формы, отсеять заявки', o['принято'], 'Операторы')
     # сети ботов
     bv = V[V['group'] == 'Боты']
     bn = bv.groupby(['asn', 'nettype']).agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), подгруппы=('subgroup', lambda s: topn(s, 2))).sort_values('IP', ascending=False).reset_index()

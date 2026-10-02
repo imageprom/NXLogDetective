@@ -8,7 +8,7 @@ SEP = Side(style='thin', color='D9D9D9')
 WHITE = Side(style='thin', color='FFFFFF')
 
 
-def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9):
+def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None):
     """Пересобирает лист name: строка 1 — заголовок, 2 — пояснение, 4 — шапка, дальше данные.
     widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None."""
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
@@ -40,6 +40,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     ws.cell(H, 1 + X)
     ws.row_dimensions[H].height = 32
     for i, row in enumerate(df.itertuples(index=False), H + 1):
+        rf = row_rule(dict(zip(cols, row))) if row_rule else None   # заливка всей строки
         for j, v in enumerate(row, 1):
             if isinstance(v, float) and pd.isna(v): v = None
             if hasattr(v, 'item'): v = v.item()
@@ -51,7 +52,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
             cell.border = Border(bottom=SEP)
-            f = fill_rule(col, v) if fill_rule else None
+            f = rf or (fill_rule(col, v) if fill_rule else None)
             if f: cell.fill = PatternFill('solid', fgColor=f)
     for j, c in enumerate(cols, 1):
         letter = ws.cell(H, j + X).column_letter
@@ -96,7 +97,8 @@ def conversions(wb, C, name='Конверсии'):
     kpi = [('Отправок', len(C)), ('Люди', n_('Люди')), ('Принято у людей', int(((C['группа'] == 'Люди') & (C['принята'] == 'да')).sum())), ('Боты', n_('Боты')), ('Свои', n_('Свои'))]
     widths = {'Время': 17, 'Кто': 13, 'Форма': 22, 'Принята': 10, 'Код ответа': 9, 'Канал': 18, 'Страница входа': 28, 'Откуда пришёл': 24,
               'Страниц до отправки': 11, 'Секунд от входа': 10, 'Почему бот': 34, 'IP': 16, 'Сеть': 22, 'Обработчик': 50}
-    fill = lambda col, v: F_NOTE if (col == 'Кто' and v == 'Боты') else ('EFEFEF' if (col == 'Кто' and str(v).startswith('Свои')) else None)
+    fill = None
+    row_rule = lambda r: F_NOTE if r.get('Кто') == 'Боты' else ('EFEFEF' if r.get('Кто') == 'Свои' else None)
     bold = lambda col, v: col == 'Принята' and v == 'да'
     data_sheet(wb, name, d, 'Конверсии', 'Все отправки форм за период', widths, wrap=('Почему бот',), fill_rule=fill, bold_rule=bold,
-               center=('IP', 'Код ответа', 'Принята'), kpi=kpi, kpi_col='Канал', links=[('Сводка по формам', 'Анатомия сайта')])
+               center=('IP', 'Код ответа', 'Принята'), kpi=kpi, kpi_col='Канал', links=[('Сводка по формам', 'Анатомия сайта')], row_rule=row_rule)

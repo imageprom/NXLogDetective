@@ -199,7 +199,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     ws.merge_cells('B5:F5')
     S.cell('B', f'NX LOG DETECTIVE — САЙТ {site.upper()}', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[5].height = 30
     ws.merge_cells('B6:F6')
-    S.cell('B', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', Font(name='Comfortaa', size=11, bold=True, color=INK), row=6)
+    S.cell('B', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', Font(name='Comfortaa', size=11, bold=True, color=GREY), row=6)
     ws.row_dimensions[6].height = 20
     S.r = 8
     kind = "ПОВТОРНАЯ ПРОВЕРКА" if res.get('prev_period') else 'ПЕРВИЧНАЯ ПРОВЕРКА'

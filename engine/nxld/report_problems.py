@@ -18,6 +18,7 @@ STATUS_STYLE = {'стала хуже': (ORANGE, True, None), 'новая': (ORAN
 
 PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('E5E5E5', '000000')}
 OLINE = Side(style='thin', color=ORANGE)
+F_LIGHT = 'F7F7F7'   # блок «Расследование и улики» — светлее основных строк карточки
 
 
 def plaque(S, sev, count, xs, fixed=0):
@@ -115,7 +116,7 @@ def card(S, x, n, sev, here_file, with_block):
         ws[f'{col}{S.r}'].border = Border(bottom=OLINE)
     ws.row_dimensions[S.r].height = max(26, row_height(title, 78) + 4)
     S.r += 1
-    S.pair('Факт', cap(x.get('факт') or x.get('факты') or ''))
+    S.pair('Из показаний', cap(x.get('факт') or x.get('факты') or ''))
     todo = cap(x.get('что_сделать') or '')
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"
     if todo: S.pair('Что делать', todo, fill=F_NOTE)
@@ -123,13 +124,13 @@ def card(S, x, n, sev, here_file, with_block):
     if check and check != '—': S.pair('Как проверить', check)
     rows = [(k, v) for k, v in (('Доказательство', x.get('доказательство')), ('Как найдено', crit)) if v]
     if rows:
-        S.pair('Расследование и улики', '', height=20)
-        for k, v in rows: S.pair(k, v, level=2)
+        S.pair('Расследование и улики', '', height=20, fill=F_LIGHT)
+        for k, v in rows: S.pair(k, v, level=2, fill=F_LIGHT)
     text, target = link_for(x, here_file)
     if text:
         ws.merge_cells(f'B{S.r}:F{S.r}')
         c = S.cell('B', f'Подробно: {text} →', align=Alignment(vertical='center', indent=1))
-        c.hyperlink = target; c.font = Font(name='Arial', size=10, italic=True, color=ORANGE2, underline='single')
+        c.hyperlink = target; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
         ws.row_dimensions[S.r].height = 20
         S.r += 1
     ws.row_dimensions[S.r].height = 14

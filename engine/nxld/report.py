@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from .findings import SEV_ORDER
-from . import report_index, report_problems, report_anatomy
+from . import report_index, report_problems, report_anatomy, report_files
 
 FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'отмечено как норма': 'EDEDED'}
@@ -264,7 +264,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     file_names = {b: f'NXLD_{FILES[b]}.xlsx' for b in FILES}
     snap = snapshot(res, site)
     snap_json = json.dumps(snap, ensure_ascii=False, default=str, indent=1)
-    about, files = about_df(res), files_df(res)
+    about = about_df(res)
     written = []
     for b in res['selected']:
         if only and b not in only: continue
@@ -274,7 +274,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         if b == 'Общий анализ':
             # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
             from .anatomy import appendix
-            sheets = {'Файлы': files, **S, **appendix(res)}   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
+            sheets = {**S, **appendix(res)}   # «Файлы» строится оформленным листом в конце (report_files)   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
             if 'Боты' not in res['selected']: sheets['IP'] = res['ips']      # иначе лист IP — в 04 Bots
             hidden = snap_json
         else:
@@ -302,6 +302,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             for k in [k for k in list(names) if k.startswith('Анатомия —')][::-1]:   # приложения — сразу за «Анатомией»
                 if pos and names[k] in wb.sheetnames:
                     wb.move_sheet(names[k], offset=pos - wb.sheetnames.index(names[k]))
+            if report_files.build_files(wb, res) is not None:
+                if '_snapshot' in wb.sheetnames:   # в конец, перед снимком
+                    wb.move_sheet('Файлы', offset=wb.sheetnames.index('_snapshot') - wb.sheetnames.index('Файлы'))
+                names['Файлы'] = 'Файлы'
             report_index.build_index(wb, res, names)
         wb.save(path)
         written.append(path)

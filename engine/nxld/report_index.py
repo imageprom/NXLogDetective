@@ -78,7 +78,7 @@ class Sheet:
     """Раскладка: A — поле, B — подписи / первая колонка таблиц, C:F — значения."""
     def __init__(self, ws):
         self.ws, self.r = ws, 1
-        for col, w in zip('ABCDEFG', (2.5, 30, 18, 14, 16, 44, 2.5)):
+        for col, w in zip('ABCDEFG', (2.5, 34, 18, 14, 16, 44, 2.5)):
             ws.column_dimensions[col].width = w
         ws.sheet_view.showGridLines = True
 
@@ -300,14 +300,14 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     def listing(rows):
         """Список «ссылка — пояснение» без шапки и заливок, как в первом варианте."""
         for name, note, link in rows:
-            c = S.cell('B', name, align=Alignment(vertical='center', indent=1))
+            c = S.cell('B', name, align=Alignment(vertical='center', wrap_text=True, indent=1))   # длинные названия переносятся
             if link:
                 c.hyperlink = link; c.font = Font(name='Arial', size=11, bold=True, color=ORANGE2, underline='single')
             else:
                 c.font = Font(name='Arial', size=11, bold=True, color='000000')
             ws.merge_cells(f'C{S.r}:F{S.r}')
-            S.cell('C', cap(note), Font(name='Arial', size=11, color=INK), align=Alignment(vertical='center', indent=1))
-            ws.row_dimensions[S.r].height = 18
+            S.cell('C', cap(note), Font(name='Arial', size=11, color=INK), align=Alignment(vertical='center', wrap_text=True, indent=1))
+            ws.row_dimensions[S.r].height = max(18, row_height(name, 28) - 4, row_height(cap(note), 88) - 4)
             S.r += 1
 
     # --- содержимое документа (листы этого файла, включая обзор)

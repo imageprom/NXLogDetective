@@ -8,7 +8,6 @@ from datetime import date
 import pandas as pd
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from .prepare import VERSION
 
 ORANGE, ORANGE2, GREY, DARK = 'F57041', 'FF6D01', '666666', '333333'
@@ -57,13 +56,19 @@ def plural(n, one, few, many):
     return one if n == 1 else few if 2 <= n <= 4 else many
 
 
+LINE = Side(style='thin', color='000000')       # сетка таблиц, как в фирменном образце
+SEP = Side(style='thin', color='BFBFBF')        # разделитель строк в карточках
+SEV_STYLE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, DARK), 'К сведению': ('F3F3F3', DARK)}
+SPANS = {'B': 'B', 'C': 'C', 'D': 'D', 'E': 'E', 'F': 'F'}
+
+
 class Sheet:
-    """Простая раскладка: колонка A — поле, B — подписи, C:F — значения."""
+    """Раскладка: A — поле, B — подписи / первая колонка таблиц, C:F — значения."""
     def __init__(self, ws):
         self.ws, self.r = ws, 1
         for col, w in zip('ABCDEFG', (2.5, 30, 20, 16, 16, 34, 2.5)):
             ws.column_dimensions[col].width = w
-        ws.sheet_view.showGridLines = False
+        ws.sheet_view.showGridLines = True
 
     def cell(self, col, text, font=None, fill=None, align=None, row=None):
         c = self.ws[f'{col}{row or self.r}']
@@ -75,30 +80,67 @@ class Sheet:
 
     def section(self, title):
         self.r += 1
-        self.cell('B', title.upper(), Font(name='Montserrat', size=12, bold=True, color=ORANGE))
+        self.ws.merge_cells(f'B{self.r}:F{self.r}')
+        self.cell('B', title.upper(), Font(name='Montserrat', size=12, bold=True, color=ORANGE), align=Alignment(vertical='center'))
         for col in 'BCDEF':
             self.ws[f'{col}{self.r}'].border = Border(bottom=thin)
-        self.ws.row_dimensions[self.r].height = 24
+        self.ws.row_dimensions[self.r].height = 26
         self.r += 1
 
+    def _fill_row(self, cols, fill, border):
+        for col in cols:
+            c = self.ws[f'{col}{self.r}']
+            if fill: c.fill = PatternFill('solid', fgColor=fill)
+            c.border = border
+
     def pair(self, label, value, fill=F_CARD, link=None, height=None):
-        self.cell('B', label, Font(name='Arial', size=10, bold=True, color=GREY), fill, Alignment(vertical='top', wrap_text=True, indent=1))
+        """Строка карточки: подпись слева, значение справа; тонкий разделитель снизу, текст не прилипает к линиям."""
+        self._fill_row('BCDEF', fill, Border(bottom=SEP))
+        self.cell('B', label, Font(name='Arial', size=10, bold=True, color=GREY), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         self.ws.merge_cells(f'C{self.r}:F{self.r}')
-        c = self.cell('C', value, Font(name='Arial', size=11, color=DARK, underline='single' if link else None), fill, Alignment(vertical='top', wrap_text=True))
-        for col in 'DEF':
-            self.ws[f'{col}{self.r}'].fill = PatternFill('solid', fgColor=fill)
+        c = self.cell('C', value, Font(name='Arial', size=11, color=DARK), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         if link:
             c.hyperlink = link; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
-        lines = max(1, sum(len(s) // 95 + 1 for s in str(value).split('\n')))
-        self.ws.row_dimensions[self.r].height = height or max(20, 15 * lines + 6)
+        lines = max(1, sum(len(s) // 90 + 1 for s in str(value).split('\n')))
+        self.ws.row_dimensions[self.r].height = height or max(22, 15 * lines + 9)
         self.r += 1
+
+    def table(self, headers, rows, spans, num=(), links=None, fills=None, center=()):
+        """Таблица в фирменном стиле: оранжевая шапка (белый жирный), сетка, отступы, числа справа на светло-сером.
+        spans — для каждой колонки строка столбцов листа, например 'B', 'C', 'EF' (объединяются)."""
+        def put(i, v, font, fill, al):
+            cols = spans[i]
+            if len(cols) > 1: self.ws.merge_cells(f'{cols[0]}{self.r}:{cols[-1]}{self.r}')
+            for col in cols:
+                cc = self.ws[f'{col}{self.r}']
+                cc.border = Border(left=LINE, right=LINE, top=LINE, bottom=LINE)
+                if fill: cc.fill = PatternFill('solid', fgColor=fill)
+            return self.cell(cols[0], v, font, fill, al)
+        for i, h in enumerate(headers):
+            put(i, h, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE, Alignment(horizontal='center', vertical='center', wrap_text=True))
+        self.ws.row_dimensions[self.r].height = 24
+        self.r += 1
+        for k, row in enumerate(rows):
+            for i, v in enumerate(row):
+                isnum = i in num
+                fill = (fills or {}).get((k, i)) or ('F3F3F3' if isnum else None)
+                fc = DARK
+                if fills and (k, i) in fills and fills[(k, i)] == ORANGE: fc = 'FFFFFF'
+                al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True, indent=0 if (isnum or i in center) else 1)
+                c = put(i, v, Font(name='Arial', size=11, color=fc, bold=bool(fills and (k, i) in fills)), fill, al)
+                if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = '#,##0' if isinstance(v, int) else '0%'
+                if links and (k, i) in links:
+                    c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
+            width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * 1.05   # примерно символов в строке
+            lines = max(-(-len(str(v)) // max(1, int(width(spans[i])) - 2)) for i, v in enumerate(row))
+            self.ws.row_dimensions[self.r].height = max(22, 15 * lines + 8)
+            self.r += 1
 
     def note(self, text):
         self.ws.merge_cells(f'B{self.r}:F{self.r}')
-        self.cell('B', text, Font(name='Arial', size=10, italic=True, color=DARK), F_NOTE, Alignment(vertical='top', wrap_text=True, indent=1))
-        for col in 'CDEF':
-            self.ws[f'{col}{self.r}'].fill = PatternFill('solid', fgColor=F_NOTE)
-        self.ws.row_dimensions[self.r].height = 14 * (len(text) // 120 + 1) + 8
+        self._fill_row('BCDEF', F_NOTE, Border())
+        self.cell('B', text, Font(name='Arial', size=10, italic=True, color=DARK), F_NOTE, Alignment(vertical='center', wrap_text=True, indent=1))
+        self.ws.row_dimensions[self.r].height = 15 * (len(text) // 115 + 1) + 12
         self.r += 1
 
 
@@ -144,7 +186,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     S.cell('B', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', Font(name='Comfortaa', size=11, bold=True, color=GREY), row=6)
     ws.row_dimensions[6].height = 20
     S.r = 8
-    kind = f"ПОВТОРНАЯ ПРОВЕРКА" if res.get('prev_period') else 'ПЕРВИЧНАЯ ПРОВЕРКА'
+    kind = "ПОВТОРНАЯ ПРОВЕРКА" if res.get('prev_period') else 'ПЕРВИЧНАЯ ПРОВЕРКА'
     S.cell('B', kind, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE, Alignment(horizontal='center', vertical='center'))
     ws.merge_cells('C8:F8')
     sub = f"Отчёт от {ru_date(date.today())} · NX Log Detective {VERSION}"
@@ -197,19 +239,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
            ('Боты', sm.get('Визитов: Боты', 0), 'притворяются браузерами, спамят формы, сканируют'),
            ('Свои', sm.get('Визитов: Свои', 0), 'сотрудники, подрядчик, свои мониторинги')]
     total = sum(v for _, v, _ in grp) or 1
-    hdr = Font(name='Arial', size=10, bold=True, color=GREY)
-    for col, t in zip('BCDE', ('Кто', 'Визитов', 'Доля', 'Кто это')):
-        S.cell(col, t, hdr, F_HEAD, Alignment(horizontal='left' if col in 'BE' else 'right', vertical='center', indent=1 if col == 'B' else 0))
-    ws.merge_cells(f'E{S.r}:F{S.r}'); ws[f'F{S.r}'].fill = PatternFill('solid', fgColor=F_HEAD)
-    S.r += 1
-    for g, v, note in grp:
-        S.cell('B', g, Font(name='Arial', size=11, bold=True, color=DARK), F_CARD, Alignment(vertical='center', indent=1))
-        c = S.cell('C', v, Font(name='Arial', size=11, color=DARK), F_CARD, Alignment(horizontal='right', vertical='center')); c.number_format = '#,##0'
-        c = S.cell('D', v / total, Font(name='Arial', size=11, color=DARK), F_CARD, Alignment(horizontal='right', vertical='center')); c.number_format = '0%'
-        ws.merge_cells(f'E{S.r}:F{S.r}')
-        S.cell('E', note, Font(name='Arial', size=10, color=GREY), F_CARD, Alignment(vertical='center', wrap_text=True)); ws[f'F{S.r}'].fill = PatternFill('solid', fgColor=F_CARD)
-        ws.row_dimensions[S.r].height = 20
-        S.r += 1
+    S.table(['Кто', 'Визитов', 'Доля', 'Кто это'], [(g, int(v), v / total, note) for g, v, note in grp], ['B', 'C', 'D', 'EF'], num=(1, 2))
     S.r += 1
     cl = res.get('cleaning', {})
     S.pair('Просмотры страниц людьми', f"{ru_short(sm.get('Просмотров страниц людьми', 0))}; визитов во встроенных браузерах приложений — {ru_short(cl.get('Визитов людей во встроенных браузерах приложений', 0))}")
@@ -226,34 +256,32 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     if raw and clean: how += f" (просмотров {ru_short(raw)} → {ru_short(clean)})"
     how += ' и ближе к Метрике. Заявкой считается отправка формы, которую сервер принял.'
     S.note(how)
-    # --- проблемы
+    # --- проблемы: маленькая таблица со счётчиками и ссылкой
     S.section('Проблемы')
     act = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
     pr = sheet_names.get('Проблемы', 'Проблемы')
-    S.pair('Найдено', f"срочных — {cnt['Срочно']}, важных — {cnt['Важно']}, к сведению — {cnt['К сведению']} → лист «{pr}»", link=f"#'{pr}'!A1")
-    # --- оглавление
-    S.section('Оглавление')
+    S.table(['Срочно', 'Важно', 'К сведению', 'Где смотреть'], [(cnt['Срочно'], cnt['Важно'], cnt['К сведению'], f'лист «{pr}» →')],
+            ['B', 'C', 'D', 'EF'], center=(0, 1, 2), links={(0, 3): f"#'{pr}'!A1"},
+            fills={(0, 0): ORANGE, (0, 1): F_NOTE, (0, 2): 'F3F3F3'})
+    # --- содержимое документа (листы этого файла, включая обзор)
+    S.section('Содержимое документа')
+    rows, links = [(title, 'этот лист: паспорт проверки, технологии, трафик, оглавление')], {(0, 0): f"#'{title}'!A1"}
     for name, real in sheet_names.items():
         if real == title or real.startswith('_'): continue
-        c = S.cell('B', real, align=Alignment(vertical='center', indent=1)); c.hyperlink = f"#'{real}'!A1"; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
-        ws.merge_cells(f'C{S.r}:F{S.r}')
-        S.cell('C', SHEET_NOTES.get(real, ''), Font(name='Arial', size=10, color=GREY))
-        ws.row_dimensions[S.r].height = 18
-        S.r += 1
-    S.r += 1
+        links[(len(rows), 0)] = f"#'{real}'!A1"
+        rows.append((real, SHEET_NOTES.get(real, '')))
+    S.table(['Лист', 'Что на нём'], rows, ['B', 'CDEF'], links=links)
+    # --- структура отчёта (файлы)
+    S.section('Структура отчёта')
+    rows, links = [('NXLD_01_Overview.xlsx', 'этот файл: общий обзор, устройство сайта, трафик, все проблемы')], {}
     for b, f in BLOCK_FILES.items():
         if b == 'Общий анализ' or b not in res['selected']: continue
-        c = S.cell('B', f, align=Alignment(vertical='center', indent=1)); c.hyperlink = f; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
-        ws.merge_cells(f'C{S.r}:F{S.r}')
-        S.cell('C', FILE_NOTES.get(b, ''), Font(name='Arial', size=10, color=GREY))
-        ws.row_dimensions[S.r].height = 18
-        S.r += 1
-    for t, fn in (('Текст для Redmine', 'NXLD_Redmine.textile'),):
-        S.cell('B', fn, Font(name='Arial', size=11, color=DARK), align=Alignment(vertical='center', indent=1))
-        ws.merge_cells(f'C{S.r}:F{S.r}')
-        S.cell('C', 'связный отчёт Детектива — для задачи в Redmine', Font(name='Arial', size=10, color=GREY))
-        S.r += 1
+        links[(len(rows), 0)] = f
+        rows.append((f, FILE_NOTES.get(b, '')))
+    rows.append(('NXLD_Redmine.textile', 'связный отчёт Детектива для задачи в Redmine'))
+    rows.append(('*.snapshot.json', 'снимок проверки — понадобится для повторной проверки'))
+    S.table(['Файл', 'Что в нём'], rows, ['B', 'CDEF'], links=links)
     # печать
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True

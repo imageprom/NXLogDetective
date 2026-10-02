@@ -294,7 +294,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         S.r += 1
     c = S.cell('B', f'Факты, доказательства и шаги исправления — на листе «{pr}» →', align=Alignment(vertical='center', indent=1))
     ws.merge_cells(f'B{S.r}:F{S.r}')
-    c.hyperlink = f"#'{pr}'!A1"; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
+    c.hyperlink = f"#'{pr}'!A1"; c.font = Font(name='Arial', size=10, italic=True, color=ORANGE2, underline='single')
     ws.row_dimensions[S.r].height = 24
     S.r += 1
 

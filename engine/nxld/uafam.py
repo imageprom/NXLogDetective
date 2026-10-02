@@ -1,0 +1,88 @@
+"""NXLD: семейство объявленного робота по User-Agent (справочник, пополняется)."""
+import re
+FAM = [
+ (r'YandexBot|YandexMobileBot', 'YandexBot', 'Поисковик'),
+ (r'YandexRenderResourcesBot', 'YandexRenderResourcesBot', 'Поисковик'),
+ (r'YandexImages', 'YandexImages', 'Поисковик'),
+ (r'YandexMetrika', 'YandexMetrika', 'Реклама/аналитика'),
+ (r'YaDirectFetcher', 'YaDirectFetcher', 'Реклама/аналитика'),
+ (r'YandexUserproxy', 'YandexUserproxy', 'Реклама/аналитика'),
+ (r'YandexMarket', 'YandexMarket', 'Реклама/аналитика'),
+ (r'YandexFavicons|YandexAdditionalBot_unused|YandexAdNet|YandexPartner|YandexVerticals|YandexTurbo|YandexAccessibility|YandexSpravBot|YandexScreenshot|YandexMedia|YandexWebmaster|YandexForDomain|YandexSitelinks|YandexCalendar|YandexDirectDyn', 'Yandex: прочие роботы', 'Поисковик'),
+ (r'AdsBot-Google', 'AdsBot-Google', 'Реклама/аналитика'),
+ (r'Google-Read-Aloud', 'Google-Read-Aloud', 'Сервисы Google'),
+ (r'Google-Apps-Script', 'Google-Apps-Script', 'Скрипты/библиотеки'),
+ (r'Googlebot-Image', 'Googlebot-Image', 'Поисковик'),
+ (r'Googlebot', 'Googlebot', 'Поисковик'),
+ (r'Google-InspectionTool|GoogleOther|Google-Site-Verification|Storebot-Google|Mediapartners-Google|APIs-Google|FeedFetcher-Google|Google-Extended|Google-PageRenderer', 'Google: прочие роботы', 'Сервисы Google'),
+ (r'Chrome Privacy Preserving Prefetch Proxy', 'Chrome Prefetch Proxy', 'Сервисы Google'),
+ (r'bingbot|BingPreview|msnbot|adidxbot', 'Bingbot', 'Поисковик'),
+ (r'Baiduspider', 'Baiduspider', 'Поисковик'),
+ (r'Applebot', 'Applebot', 'Поисковик'),
+ (r'PetalBot', 'PetalBot', 'Поисковик'),
+ (r'SeznamBot', 'SeznamBot', 'Поисковик'),
+ (r'DuckDuckBot', 'DuckDuckBot', 'Поисковик'),
+ (r'Mail\.RU_Bot', 'Mail.RU_Bot', 'Поисковик'),
+ (r'SaluteBot', 'SaluteBot (Сбер)', 'ИИ: обучение'),
+ (r'GPTBot', 'GPTBot (OpenAI)', 'ИИ: обучение'),
+ (r'ChatGPT-User', 'ChatGPT-User (OpenAI)', 'ИИ: запрос пользователя'),
+ (r'OAI-SearchBot', 'OAI-SearchBot (OpenAI)', 'ИИ: поисковый индекс'),
+ (r'Claude-User', 'Claude-User (Anthropic)', 'ИИ: запрос пользователя'),
+ (r'Claude-SearchBot', 'Claude-SearchBot (Anthropic)', 'ИИ: поисковый индекс'),
+ (r'ClaudeBot|anthropic-ai', 'ClaudeBot (Anthropic)', 'ИИ: обучение'),
+ (r'Perplexity-User', 'Perplexity-User', 'ИИ: запрос пользователя'),
+ (r'PerplexityBot', 'PerplexityBot', 'ИИ: поисковый индекс'),
+ (r'YandexAdditional', 'YandexAdditional (Нейро)', 'ИИ: поисковый индекс'),
+ (r'DuckAssistBot', 'DuckAssistBot', 'ИИ: запрос пользователя'),
+ (r'MistralAI-User', 'MistralAI-User', 'ИИ: запрос пользователя'),
+ (r'Amazonbot|Amzn-SearchBot', 'Amazonbot', 'ИИ: обучение'),
+ (r'Bytespider', 'Bytespider (ByteDance)', 'ИИ: обучение'),
+ (r'CCBot', 'CCBot (Common Crawl)', 'ИИ: обучение'),
+ (r'ExaSearchBot', 'ExaSearchBot', 'ИИ: поисковый индекс'),
+ (r'KeenableBot|Reflectionbot|Qwenbot', 'ИИ: прочие индексаторы', 'ИИ: поисковый индекс'),
+ (r'meta-externalagent|meta-webindexer|meta-externalfetcher', 'Meta AI', 'ИИ: обучение'),
+ (r'GrokBot|cohere-ai|YouBot|Diffbot|ImagesiftBot|Timpibot|omgili|AI2Bot|Kangaroo Bot|PanguBot|DeepSeekBot', 'ИИ: прочие', 'ИИ: обучение'),
+ (r'SemrushBot|SemrushBot-SA|SiteAuditBot', 'SemrushBot', 'SEO-сервис'),
+ (r'AhrefsBot|AhrefsSiteAudit', 'AhrefsBot', 'SEO-сервис'),
+ (r'MJ12bot', 'MJ12bot (Majestic)', 'SEO-сервис'),
+ (r'DotBot', 'DotBot (Moz)', 'SEO-сервис'),
+ (r'SERankingBacklinksBot|SERanking', 'SE Ranking', 'SEO-сервис'),
+ (r'serpstatbot', 'Serpstat', 'SEO-сервис'),
+ (r'PRLabBacklinkBot', 'PRLab', 'SEO-сервис'),
+ (r'DataForSeoBot', 'DataForSEO', 'SEO-сервис'),
+ (r'BLEXBot|Barkrowler|MegaIndex|keys-so|LinkpadBot|Linkdex|SEOkicks|Screaming Frog|SiteCheckerBot|Sitebulb|netEstate|ZoominfoBot|Seekport|Mediatoolkit|BrightEdge|SEOlyt|serpstat|Spbot', 'SEO: прочие', 'SEO-сервис'),
+ (r'vkShare|VK\b|vk\.com/dev', 'vkShare (ВКонтакте)', 'Превью в соцсетях/мессенджерах'),
+ (r'OdklBot', 'OdklBot (Одноклассники)', 'Превью в соцсетях/мессенджерах'),
+ (r'facebookexternalhit|Facebot', 'Facebook', 'Превью в соцсетях/мессенджерах'),
+ (r'TelegramBot', 'TelegramBot', 'Превью в соцсетях/мессенджерах'),
+ (r'WhatsApp', 'WhatsApp', 'Превью в соцсетях/мессенджерах'),
+ (r'Twitterbot', 'Twitterbot', 'Превью в соцсетях/мессенджерах'),
+ (r'Pinterest', 'Pinterest', 'Превью в соцсетях/мессенджерах'),
+ (r'Slackbot|Discordbot|SkypeUriPreview|Viber|LinkedInBot|redditbot|Iframely|Embedly|MicrosoftPreview', 'Превью: прочие', 'Превью в соцсетях/мессенджерах'),
+ (r'Avitobot', 'Avito Autoload', 'Фиды/площадки'),
+ (r'Prufen', 'Prufen (мониторинг)', 'Мониторинг'),
+ (r'DomainCheckService|UptimeRobot|Pingdom|StatusCake|Site24x7|uptime|monitor|Better Uptime|HetrixTools|Uptime-Kuma|check_http|Zabbix', 'Мониторинг: прочие', 'Мониторинг'),
+ (r'zgrab|CensysInspect|Palo Alto|Xpanse|ModatScanner|research-scan|ExchangeScanner|Nmap|nuclei|masscan|l9explore|l9tcpid|InternetMeasurement|Expanse|Shodan|Netcraft|LeakIX|FlossoSecurityCheck|Odin|BitSightBot|internet-scanner|httpx|fasthttp|WanScannerBot|Hello World|Nessus|sqlmap|Nikto|Acunetix|WPScan|scaninfo|ivre-masscan|criminalip|abuse\.xmco|Go-http-client/2', 'Сканеры безопасности', 'Сканер уязвимостей'),
+ (r'HeadlessChrome|Lightpanda|PhantomJS|Puppeteer|Playwright|Selenium|electron', 'Headless-браузер', 'Скрипты/библиотеки'),
+ (r'^curl/', 'curl', 'Скрипты/библиотеки'),
+ (r'python-requests|aiohttp|Python-urllib|python-httpx|Python/', 'Python', 'Скрипты/библиотеки'),
+ (r'Go-http-client', 'Go-http-client', 'Скрипты/библиотеки'),
+ (r'Java/|Apache-HttpClient|okhttp|Jakarta', 'Java/okhttp', 'Скрипты/библиотеки'),
+ (r'axios|node-fetch|undici|Node\.js', 'Node.js', 'Скрипты/библиотеки'),
+ (r'WordPress', 'WordPress (pingback/проверка)', 'Скрипты/библиотеки'),
+ (r'Wget|libwww|lwp-|PHP/|GuzzleHttp|Ruby|Faraday|Dart/|reqwest|HTTPie|Postman', 'Скрипты: прочие', 'Скрипты/библиотеки'),
+ (r'br-crawler|jscrawler|rss-feed-miner|tphotobot|ImageMetaBot|^Mozilla/5\.0 \(compatible; crawler\)$|crawler|spider|Crawler|Spider|bot\b|Bot\b|bot/|Bot/', 'Прочие боты', 'Прочие боты'),
+ (r'^-?$', 'Без User-Agent', 'Скрипты/библиотеки'),
+]
+FAMC = [(re.compile(r), f, c) for r, f, c in FAM]
+HUMAN_APP = re.compile(r'YandexSearch/|YaApp_|YaSearchBrowser|YaBrowser/')
+_cache = {}
+def family(ua):
+    """Вернёт (семейство, категория) для объявленного робота или None для обычного браузера."""
+    r = _cache.get(ua)
+    if r is None and ua not in _cache:
+        if not (HUMAN_APP.search(ua) and 'bot' not in ua.lower()):
+            for rx, f, c in FAMC:
+                if rx.search(ua): r = (f, c); break
+        _cache[ua] = r
+    return r

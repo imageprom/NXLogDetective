@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "botsig/1",
+  "title": "Bot signature set (botsig/1)",
+  "type": "object",
+  "required": ["format", "signatures"],
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "botsig/1"},
+    "site": {"type": "string"},
+    "updated": {"type": "string"},
+    "lists": {
+      "description": "Именованные списки (IOC и справочники). В условиях на них ссылаются как {in_list: name}.",
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {"type": "array", "items": {"type": ["string", "integer"]}},
+          {"type": "object"}
+        ]
+      }
+    },
+    "signatures": {"type": "array", "items": {"$ref": "#/$defs/signature"}}
+  },
+  "$defs": {
+    "predicate": {
+      "description": "Условие на один запрос. Поля объединяются по И. Значение поля: скаляр (равно), массив (одно из), или объект-оператор.",
+      "type": "object",
+      "properties": {
+        "all": {"type": "array", "items": {"$ref": "#/$defs/predicate"}},
+        "any": {"type": "array", "items": {"$ref": "#/$defs/predicate"}},
+        "not": {"$ref": "#/$defs/predicate"}
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {"type": ["string", "integer", "boolean", "null"]},
+          {"type": "array"},
+          {"$ref": "#/$defs/operator"}
+        ]
+      }
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "eq": {}, "ne": {},
+        "in": {"type": "array"}, "not_in": {"type": "array"},
+        "re": {"type": "string"}, "not_re": {"type": "string"},
+        "in_list": {"type": "string"}, "not_in_list": {"type": "string"},
+        "cidr": {"type": "array", "items": {"type": "string"}},
+        "gt": {"type": "number"}, "gte": {"type": "number"},
+        "lt": {"type": "number"}, "lte": {"type": "number"},
+        "exists": {"type": "boolean"}
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["as", "match"],
+      "additionalProperties": false,
+      "properties": {
+        "as": {"type": "string"},
+        "match": {"$ref": "#/$defs/predicate"},
+        "first_page_in_session": {"type": "boolean", "description": "Шаг должен быть первой страницей сессии"},
+        "within": {"type": "integer", "description": "Не позже N секунд после предыдущего шага"},
+        "max_pages_between": {"type": "integer", "description": "Не больше N просмотров страниц между предыдущим шагом и этим"}
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "required": ["agg", "op", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "agg": {"enum": ["count", "distinct", "span", "burst"],
+                "description": "count — число запросов; distinct — число разных значений поля; span — секунды между первым и последним; burst — максимум запросов в любом окне window секунд"},
+        "match": {"$ref": "#/$defs/predicate"},
+        "field": {"type": "string"},
+        "window": {"type": "integer"},
+        "op": {"enum": ["==", "!=", ">", ">=", "<", "<="]},
+        "value": {"type": "number"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["id", "title", "category", "severity", "confidence", "action", "scope"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Z0-9-]+$"},
+        "title": {"type": "string"},
+        "version": {"type": "integer"},
+        "status": {"enum": ["active", "experimental", "disabled"]},
+        "category": {"enum": ["form_spam", "scraper", "vuln_scan", "fake_crawler", "recon", "click_fraud", "headless", "crawler_policy"]},
+        "severity": {"enum": ["info", "low", "medium", "high", "critical"]},
+        "confidence": {"enum": ["low", "medium", "high"]},
+        "action": {"type": "array", "items": {"enum": ["monitor", "flag", "reject_lead", "rate_limit", "challenge", "block_ip", "block_subnet"]}},
+        "scope": {"enum": ["request", "session", "window"],
+                  "description": "request — один запрос; session — визит (пауза ≤ session_gap); window — все запросы ключа за окно window"},
+        "key": {"enum": ["ip", "ip_ua"], "default": "ip"},
+        "session_gap": {"type": "integer", "default": 1800},
+        "window": {"enum": ["day", "hour"]},
+        "where": {"$ref": "#/$defs/predicate", "description": "Какие запросы вообще учитывать (фильтр до анализа)"},
+        "match": {"$ref": "#/$defs/predicate", "description": "Для scope=request"},
+        "sequence": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+        "require": {"type": "array", "items": {"$ref": "#/$defs/aggregate"}},
+        "description": {"type": "string"},
+        "false_positives": {"type": "string"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "first_seen": {"type": "string"}, "last_seen": {"type": "string"}
+      }
+    }
+  }
+}

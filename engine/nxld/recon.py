@@ -1,0 +1,201 @@
+"""NXLD: разведка — что за сайт: сервер, движок, шаблоны адресов, формы, метки, служебные файлы, свои."""
+import re
+from collections import Counter, defaultdict
+import numpy as np, pandas as pd
+
+ENGINES = [
+    ('1С-Битрикс', r'^/bitrix/|^/local/(templates|components|js)/|^/upload/iblock/'),
+    ('WordPress', r'^/wp-content/|^/wp-includes/|^/wp-json/'),
+    ('Joomla', r'^/components/com_|^/media/jui/|^/media/system/'),
+    ('UMI.CMS', r'^/images/cms/|^/udata/|^/emarket/'),
+    ('Drupal', r'^/sites/default/files/|^/core/misc/|^/misc/drupal\.js'),
+    ('MODX', r'^/assets/components/|^/connectors/'),
+    ('OpenCart', r'^/catalog/view/theme/'),
+    ('Webasyst/Shop-Script', r'^/wa-data/|^/wa-apps/|^/wa-content/'),
+    ('NetCat', r'^/netcat/|^/netcat_files/'),
+    ('HostCMS', r'^/hostcmsfiles/'),
+    ('DLE', r'^/engine/classes/|^/templates/.+/js/libs\.js'),
+    ('Tilda', r'^/tild[\w-]*\.(js|css)|tildacdn'),
+    ('Next.js', r'^/_next/'),
+    ('Nuxt', r'^/_nuxt/'),
+    ('Django', r'^/static/admin/'),
+    ('Laravel', r'^/livewire/|^/vendor/livewire/'),
+]
+ADMIN_PATHS = {
+    '1С-Битрикс': r'^/bitrix/admin/', 'WordPress': r'^/wp-admin/|^/wp-login\.php', 'Joomla': r'^/administrator/',
+    'UMI.CMS': r'^/admin/', 'Drupal': r'^/user/login|^/admin/', 'MODX': r'^/manager/', 'OpenCart': r'^/admin/',
+    'Webasyst/Shop-Script': r'^/webasyst/', 'NetCat': r'^/netcat/admin/', 'HostCMS': r'^/admin/', 'DLE': r'^/admin\.php',
+    'Django': r'^/admin/', 'Laravel': r'^/admin/',
+}
+GENERIC_ADMIN = r'^/admin/|^/administrator/|^/manager/|^/panel/|^/cp/|^/backend/'
+PD_PARAMS = re.compile(r'(?:^|&)(name|fio|phone|tel|telephone|email|e-mail|mail|message|comment)=([^&]+)', re.I)
+AD_PARAMS = ['yclid', 'gclid', 'gbraid', 'wbraid', 'fbclid', 'rb_clickid', '_openstat', 'utm_source', 'utm_medium', 'utm_campaign',
+             'utm_content', 'utm_term', 'calltouch_tm', 'roistat', 'from', 'ysclid', 'erid', 'vkclid', 'msclkid']
+SUCCESS_MARK = re.compile(r'success|thank|spasibo|thanks|ok=|sent|otpravleno', re.I)
+
+
+def norm_segment(s):
+    if re.fullmatch(r'\d+', s) or re.fullmatch(r'[0-9a-f]{16,}', s, re.I) or re.fullmatch(r'[0-9a-f-]{32,36}', s, re.I):
+        return '*'
+    if re.fullmatch(r'[a-z_-]{1,8}\d+[a-z]?', s, re.I):   # dom-1, s2, e14, n8, page3
+        return re.sub(r'\d+[a-z]?$', '*', s)
+    return s
+
+
+def build_templates(R, page_mask, min_children=30):
+    """Шаблоны адресов: числа и ID -> *; уровень (кроме первого — разделов), где >= min_children
+    разных значений, каждое у >= 2 разных IP, -> *. Возвращает массив шаблонов по категориям base."""
+    bases = R['base'].cat.categories.to_series()
+    codes = R['base'].cat.codes.values[page_mask]
+    ipc = R['ip'].cat.codes.values[page_mask]
+    ipn = pd.DataFrame({'b': codes, 'i': ipc}).drop_duplicates().groupby('b').size()
+    good = set(ipn[ipn >= 2].index.tolist())
+    segs = [[norm_segment(x) for x in b.split('/')] for b in bases]
+    for depth in range(2, 9):
+        children = defaultdict(set)
+        for i in good:
+            sg = segs[i]
+            if len(sg) <= depth or sg[depth] in ('', '*'): continue
+            children[tuple(sg[:depth])].add(sg[depth])
+        wide = {k for k, v in children.items() if len(v) >= min_children}
+        if not wide: continue
+        for sg in segs:
+            if len(sg) > depth and tuple(sg[:depth]) in wide and sg[depth] not in ('', '*') and not re.search(r'\.(php|html?|aspx?|jsp)$', sg[depth]):
+                sg[depth] = '*'
+    return np.array(['/'.join(s) for s in segs], dtype=object)
+
+
+def detect_engine(R):
+    ok = R['ua_browser'].values & np.isin(R['status'].values, [200, 304])
+    bases = R['base'].cat.categories.to_series()
+    res = []
+    codes = R['base'].cat.codes.values
+    ipc = R['ip'].cat.codes.values
+    for name, rx in ENGINES:
+        m = bases.str.contains(rx, regex=True).values
+        hit = ok & m[codes]
+        n = int(hit.sum())
+        if n:
+            res.append(dict(движок=name, запросов_браузеров_200=n, IP=int(len(np.unique(ipc[hit])))))
+    df = pd.DataFrame(res, columns=['движок', 'запросов_браузеров_200', 'IP'])
+    found = df[df.IP >= 20].sort_values('IP', ascending=False)
+    if not len(found):
+        pg = ok & ~R['is_static'].values & (R['method'].values == 'GET')
+        b = bases.values[codes[pg]]
+        html = pd.Series(b).str.contains(r'(\.html?|/)$', regex=True).mean() if len(b) else 0
+        php = pd.Series(b).str.contains(r'\.php$', regex=True).mean() if len(b) else 0
+        label = 'Статический HTML (признаков CMS нет)' if html > 0.9 and php < 0.01 else ('PHP без известного движка' if php > 0.05 else 'Свой движок или не определён')
+        found = pd.DataFrame([dict(движок=label, запросов_браузеров_200=int(pg.sum()), IP=int(len(np.unique(ipc[pg]))))])
+    return found, df
+
+
+def detect_server(R, E):
+    info = {}
+    st = R['status'].values
+    info['nginx_499'] = int((st == 499).sum())
+    info['протокол'] = R['proto'].value_counts().head(4).to_dict()
+    if E is not None and len(E):
+        ups = E['upstream'].fillna('')
+        fcgi = ups[ups.str.startswith('fastcgi')].str.extract(r'(php[\w.-]*|/run/php/[^:"]+|php-fpm/[^:"]+)')[0].dropna()
+        info['upstream'] = ups[ups != ''].str.replace(r'/[^/]*\.php.*$', '', regex=True).str.slice(0, 60).value_counts().head(5).to_dict()
+        info['php_fpm'] = fcgi.value_counts().head(3).to_dict()
+        paths = E['msg'].str.extract(r'(/home/bitrix/www|/var/www/[\w.-]+|/usr/share/nginx/html|/srv/[\w.-]+|/home/[\w.-]+/[\w.-]+|[A-Z]:\\\\[^ ]+)')[0].dropna()
+        info['пути_на_сервере'] = paths.value_counts().head(5).to_dict()
+        php = E['msg'].str.extract(r'PHP (Fatal error|Warning|Notice|Deprecated|Parse error)')[0].dropna()
+        info['php_сообщения'] = php.value_counts().to_dict()
+        info['error_log'] = 'nginx'
+    if info.get('nginx_499') or (E is not None and len(E)):
+        info['веб-сервер'] = 'nginx' + (' → Apache' if any(':8888' in k or 'apache' in k.lower() for k in info.get('upstream', {})) else '') + \
+                             (' → PHP-FPM' if any(k.startswith('fastcgi') for k in info.get('upstream', {})) else '')
+    else:
+        info['веб-сервер'] = 'не определён (nginx или Apache)'
+    return info
+
+
+def detect_ad_params(R, entry_mask):
+    q = R['query'].astype(str).values[entry_mask]
+    keys = Counter()
+    for s in q:
+        if not s: continue
+        for kv in s.split('&'):
+            k = kv.split('=', 1)[0].lower()
+            if k: keys[k] += 1
+    n = int(entry_mask.sum())
+    known = {k: keys[k] for k in AD_PARAMS if keys.get(k)}
+    other = {k: v for k, v in keys.most_common(30) if k not in known and v >= max(20, n * 0.002)}
+    return known, other
+
+
+def detect_service_files(R):
+    b = R['base'].astype(str)
+    m = b.str.contains(r'^/robots\.txt$|sitemap[\w-]*\.xml|\.yml$|\.yml\.gz$|/export/|feed|/rss|\.xml$|favicon|manifest\.json|site\.webmanifest|^/\.well-known/', case=False, regex=True)
+    S = R.loc[m.values, ['base', 'status', 'fam', 'bytes', 'day']]
+    if not len(S):
+        return pd.DataFrame()
+    g = S.groupby('base', observed=True)
+    out = pd.DataFrame({
+        'запросов': g.size(),
+        'коды': g['status'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().items())),
+        'кто_забирает': g['fam'].agg(lambda s: ', '.join(f'{k or "браузеры/прочие"}:{v}' for k, v in s.astype(str).value_counts().head(4).items())),
+        'средний_размер_КБ': (g['bytes'].mean() / 1024).round(1),
+        'первый_день': g['day'].agg(lambda s: str(min(s))), 'последний_день': g['day'].agg(lambda s: str(max(s))),
+    }).reset_index().rename(columns={'base': 'адрес'})
+    out = out[out['запросов'] >= 3].sort_values('запросов', ascending=False)
+    return out
+
+
+FORM_HINT = re.compile(r'form|callback|feedback|order|lead|request|zayav|subscribe|contact|send|submit|question|booking|zapis|anketa|quiz|calc', re.I)
+
+
+def detect_forms(R, tpl):
+    """Цели: POST от браузеров со страниц сайта. Признак успеха — по реакции сервера.
+    AJAX-адреса, которые всегда отвечают 200 и не похожи на формы, целями не считаются."""
+    m = (R['method'].values == 'POST') & R['ua_browser'].values & R['ref_internal'].values
+    P = R.loc[m, ['ts', 'ip', 'base', 'query', 'status']].copy()
+    if not len(P):
+        return pd.DataFrame(), {}
+    P['tpl'] = tpl[R['base'].cat.codes.values[m]]
+    q = P['query'].astype(str)
+    P['form'] = q.str.extract(r'(?:^|&)(?:form|form_id|WEB_FORM_ID|formid|form_name)=([^&]+)', flags=re.I)[0].fillna('')
+    P['key'] = P['tpl'] + np.where(P['form'] != '', '?form=' + P['form'], '')
+    rows, rules = [], {}
+    for key, g in P.groupby('key'):
+        n = len(g)
+        if n < 3: continue
+        vc = g['status'].value_counts()
+        ok_share = g['status'].between(200, 399).mean()
+        r3 = int(g['status'].isin([302, 303]).sum())
+        r301 = (g['status'].isin([301, 308])).mean()
+        hint = bool(FORM_HINT.search(key))
+        if ok_share < 0.5:
+            rule = 'не цель: адрес не принимает POST (404/405/ошибки)'
+        elif r301 >= 0.5:
+            rule = 'не цель: адрес перенаправляется (301)'
+        elif r3 >= max(2, 0.1 * n) and (hint or (key.endswith('.php') and r3 >= 0.3 * n and g['ip'].nunique() >= 5)):
+            rule = 'цель: успех = 3xx (редирект после отправки)'
+        elif hint:
+            rule = 'цель: успех по коду не различим (200)'
+        else:
+            rule = 'не цель: AJAX/служебный адрес'
+        rules[key] = rule
+        rows.append(dict(адрес=key, отправок=n, IP=g['ip'].nunique(), коды=', '.join(f'{k}:{v}' for k, v in vc.items()),
+                         вывод=rule, первый=pd.to_datetime(g.ts.min(), unit='s'), последний=pd.to_datetime(g.ts.max(), unit='s')))
+    D = pd.DataFrame(rows).sort_values(['вывод', 'отправок'], ascending=[True, False])
+    goals = {k: v for k, v in rules.items() if v.startswith('цель')}
+    return D, goals
+
+
+def detect_get_pd(R):
+    q = R['query'].astype(str)
+    cats = R['query'].cat.categories.to_series()
+    hit = cats.str.contains(PD_PARAMS, regex=True).values
+    m = hit[R['query'].cat.codes.values] & (R['method'].values == 'GET')
+    G = R.loc[m, ['ts', 'ip', 'base', 'query', 'status', 'ua', 'fam']].copy()
+    return G
+
+
+def mask_pd(s):
+    s = re.sub(r'(\+?\d)[\d\s()-]{6,}(\d\d)', lambda m: m.group(1) + '** ***-**-' + m.group(2), s)
+    s = re.sub(r'([\w.-])[\w.-]*@([\w-])[\w.-]*', r'\1***@\2***', s)
+    s = re.sub(r'(?i)((?:name|fio|message|comment)=)[^&]+', r'\1***', s)
+    return s

@@ -133,6 +133,79 @@ ERR_TYPES = [
 ]
 
 
+def outage_windows(R, st, E, gap=3):
+    """Окна сбоев. Пик: в минуте ≥3 страниц с 5xx у ≥3 разных IP (не один робот на битых адресах) и ≥25% страниц с 5xx (разрыв ≤3 мин склеивается).
+    Деградация: соседние минуты, где доля 5xx+499 у страниц ≥ max(3×обычной для этого часа, 20%) при ≥5 страницах,
+    или запросов меньше 30% обычного для этого часа. Пик расширяется деградацией в обе стороны (разрыв ≤3 мин).
+    Отдельные окна деградации без пика тоже возвращаются (пик_минут = 0)."""
+    page = R['is_page'].values | (R['method'].values == 'POST')
+    M = pd.DataFrame({'m': R['ts'].values // 60, 'p5': page & (st >= 500), 'p499': page & (st == 499), 'p': page,
+                      'n': np.ones(len(st), dtype=np.int32), 's_ok': R['is_static'].values & (st < 400), 's': R['is_static'].values})
+    mm = M.groupby('m').sum()
+    m5 = page & (st >= 500)
+    mm['ip5'] = pd.DataFrame({'m': M['m'].values[m5], 'ip': R['ip'].values[m5]}).groupby('m')['ip'].nunique()
+    mm['ip5'] = mm['ip5'].fillna(0)
+    full = np.arange(mm.index.min(), mm.index.max() + 1)
+    mm = mm.reindex(full, fill_value=0)
+    hour = (mm.index.values // 60) % 24
+    share = (mm['p5'] + mm['p499']) / mm['p'].clip(lower=1)
+    ok = mm['p'] >= 5
+    base_share = pd.Series(np.where(ok, share, np.nan), index=mm.index).groupby(hour).transform('median').fillna(0).values
+    base_n = mm['n'].groupby(hour).transform('median').values
+    peak = ((mm['p5'] >= 3) & (mm['ip5'] >= 3) & (mm['p5'] / mm['p'].clip(lower=1) >= 0.25)).values
+    dshare = (ok & (share >= np.maximum(3 * base_share, 0.2))).values
+    drop = (mm['n'].values < 0.3 * base_n) & (base_n >= 20)
+    idx = mm.index.values
+    def runs(mask):
+        pos = np.flatnonzero(mask); out = []
+        if not len(pos): return out
+        a = b = pos[0]
+        for x in pos[1:]:
+            if x - b > gap: out.append((a, b)); a = x
+            b = x
+        out.append((a, b)); return out
+    # окна: пики, расширенные деградацией (доля ошибок или провал трафика); отдельно — деградация по доле ошибок без пика
+    ext = dshare | drop | peak
+    spans = []
+    for a, b in runs(ext):
+        if peak[a:b + 1].any():
+            spans.append((a, b))
+    for a, b in runs(dshare | peak):
+        if not peak[a:b + 1].any() and b - a + 1 >= 10 and not any(x <= a and b <= y for x, y in spans):
+            spans.append((a, b))
+    rows = []
+    for a, b in sorted(spans):
+        pk = np.flatnonzero(peak[a:b + 1])
+        seg = mm.iloc[a:b + 1]
+        if len(pk):
+            pa, pb = a + pk[0], a + pk[-1]
+        else:
+            if seg['p5'].sum() + seg['p499'].sum() < 20: continue
+            pa, pb = a, b
+        ps = mm.iloc[pa:pb + 1]
+        t0, t1 = idx[a] * 60, idx[b] * 60 + 59
+        dbmsg = up = 0
+        if E is not None and len(E):
+            em = E[(E['ts'] >= t0) & (E['ts'] <= t1)]
+            dbmsg = int(em['msg'].str.contains(DB_RX, regex=True).sum())
+            up = int(em['msg'].str.contains('upstream timed out|connect\\(\\) failed', regex=True).sum())
+        static_ok = seg['s_ok'].sum() / max(1, seg['s'].sum())
+        cause = []
+        if dbmsg: cause.append(f'база данных ({dbmsg} сообщений)')
+        if up: cause.append(f'бэкенд не отвечает/таймаут ({up})')
+        if static_ok > 0.9 and seg['p5'].sum(): cause.append('статика отдавалась нормально — падала динамика')
+        if (ps['n'].mean() < 0.3 * base_n[pa:pb + 1].mean()): cause.append('трафик провалился — сервер принимал мало запросов')
+        if pb - pa + 1 < 2 and seg['p5'].sum() + seg['p499'].sum() < 20: continue   # одиночная минута без заметных потерь — шум
+        rows.append(dict(деградация_с=dt(t0), начало=dt(idx[pa] * 60), конец=dt(idx[pb] * 60 + 59), деградация_по=dt(t1),
+                         пик_минут=int(pb - pa + 1) if len(pk) else 0, минут_всего=int(b - a + 1),
+                         страниц_с_5xx=int(seg['p5'].sum()), обрывов_499=int(seg['p499'].sum()),
+                         доля_5xx_у_страниц_в_пик=round(ps['p5'].sum() / max(1, ps['p'].sum()), 2),
+                         запросов_в_мин=int(ps['n'].mean()), обычно_запросов_в_мин=int(base_n[pa:pb + 1].mean()),
+                         статика_в_норме=round(static_ok, 2), вероятная_причина='; '.join(cause) or 'не определена'))
+    W = pd.DataFrame(rows)
+    return W, rows
+
+
 def errors(c, F):
     R, V = c.R, c.V
     S = {}
@@ -148,43 +221,19 @@ def errors(c, F):
     K = pd.DataFrame({'код': st, 'w': who}).groupby(['код', 'w']).size().reset_index(name='n')
     K['кто'] = WHO[K['w']]
     S['Коды ответа'] = K.pivot_table(index='код', columns='кто', values='n', fill_value=0).reset_index()
-    # сбои: минуты с массовыми 5xx у страниц
-    page = R['is_page'].values | (R['method'].values == 'POST')
-    minute = R['ts'].values // 60
-    M = pd.DataFrame({'m': minute, 'p5': page & (st >= 500), 'p': page, 's_ok': R['is_static'].values & (st < 400), 's': R['is_static'].values,
-                      'size': R['bytes'].values * page})
-    mm = M.groupby('m').agg(p5=('p5', 'sum'), p=('p', 'sum'), s_ok=('s_ok', 'sum'), s=('s', 'sum'))
-    bad = mm[(mm['p5'] >= 5) & (mm['p5'] / mm['p'].clip(lower=1) >= 0.5)]
-    win = []
-    if len(bad):
-        idx = bad.index.values
-        start = idx[0]; prev = idx[0]
-        for x in list(idx[1:]) + [None]:
-            if x is None or x - prev > 3:
-                seg = mm.loc[start:prev]
-                e = c.E
-                dbmsg = 0
-                if e is not None and len(e):
-                    em = e[(e['ts'] >= start * 60) & (e['ts'] <= prev * 60 + 59)]
-                    dbmsg = int(em['msg'].str.contains(DB_RX, regex=True).sum())
-                    up = int(em['msg'].str.contains('upstream timed out|connect\\(\\) failed', regex=True).sum())
-                else:
-                    up = 0
-                static_ok = seg['s_ok'].sum() / max(1, seg['s'].sum())
-                cause = []
-                if dbmsg: cause.append(f'база данных ({dbmsg} сообщений)')
-                if up: cause.append(f'бэкенд не отвечает/таймаут ({up})')
-                if static_ok > 0.9: cause.append('статика отдавалась нормально — падала динамика')
-                win.append(dict(начало=dt(start * 60), конец=dt(prev * 60 + 59), минут=int(prev - start + 1), страниц_с_5xx=int(seg['p5'].sum()),
-                                доля_5xx_у_страниц=round(seg['p5'].sum() / max(1, seg['p'].sum()), 2), статика_в_норме=round(static_ok, 2), вероятная_причина='; '.join(cause) or 'не определена'))
-                if x is not None: start = x
-            if x is not None: prev = x
-    W = pd.DataFrame(win)
-    S['Сбои'] = W
-    for _, w in W.iterrows():
-        if w['минут'] >= 2:
+    # сбои: пик (страницы массово отдают 5xx) и деградация вокруг него (доля 5xx+499 в разы выше обычной для этого часа или провал трафика)
+    S['Сбои'], outages = outage_windows(R, st, c.E)
+    for w in outages:
+        if w['пик_минут'] >= 2 and w['страниц_с_5xx'] >= 10:
+            deg = f"деградация {str(w['деградация_с'])[:16]}–{str(w['деградация_по'])[11:16]}, " if w['деградация_с'] != w['начало'] or w['деградация_по'] != w['конец'] else ''
             F.add('Ошибки', 'Срочно', 'outage', str(w['начало'])[:16], f"Сбой {str(w['начало'])[:16]}–{str(w['конец'])[11:16]}: страницы отдавали 5xx",
-                  f"{w['минут']} мин, {w['страниц_с_5xx']} страниц с ошибкой; {w['вероятная_причина']}", 'сервер / база данных', 'Найти причину по логам сервера и базы', int(w['минут']), 'Сбои')
+                  f"{deg}пик {str(w['начало'])[11:16]}–{str(w['конец'])[11:16]} ({w['пик_минут']} мин): {w['страниц_с_5xx']} страниц с 5xx, {w['обрывов_499']} обрывов 499, "
+                  f"запросов в минуту {w['запросов_в_мин']} при обычных {w['обычно_запросов_в_мин']} для этого часа; причина: {w['вероятная_причина']}",
+                  'сервер / база данных', 'Найти причину по логам сервера и базы за окно деградации', int(w['минут_всего']), 'Сбои')
+        elif w['минут_всего'] >= 10 and w['страниц_с_5xx'] + w['обрывов_499'] >= 20:
+            F.add('Ошибки', 'Важно', 'degradation', str(w['деградация_с'])[:16], f"Деградация {str(w['деградация_с'])[:16]}–{str(w['деградация_по'])[11:16]}: рост 5xx/499 или провал трафика",
+                  f"{w['минут_всего']} мин; {w['страниц_с_5xx']} страниц с 5xx, {w['обрывов_499']} обрывов 499; причина: {w['вероятная_причина']}",
+                  'сервер', 'Проверить нагрузку и логи сервера за это окно', int(w['минут_всего']), 'Сбои')
     # 5xx по шаблонам
     m5 = (st >= 500) & page
     Q = R.loc[m5, ['tpl', 'base', 'day', 'vid', 'ts']].assign(чел=c.human[m5])
@@ -330,7 +379,7 @@ def errors(c, F):
                 F.add('Ошибки', 'Срочно' if t != 'PHP Fatal' else 'Важно', 'errlog', t, f'В error-логе: {t}', f"{r['сообщений']} сообщений, {r['первый']} — {r['последний']}; {str(r['пример'])[:200]}",
                       'сервер / код', 'Разобрать по error-логу', int(r['сообщений']), 'Error-лог')
     s = {'Доля ошибок у людей, %': round(((st >= 400) & c.human & page).sum() / max(1, (c.human & page).sum()) * 100, 2),
-         '5xx у людей': int(((st >= 500) & c.human).sum()), 'Окон сбоев': int(len(W)),
+         '5xx у людей': int(((st >= 500) & c.human).sum()), 'Окон сбоев': int((S['Сбои']['пик_минут'] > 0).sum()) if len(S['Сбои']) else 0,
          'Визитов людей со входом на 404': int(len(e404)), 'Битых переходов внутри сайта': int(bl.sum())}
     return S, s
 

@@ -77,7 +77,7 @@ def conversions(wb, C, name='Конверсии'):
     d = pd.DataFrame({
         'Время': pd.to_datetime(C['время']).dt.strftime('%d.%m.%Y %H:%M'),
         '_t': pd.to_datetime(C['время']),
-        'Кто': C['группа'].astype(str).replace({'Свои': 'Свои (сотрудники)'}),
+        'Кто': C['группа'].astype(str),
         'Форма': C['цель'].astype(str).map(lambda g: (name_of(g, FORM_NAME) or ('общий обработчик форм' if re.search(r'/form\.php$', g) else 'форма')).capitalize()),
         'Принята': C['принята'].astype(str),
         'Код ответа': pd.to_numeric(C['код'], errors='coerce').astype('Int64'),

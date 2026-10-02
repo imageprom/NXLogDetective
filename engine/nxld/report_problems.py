@@ -62,7 +62,7 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     ws.merge_cells('B3:F3')
     sub = f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}"
     if not with_block: sub = f"Блок «{items[0]['блок'] if items else ''}» · " + sub
-    S.cell('B', sub, Font(name='Arial', size=11, color=INK), row=3)
+    S.cell('B', sub, Font(name='Comfortaa', size=11, bold=True, color=GREY), row=3)   # подзаголовок — как на обзоре
     ws.row_dimensions[3].height = 20
     S.r = 4
     order = list(BLOCK_FILES)

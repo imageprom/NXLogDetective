@@ -261,38 +261,53 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     if raw and clean: how += f" (просмотров {ru_short(raw)} → {ru_short(clean)})"
     how += ' и ближе к Метрике. Заявкой считается отправка формы, которую сервер принял.'
     S.note(how)
-    # --- проблемы: маленькая таблица со счётчиками и ссылкой
+    # --- проблемы: три строки-карточки со счётчиками и ссылка под ними (без шапки)
     S.section('Проблемы')
     act = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
     pr = sheet_names.get('Проблемы', 'Проблемы')
-    top = S.r + 1
-    S.table(['Важность', 'Найдено', 'Где смотреть'],
-            [('Срочно', cnt['Срочно'], f'Факты и шаги исправления — лист «{pr}»'), ('Важно', cnt['Важно'], ''), ('К сведению', cnt['К сведению'], '')],
-            ['B', 'C', 'DEF'], num=(1,), links={(0, 2): f"#'{pr}'!A1"},
-            fills={(0, 0): ORANGE, (1, 0): F_NOTE, (2, 0): 'F3F3F3'})
-    ws.unmerge_cells(f'D{top}:F{top}'); ws.unmerge_cells(f'D{top + 1}:F{top + 1}'); ws.unmerge_cells(f'D{top + 2}:F{top + 2}')
-    ws.merge_cells(f'D{top}:F{top + 2}')
-    ws[f'D{top}'].alignment = Alignment(vertical='center', horizontal='left', wrap_text=True, indent=1)
-    for rr in range(top, top + 3): ws.row_dimensions[rr].height = 22
+    for k, color in (('Срочно', ORANGE), ('Важно', DARK), ('К сведению', DARK)):
+        S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
+        S.cell('B', k, Font(name='Arial', size=10, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
+        S.cell('C', cnt[k], Font(name='Arial', size=12, bold=True, color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
+        ws.merge_cells(f'C{S.r}:F{S.r}')
+        ws.row_dimensions[S.r].height = 22
+        S.r += 1
+    c = S.cell('B', f'Факты, доказательства и шаги исправления — на листе «{pr}» →', align=Alignment(vertical='center', indent=1))
+    ws.merge_cells(f'B{S.r}:F{S.r}')
+    c.hyperlink = f"#'{pr}'!A1"; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
+    ws.row_dimensions[S.r].height = 24
+    S.r += 1
+
+    def listing(rows):
+        """Список «ссылка — пояснение» без шапки и заливок, как в первом варианте."""
+        for name, note, link in rows:
+            c = S.cell('B', name, align=Alignment(vertical='center', indent=1))
+            if link:
+                c.hyperlink = link; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
+            else:
+                c.font = Font(name='Arial', size=11, color='000000')
+            ws.merge_cells(f'C{S.r}:F{S.r}')
+            S.cell('C', note, Font(name='Arial', size=10, color=GREY), align=Alignment(vertical='center', indent=1))
+            ws.row_dimensions[S.r].height = 18
+            S.r += 1
+
     # --- содержимое документа (листы этого файла, включая обзор)
     S.section('Содержимое документа')
-    rows, links = [(title, 'этот лист: паспорт проверки, технологии, трафик, оглавление')], {(0, 0): f"#'{title}'!A1"}
+    rows = [(title, 'этот лист: паспорт проверки, технологии, трафик', f"#'{title}'!A1")]
     for name, real in sheet_names.items():
         if real == title or real.startswith('_'): continue
-        links[(len(rows), 0)] = f"#'{real}'!A1"
-        rows.append((real, SHEET_NOTES.get(real, '')))
-    S.table(['Лист', 'Что на нём'], rows, ['B', 'CDEF'], links=links)
+        rows.append((real, SHEET_NOTES.get(real, ''), f"#'{real}'!A1"))
+    listing(rows)
     # --- структура отчёта (файлы)
     S.section('Структура отчёта')
-    rows, links = [('NXLD_01_Overview.xlsx', 'этот файл: общий обзор, устройство сайта, трафик, все проблемы')], {}
+    rows = [('NXLD_01_Overview.xlsx', 'этот файл: общий обзор, устройство сайта, трафик, все проблемы', None)]
     for b, f in BLOCK_FILES.items():
         if b == 'Общий анализ' or b not in res['selected']: continue
-        links[(len(rows), 0)] = f
-        rows.append((f, FILE_NOTES.get(b, '')))
-    rows.append(('NXLD_Redmine.textile', 'связный отчёт Детектива для задачи в Redmine'))
-    rows.append(('*.snapshot.json', 'снимок проверки — понадобится для повторной проверки'))
-    S.table(['Файл', 'Что в нём'], rows, ['B', 'CDEF'], links=links)
+        rows.append((f, FILE_NOTES.get(b, ''), f))
+    rows += [('NXLD_Redmine.textile', 'связный отчёт Детектива для задачи в Redmine', None),
+             ('*.snapshot.json', 'снимок проверки — понадобится для повторной проверки', None)]
+    listing(rows)
     # печать
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True

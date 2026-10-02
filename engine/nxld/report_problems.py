@@ -16,7 +16,7 @@ from .findings_text import GRADE
 STATUS_STYLE = {'стала хуже': (ORANGE, True, None), 'новая': (ORANGE, False, None), 'исправлена частично': (DARK, False, F_NOTE), 'сохраняется': (DARK, False, None)}
 
 
-PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('CCCCCC', '000000')}   # серый — как плашка в фирменном образце
+PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('666666', 'FFFFFF')}   # самый тёмный серый фирменного образца, белый текст
 OLINE = Side(style='thin', color=ORANGE)
 F_LIGHT = 'F7F7F7'   # блок «Расследование и улики» — светлее основных строк карточки
 

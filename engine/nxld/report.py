@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from .findings import SEV_ORDER
-from . import report_index, report_problems, report_anatomy, report_files
+from . import report_index, report_problems, report_anatomy, report_files, report_tables
 
 FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'отмечено как норма': 'EDEDED'}
@@ -298,6 +298,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
             own_people(wb, res['site_map'])
+            report_tables.conversions(wb, S.get('Конверсии'))
             pos = wb.sheetnames.index('Анатомия сайта') + 1 if 'Анатомия сайта' in wb.sheetnames else None
             for k in [k for k in list(names) if k.startswith('Анатомия —')][::-1]:   # приложения — сразу за «Анатомией»
                 if pos and names[k] in wb.sheetnames:

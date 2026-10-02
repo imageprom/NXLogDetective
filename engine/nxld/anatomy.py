@@ -117,7 +117,8 @@ def build(c, res):
         if re.match(CABINET, sec) and v >= 5:
             g_ = pages[pages['раздел'] == sec]
             sub = [x for x in levels(g_, sec) if x['глубина'] >= 2] if len(g_) else []
-            zones.append(dict(что='Личный кабинет', адрес=sec, визитов=int(v), подробно=f"{int(v)} визитов людей", уровни=sub))
+            ipc = np.isin(codes, np.where(cats.str.startswith(sec))[0]) & pg
+            zones.append(dict(что='Личный кабинет', адрес=sec, визитов=int(v), IP=int(R['ip'].values[ipc].nunique() if hasattr(R['ip'].values[ipc], 'nunique') else len(set(R['ip'].values[ipc]))), подробно='', уровни=sub))
     hosts = m.get('site_hosts') or []
     for h in hosts[1:]:
         if re.search(r'(^|\.)(dev|test|stage|staging|demo|beta)\.', h + '.'):

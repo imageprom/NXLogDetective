@@ -65,8 +65,11 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
         for z in rest:
             S.pair(z['что'], z['адрес'] + (f" — {z['подробно']}" if z.get('подробно') else ''))
             if z['что'] == 'Служебный раздел':
-                S.pair('Кто входил', f"с {n(z.get('входили', 0))} {plural(z.get('входили', 0), 'IP-адреса', 'IP-адресов', 'IP-адресов')}", fill=F_LIGHT, level=2)
+                S.pair('Кто входил', f"люди — с {n(z.get('входили', 0))} {plural(z.get('входили', 0), 'IP-адреса', 'IP-адресов', 'IP-адресов')}", fill=F_LIGHT, level=2)
                 if z.get('без_входа'): S.pair('Открывались без входа', str(z['без_входа']).replace(', ', '\n') + '\nпроверить, должно ли так быть', fill=F_LIGHT, level=2)
+            if z['что'] == 'Личный кабинет':
+                S.pair('Визитов людей', n(z.get('визитов', 0)), fill=F_LIGHT, level=2)
+                if z.get('IP'): S.pair('Кто входил', f"люди — с {n(z['IP'])} {plural(z['IP'], 'IP-адреса', 'IP-адресов', 'IP-адресов')}", fill=F_LIGHT, level=2)
             for lv in z.get('уровни') or []:
                 S.pair(f"Уровень {lv['глубина']}" + (f": {cap(lv['название'])}" if not str(lv['название']).startswith('Уровень') else ''),
                        f"{lv.get('шаблон') or lv['пример']} — {n(lv['адресов'])} {plural(lv['адресов'], 'адрес', 'адреса', 'адресов')}, {n(lv['визитов'])} визитов", fill=F_LIGHT, level=2)

@@ -350,6 +350,7 @@ def service_groups(m, res):
     if len(SV):   # robots, sitemap и фиды — по полному листу, даже если их нет среди частых
         ok200 = set(SV.loc[SV['коды'].astype(str).str.contains(r'\b200:'), 'адрес'].astype(str))
         feeds_ = [a for a in SV['адрес'].astype(str).unique() if re.search(SERVICE_GROUPS[1][1], a, re.I) and '/.' not in a
+                  and not re.search(r'config|application|database|docker|secret|credential|settings|env|compose|swagger|openapi|travis|gitlab|circleci', a, re.I)
                   and (a in ok200 and SV.loc[SV['адрес'].astype(str) == a, 'запросов'].sum() >= 20 or SV.loc[SV['адрес'].astype(str) == a, 'запросов'].sum() >= 50)]
         for a in feeds_:
             s = SV[SV['адрес'].astype(str) == a]

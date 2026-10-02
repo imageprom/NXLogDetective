@@ -119,12 +119,12 @@ def card(S, x, n, sev, here_file, with_block):
     S.pair('Из показаний', cap(x.get('факт') or x.get('факты') or ''))
     todo = cap(x.get('что_сделать') or '')
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"
-    if todo: S.pair('Что делать', todo, fill=F_NOTE)
+    if todo: S.pair('Что делать', todo, fill=F_LIGHT)
     crit, check = meta(x)
-    if check and check != '—': S.pair('Как проверить', check)
+    if check and check != '—': S.pair('Как проверить', check, fill=F_LIGHT)
     rows = [(k, v) for k, v in (('Доказательство', x.get('доказательство')), ('Как найдено', crit)) if v]
     if rows:
-        S.pair('Расследование и улики', '', height=20, fill=F_LIGHT)
+        S.pair('Расследование и улики', '', height=20, fill=F_CARD)
         for k, v in rows: S.pair(k, v, level=2, fill=F_LIGHT)
     text, target = link_for(x, here_file)
     if text:

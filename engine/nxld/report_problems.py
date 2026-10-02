@@ -121,7 +121,7 @@ def card(S, x, n, sev, here_file, with_block):
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"
     if todo: S.pair('Что делать', todo, fill=F_LIGHT)
     crit, check = meta(x)
-    if check and check != '—': S.pair('Как убедиться, что исправлено', check, fill=F_LIGHT)
+    if check and check != '—': S.pair('Признак устранения', check, fill=F_LIGHT)
     rows = [(k, v) for k, v in (('Основание', crit), ('Доказательство', x.get('доказательство'))) if v]
     if rows:
         S.pair('Расследование и улики', '', height=20, fill=F_CARD)

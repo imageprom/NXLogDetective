@@ -11,6 +11,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from .prepare import VERSION
 
 ORANGE, ORANGE2, GREY, DARK = 'F57041', 'FF6D01', '666666', '333333'
+INK = '404040'   # серый текст на белом фоне — контрастнее фирменного #666666
 F_CARD, F_NOTE, F_HEAD = 'EFEFEF', 'FCE5CD', 'E5E5E5'
 LOGO = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'brand', 'logo_cybermechanica.png')
 COMPANY_URL = 'https://cybermechanica.ru'
@@ -49,6 +50,12 @@ def ru_short(x):
     return ru_num(x)
 
 
+def row_height(text, chars):
+    """Единая высота строк: 22 пт на одну строку текста, +15 пт на каждую следующую."""
+    lines = sum(max(1, -(-len(part) // max(1, chars))) for part in str(text).split('\n'))
+    return 22 + 15 * (lines - 1)
+
+
 def cap(t):
     t = str(t or '')
     return t[:1].upper() + t[1:]
@@ -71,7 +78,7 @@ class Sheet:
     """Раскладка: A — поле, B — подписи / первая колонка таблиц, C:F — значения."""
     def __init__(self, ws):
         self.ws, self.r = ws, 1
-        for col, w in zip('ABCDEFG', (2.5, 30, 20, 16, 16, 34, 2.5)):
+        for col, w in zip('ABCDEFG', (2.5, 30, 18, 14, 16, 44, 2.5)):
             ws.column_dimensions[col].width = w
         ws.sheet_view.showGridLines = True
 
@@ -106,8 +113,7 @@ class Sheet:
         c = self.cell('C', value, Font(name='Arial', size=11, color=DARK), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         if link:
             c.hyperlink = link; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
-        lines = max(1, sum(len(s) // 90 + 1 for s in str(value).split('\n')))
-        self.ws.row_dimensions[self.r].height = height or max(22, 15 * lines + 9)
+        self.ws.row_dimensions[self.r].height = height or row_height(str(value), 92)
         self.r += 1
 
     def table(self, headers, rows, spans, num=(), links=None, fills=None, center=()):
@@ -136,14 +142,14 @@ class Sheet:
                 if i == 0 and not sev: font = Font(name='Arial', size=10, bold=True, color='000000')
                 else: font = Font(name='Arial', size=11, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
                 al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
-                               indent=0 if i in center else 1)
+                               indent=0 if i in center else 1)   # отступ от края и у чисел
                 c = put(i, v, font, fill, al, Border(bottom=SEP))
                 if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = '#,##0' if isinstance(v, int) else '0%'
                 if links and (k, i) in links:
                     c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11 if i else 10, bold=(i == 0), color=ORANGE2, underline='single')
             width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * 1.05
-            lines = max(-(-len(str(v)) // max(1, int(width(spans[i])) - 2)) for i, v in enumerate(row))
-            self.ws.row_dimensions[self.r].height = max(22, 15 * lines + 8)
+            shown = lambda v: f'{v:.0%}' if isinstance(v, float) else (f'{v:,}' if isinstance(v, int) else str(v))
+            self.ws.row_dimensions[self.r].height = max(row_height(shown(v), int(width(spans[i])) - 3) for i, v in enumerate(row))
             self.r += 1
 
     def note(self, text):
@@ -187,13 +193,13 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     if os.path.exists(LOGO):
         img = XLImage(LOGO); img.width, img.height = 263, 60
         ws.add_image(img, 'B1')
-    S.cell('F', COMPANY_URL, Font(name='Arial', size=11, color=GREY), align=Alignment(horizontal='right', vertical='center'), row=1)
-    ws['F1'].hyperlink = COMPANY_URL; ws['F1'].font = Font(name='Arial', size=11, color=GREY)
+    S.cell('F', COMPANY_URL, Font(name='Arial', size=11, color=INK), align=Alignment(horizontal='right', vertical='center'), row=1)
+    ws['F1'].hyperlink = COMPANY_URL; ws['F1'].font = Font(name='Arial', size=11, color=INK)
     S.r = 5
     ws.merge_cells('B5:F5')
     S.cell('B', f'NX LOG DETECTIVE — САЙТ {site.upper()}', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[5].height = 30
     ws.merge_cells('B6:F6')
-    S.cell('B', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', Font(name='Comfortaa', size=11, bold=True, color=GREY), row=6)
+    S.cell('B', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', Font(name='Comfortaa', size=11, bold=True, color=INK), row=6)
     ws.row_dimensions[6].height = 20
     S.r = 8
     kind = "ПОВТОРНАЯ ПРОВЕРКА" if res.get('prev_period') else 'ПЕРВИЧНАЯ ПРОВЕРКА'
@@ -201,7 +207,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     ws.merge_cells('C8:F8')
     sub = f"Отчёт от {ru_date(date.today())} · NX Log Detective {VERSION}"
     if res.get('prev_period'): sub = f"Сравнение с проверкой за {ru_date(res['prev_period'][0])} — {ru_date(res['prev_period'][1])} · " + sub
-    S.cell('C', sub, Font(name='Arial', size=10, color=GREY), align=Alignment(vertical='center', indent=1))
+    S.cell('C', sub, Font(name='Arial', size=10, color=INK), align=Alignment(vertical='center', indent=1))
     ws.row_dimensions[8].height = 24
     S.r = 9
     # --- проверка
@@ -252,14 +258,16 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     S.table(['Кто', 'Визитов', 'Доля', 'Кто это'], [(g, int(v), v / total, cap(note)) for g, v, note in grp], ['B', 'C', 'D', 'EF'], num=(1, 2))
     S.r += 1
     cl = res.get('cleaning', {})
-    S.pair('Просмотры страниц людьми', f"{ru_short(sm.get('Просмотров страниц людьми', 0))}; визитов во встроенных браузерах приложений — {ru_short(cl.get('Визитов людей во встроенных браузерах приложений', 0))}")
+    S.pair('Просмотров страниц людьми', ru_num(sm.get('Просмотров страниц людьми', 0)))
+    wv = cl.get('Визитов людей во встроенных браузерах приложений', 0)
+    if wv: S.pair('Во встроенных браузерах', f"{ru_num(wv)} визитов — люди открыли сайт внутри приложений (соцсети, мессенджеры, игры)")
     ppl, bots, own = sm.get('Принято от людей', 0), sm.get('Принято от ботов', 0), sm.get('Принято от своих (тесты)', 0)
-    leads = f"отправок форм: {ru_num(sm.get('Отправок целей всего', 0))}; принято заявок от людей — {ru_num(ppl)}"
-    if bots: leads += f", от ботов — {ru_num(bots)}"
-    if own: leads += f", тестов своих — {ru_num(own)}"
-    S.pair('Заявки', leads)
+    S.pair('Отправок форм', f"{ru_num(sm.get('Отправок целей всего', 0))} — все отправки, включая непринятые, ботов и тесты")
+    S.pair('Заявок от людей', f"{ru_num(ppl)} — приняты сервером")
+    if bots: S.pair('Заявок от ботов', f"{ru_num(bots)} — приняты сервером, но фальшивые")
+    if own: S.pair('Тестов своих', f"{ru_num(own)} — сотрудники и подрядчик, в заявки не входят")
     cr = sm.get('Конверсия людей (визит → принятая цель), %', 0)
-    S.pair('Конверсия людей', f"{str(cr).replace('.', ',')}% — одна заявка на {ru_num(round(100 / cr))} визитов" if cr else 'заявок от людей нет')
+    S.pair('Конверсия людей', f"{str(cr).replace('.', ',')}% — одна заявка на {ru_num(round(100 / cr))} визитов" if cr else 'Заявок от людей нет')
     raw, clean = cl.get('Просмотров у людей до очистки'), cl.get('Просмотров у людей после очистки')
     how = ('Как считали. Все визиты и просмотры людей в отчёте — после очистки: склеены двойные загрузки одной страницы и переадресации, '
            'подгрузки форм и блоков не считаются просмотрами, боты и свои отделены. Поэтому цифры меньше сырых')
@@ -289,11 +297,11 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         for name, note, link in rows:
             c = S.cell('B', name, align=Alignment(vertical='center', indent=1))
             if link:
-                c.hyperlink = link; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
+                c.hyperlink = link; c.font = Font(name='Arial', size=11, bold=True, color=ORANGE2, underline='single')
             else:
-                c.font = Font(name='Arial', size=11, color='000000')
+                c.font = Font(name='Arial', size=11, bold=True, color='000000')
             ws.merge_cells(f'C{S.r}:F{S.r}')
-            S.cell('C', cap(note), Font(name='Arial', size=11, color=GREY), align=Alignment(vertical='center', indent=1))
+            S.cell('C', cap(note), Font(name='Arial', size=11, color=INK), align=Alignment(vertical='center', indent=1))
             ws.row_dimensions[S.r].height = 18
             S.r += 1
 

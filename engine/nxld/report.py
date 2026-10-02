@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from .findings import SEV_ORDER
-from . import report_index, report_problems
+from . import report_index, report_problems, report_anatomy
 
 FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'отмечено как норма': 'EDEDED'}
@@ -89,6 +89,25 @@ def site_map_sheets(m):
             ('Запросов с персональными данными в GET', m.get('get_pd_requests', 0))]
     out = {'Карта сайта': pd.DataFrame(rows, columns=['Что', 'Значение']), **out}
     return out
+
+
+def own_people(wb, m):
+    """Сотрудники и мониторинги — на листе «Люди и боты», под таблицей."""
+    if 'Люди и боты' not in wb.sheetnames: return
+    ws = wb['Люди и боты']
+    r = ws.max_row + 2
+    staff = m.get('staff_ips') or []
+    mons = m.get('monitors') or []
+    from openpyxl.styles import Font
+    ws.cell(r, 1, 'Свои: сотрудники').font = Font(bold=True)
+    ws.cell(r, 2, 'IP с успешным входом в админку; их визиты не считаются людьми и заявками').font = Font(italic=True)
+    for ip in staff:
+        r += 1; ws.cell(r, 1, ip)
+    r += 2
+    ws.cell(r, 1, 'Мониторинги').font = Font(bold=True)
+    ws.cell(r, 2, 'запрашивают одну страницу через равные промежутки; не люди и не нагрузка').font = Font(italic=True)
+    for x in mons:
+        r += 1; ws.cell(r, 1, str(x.get('ip'))); ws.cell(r, 2, f"{x.get('адрес')} каждые {x.get('интервал_с')} с; запросов {x.get('запросов')}")
 
 
 def write_xlsx(path, sheets, hidden=None):
@@ -253,7 +272,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         summ = kv_df(res['summary'].get(b, {}))
         if b == 'Общий анализ':
             # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
-            sheets = {'Файлы': files, **site_map_sheets(res['site_map']), **S, 'IP': res['ips']}
+            sheets = {'Файлы': files, **S, 'IP': res['ips']}   # «Карта сайта» заменена листом «Анатомия сайта» (ТЗ, 3 октября)
             hidden = snap_json
         else:
             sheets = {'Сводка': summ, 'О данных': about}
@@ -272,6 +291,9 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         report_problems.build_problems(wb, res, res['findings'] if b == 'Общий анализ' else items, file_names[b], with_block=(b == 'Общий анализ'))
         names = {'Проблемы': 'Проблемы', **names}
         if b == 'Общий анализ':
+            if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
+                names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
+            own_people(wb, res['site_map'])
             report_index.build_index(wb, res, names)
         wb.save(path)
         written.append(path)

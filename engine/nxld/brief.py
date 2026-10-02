@@ -225,6 +225,8 @@ def build(res, c, prev=None):
     q.append('звонки и мессенджеры в логах не видны')
     B['открытые_вопросы'] = q
     B['что_за_сайт'] = res.get('site_profile')   # Детектив может поправить через edits.json → «site_profile»
+    an = res.get('anatomy') or {}
+    B['тематика_подсказки'] = an.get('подсказки')   # по ним Детектив называет тематику и уровни каталогов (edits.json → «anatomy_names», «site_profile.тематика»)
     B['сигналы_без_проблемы'] = res.get('loose_signals', [])   # признак на листе есть, карточки нет: завести проблему или объяснить, почему норма
     cv = res.get('coverage')
     if cv is not None and len(cv):

@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import coverage, profile, visits, blocks, brief, recon, findings_meta, findings_text
+from . import coverage, profile, anatomy, visits, blocks, brief, recon, findings_meta, findings_text
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -120,6 +120,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     findings_text.humanize(F.items, res['sheets'], res['summary'])
     res['findings'] = F.items
     res['coverage'], res['loose_signals'] = coverage.check(res, F.items)
+    try:
+        res['anatomy'] = anatomy.build(c, res)
+        sp_, np_ = res.get('site_profile') or {}, res['anatomy'].get('всего_страниц')
+        if np_ and sp_.get('страниц'):   # одно число страниц везде: после склейки фильтров и без мусорных адресов
+            sp_['страниц'] = np_; sp_['размер'] = 'маленький' if np_ <= 50 else 'средний' if np_ <= 5000 else 'большой'
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        res['anatomy'] = {'ошибка': str(e)}
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')

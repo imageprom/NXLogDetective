@@ -103,7 +103,7 @@ def build(c, res):
     min_v = max(20, int(0.0005 * tot_visits))
     A = dict(движок=engine, всего_страниц=len(pages), визитов=tot_visits)
     # --- админка и закрытые зоны
-    zones = []
+    zones, not_closed = [], set()
     if m.get('admin_regex'):
         adm = str(m['admin_regex']).lstrip('^')
         staff = m.get('staff_ips') or []
@@ -111,11 +111,15 @@ def build(c, res):
         zones.append(dict(что='Админка движка', адрес=adm, подробно=f"входили {len(staff)} адресов сотрудников" if staff else 'входов сотрудников по логу не видно', входили=len(staff)))
     OS = res.get('sheets', {}).get('Нагрузка и безопасность', {}).get('Открытые служебные разделы', pd.DataFrame())
     for _, r in (OS[(OS['форма_входа'] == 'да') & (OS['IP_с_200'] >= 3)].iterrows() if len(OS) and 'IP_с_200' in OS else []):
-        zones.append(dict(что='Служебный раздел', адрес=r['раздел'], подробно='вход по паролю (форма входа)', входили=int(r['адресов_вошло']),
+        zones.append(dict(что='Служебный раздел', адрес=r['раздел'], подробно='вход по паролю (форма входа)', входили=int(r['адресов_вошло']), неудачных=int(r.get('неудачных', 0)), POST=int(r.get('POST_входов', 0)),
                           без_входа=r['страницы_без_входа'] if r.get('адресов_без_входа', 0) else ''))
     for sec, v in sec_visits.items():
         if re.match(CABINET, sec) and v >= 5:
             g_ = pages[pages['раздел'] == sec]
+            sm_ = np.isin(codes, np.where(cats.str.startswith(sec))[0])
+            posts = int((sm_ & (R['method'].values == 'POST') & c.human).sum())
+            if len(g_) < 2 and not posts:      # по названию кабинет, но входа и внутренних страниц нет — обычная страница
+                not_closed.add(sec); continue
             sub = [x for x in levels(g_, sec) if x['глубина'] >= 2] if len(g_) else []
             ipc = np.isin(codes, np.where(cats.str.startswith(sec))[0]) & pg
             zones.append(dict(что='Личный кабинет', адрес=sec, визитов=int(v), IP=int(R['ip'].values[ipc].nunique() if hasattr(R['ip'].values[ipc], 'nunique') else len(set(R['ip'].values[ipc]))), подробно='', уровни=sub))
@@ -128,7 +132,7 @@ def build(c, res):
     cats_, feeds, simple = [], [], []
     for sec, g in pages.groupby('раздел'):
         v = int(sec_visits.get(sec, 0))
-        if sec == '/' or v < min_v or sec in eng_dirs or any(sec.startswith(k) for k in eng_dirs) or re.match(CABINET, sec):
+        if sec == '/' or v < min_v or sec in eng_dirs or any(sec.startswith(k) for k in eng_dirs) or (re.match(CABINET, sec) and sec not in not_closed):
             continue
         lv = levels(g, sec)
         heavy = [x for x in lv if x['адресов'] >= 10]
@@ -149,6 +153,7 @@ def build(c, res):
     marks = section_marks(res)
     for s_ in simple:
         mk = [marks.get(s_['раздел'], '')]
+        if s_['раздел'] in not_closed: mk.append('называется как кабинет, но входа по логу нет')
         if filters_of(R, pg, s_['раздел']) or (len(flt_pages) and flt_pages[flt_pages.index.str.startswith(s_['раздел'])].sum()): mk.append('фильтры')
         s_['пометки'] = ', '.join(x for x in mk if x)
     A['простые'] = sorted(simple, key=lambda x: -x['визитов'])

@@ -66,9 +66,12 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             S.pair(z['что'], z['адрес'] + (f" — {z['подробно']}" if z.get('подробно') else ''))
             if z['что'] == 'Служебный раздел':
                 S.pair('Кто входил', f"люди — с {n(z.get('входили', 0))} {plural(z.get('входили', 0), 'IP-адреса', 'IP-адресов', 'IP-адресов')}", fill=F_LIGHT, level=2)
-                if z.get('без_входа'): S.pair('Открывались без входа', str(z['без_входа']).replace(', ', '\n') + '\nпроверить, должно ли так быть', fill=F_LIGHT, level=2)
+                if z.get('неудачных'): S.pair('Неудачных входов', n(z['неудачных']), fill=F_LIGHT, level=2)
+                if z.get('без_входа'):
+                    S.pair('Открывались без входа', str(z['без_входа']).replace(', ', '\n'), fill=F_LIGHT, level=2)
+                    S.pair('Что проверить', 'должны ли эти страницы открываться без входа', fill=F_LIGHT, level=2)
             if z['что'] == 'Личный кабинет':
-                S.pair('Визитов людей', n(z.get('визитов', 0)), fill=F_LIGHT, level=2)
+                S.pair('Визиты', f"{n(z.get('визитов', 0))} (люди)", fill=F_LIGHT, level=2)
                 if z.get('IP'): S.pair('Кто входил', f"люди — с {n(z['IP'])} {plural(z['IP'], 'IP-адреса', 'IP-адресов', 'IP-адресов')}", fill=F_LIGHT, level=2)
             for lv in z.get('уровни') or []:
                 S.pair(f"Уровень {lv['глубина']}" + (f": {cap(lv['название'])}" if not str(lv['название']).startswith('Уровень') else ''),
@@ -112,12 +115,14 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
         S.table(['Группа', 'Шаблонов', 'Подгрузок', 'Папка'], [[x['группа'], int(x['шаблонов']), int(x['подгрузок']), x['папка']] for x in A['подгружаемые']], ['B', 'C', 'D', 'EF'], num=(1, 2), wrap=0.9)
     # 8. формы и заявки
     if A.get('формы') or A.get('не_цели'):
-        S.section('Формы и заявки')
+        S.section('Формы, заявки и вход')
         for f in A.get('формы', []):
             S.pair(cap(f['форма']), f"от людей: отправлено {n(f['отправлено'])}, принято {n(f['принято'])}" + (f"; от ботов — {n(f['ботов'])}" if f['ботов'] else ''))
             if f.get('где'): S.pair('Где', f['где'].replace(', ', '\n'), fill=F_LIGHT, level=2)
             S.pair('Признак успеха', f['успех'], fill=F_LIGHT, level=2)
             S.pair('Обработчик' if len(f['адреса']) == 1 else 'Обработчики', '\n'.join(f['адреса'][:4]) + (f"\nи ещё {len(f['адреса']) - 4}" if len(f['адреса']) > 4 else ''), fill=F_LIGHT, level=2)
+        for z in [z for z in (A.get('зоны') or []) if z['что'] == 'Служебный раздел' and z.get('POST')]:
+            S.pair(f"Вход в {z['адрес']}", f"успешных — с {n(z.get('входили', 0))} {plural(z.get('входили', 0), 'IP-адреса', 'IP-адресов', 'IP-адресов')}; неудачных попыток — {n(z.get('неудачных', 0))}")
         if A.get('не_цели'):
             S.pair('Не заявки', '; '.join(f"{g['группа']} — {n(g['отправок'])}" for g in A['не_цели']))
         link_row(S, 'Все отправки форм', 'Конверсии', names)

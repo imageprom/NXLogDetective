@@ -501,6 +501,8 @@ def load_security(c, F):
             fail = pr[(pr['status'] == 200) & ((pr['bytes'] - fp).abs() <= tol)] if fp else pr.iloc[0:0]
             inner = g[(g['base'] != sec_) & (g['status'] == 200)]
             inner_open = inner[~inner['ip'].isin(logged)]
+            if fp:   # движок показывает форму входа прямо на закрытой странице (Битрикс: ?login=yes) — это не «открыто»
+                inner_open = inner_open[(inner_open['bytes'] - fp).abs() > tol]
             rows.append(dict(раздел=sec_, ответов_200=int((g['status'] == 200).sum()), IP=g['ip'].nunique(), IP_с_200=g.loc[g['status'] == 200, 'ip'].nunique(),
                              поисковики=int(g.loc[g['status'] == 200, 'fam'].astype(str).isin(SE).sum()),
                              отпечаток_формы_байт=round(fp), POST_входов=len(pr), неудачных=len(fail), адресов_вошло=len(logged),

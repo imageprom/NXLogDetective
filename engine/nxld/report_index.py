@@ -105,10 +105,11 @@ class Sheet:
             if fill: c.fill = PatternFill('solid', fgColor=fill)
             c.border = border
 
-    def pair(self, label, value, fill=F_CARD, link=None, height=None):
+    def pair(self, label, value, fill=F_CARD, link=None, height=None, level=1):
         """Строка карточки: подпись слева, значение справа; тонкий разделитель снизу, текст не прилипает к линиям."""
         self._fill_row('BCDEF', fill, Border(bottom=SEP))
-        self.cell('B', label, Font(name='Arial', size=10, bold=True, color='000000'), fill, Alignment(vertical='center', wrap_text=True, indent=1))
+        lf = Font(name='Arial', size=11, bold=(level == 1), color='000000')   # подпись не мельче значения; подуровень — обычным и с отступом
+        self.cell('B', label, lf, fill, Alignment(vertical='center', wrap_text=True, indent=1 if level == 1 else 3))
         self.ws.merge_cells(f'C{self.r}:F{self.r}')
         c = self.cell('C', value, Font(name='Arial', size=11, color=DARK), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         if link:
@@ -130,8 +131,8 @@ class Sheet:
             return self.cell(cols[0], v, font, fill, al)
         white = Side(style='thin', color='FFFFFF')
         for i, h in enumerate(headers):
-            put(i, h, Font(name='Arial', size=10, bold=True, color='FFFFFF'), ORANGE,
-                Alignment(horizontal='left' if i == 0 else ('right' if i in num else ('center' if i in center else 'left')), vertical='center', wrap_text=True, indent=1),
+            put(i, h, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE,
+                Alignment(horizontal='left' if i == 0 else 'center', vertical='center', wrap_text=True, indent=1 if i == 0 else 0),
                 Border(left=white, right=white))
         self.ws.row_dimensions[self.r].height = 24
         self.r += 1
@@ -139,7 +140,7 @@ class Sheet:
             for i, v in enumerate(row):
                 isnum, sev = i in num, (fills or {}).get((k, i))
                 fill = sev or F_CARD
-                if i == 0 and not sev: font = Font(name='Arial', size=10, bold=True, color='000000')
+                if i == 0 and not sev: font = Font(name='Arial', size=11, bold=True, color='000000')
                 else: font = Font(name='Arial', size=11, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
                 al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
                                indent=0 if i in center else 1)   # отступ от края и у чисел
@@ -189,10 +190,14 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     inv, m, sm = res['inventory'], res['site_map'], res['summary'].get('Общий анализ', {})
     site = (m.get('site_hosts') or ['?'])[0]
     # --- шапка
-    for i, h in enumerate((26, 26, 26, 8), start=1): ws.row_dimensions[i].height = h
+    for i, h in enumerate((32.25, 23.25, 14, 8), start=1): ws.row_dimensions[i].height = h
     if os.path.exists(LOGO):
-        img = XLImage(LOGO); img.width, img.height = 263, 60
-        ws.add_image(img, 'B1')
+        from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
+        from openpyxl.drawing.xdr import XDRPositiveSize2D
+        img = XLImage(LOGO)
+        cx, cy = 2000250, 457200                     # ~210×48 px: меньше прежнего, крупнее образца (EMU)
+        img.anchor = OneCellAnchor(_from=AnchorMarker(col=1, colOff=1905, row=0, rowOff=123825), ext=XDRPositiveSize2D(cx, cy))
+        ws.add_image(img)
     S.cell('F', COMPANY_URL, Font(name='Arial', size=11, color=INK), align=Alignment(horizontal='right', vertical='center'), row=1)
     ws['F1'].hyperlink = COMPANY_URL; ws['F1'].font = Font(name='Arial', size=11, color=INK)
     S.r = 5
@@ -258,14 +263,14 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     S.table(['Кто', 'Визитов', 'Доля', 'Кто это'], [(g, int(v), v / total, cap(note)) for g, v, note in grp], ['B', 'C', 'D', 'EF'], num=(1, 2))
     S.r += 1
     cl = res.get('cleaning', {})
-    S.pair('Просмотров страниц людьми', ru_num(sm.get('Просмотров страниц людьми', 0)))
+    S.pair('Просмотров страниц', ru_num(sm.get('Просмотров страниц людьми', 0)))
     wv = cl.get('Визитов людей во встроенных браузерах приложений', 0)
     if wv: S.pair('Во встроенных браузерах', f"{ru_num(wv)} визитов — люди открыли сайт внутри приложений (соцсети, мессенджеры, игры)")
     ppl, bots, own = sm.get('Принято от людей', 0), sm.get('Принято от ботов', 0), sm.get('Принято от своих (тесты)', 0)
     S.pair('Отправок форм', f"{ru_num(sm.get('Отправок целей всего', 0))} — все отправки, включая непринятые, ботов и тесты")
-    S.pair('Заявок от людей', f"{ru_num(ppl)} — приняты сервером")
-    if bots: S.pair('Заявок от ботов', f"{ru_num(bots)} — приняты сервером, но фальшивые")
-    if own: S.pair('Тестов своих', f"{ru_num(own)} — сотрудники и подрядчик, в заявки не входят")
+    S.pair('Заявок от людей', f"{ru_num(ppl)} — приняты сервером", level=2)
+    if bots: S.pair('Заявок от ботов', f"{ru_num(bots)} — приняты сервером, но фальшивые", level=2)
+    if own: S.pair('Тестов своих', f"{ru_num(own)} — сотрудники и подрядчик, в заявки не входят", level=2)
     cr = sm.get('Конверсия людей (визит → принятая цель), %', 0)
     S.pair('Конверсия людей', f"{str(cr).replace('.', ',')}% — одна заявка на {ru_num(round(100 / cr))} визитов" if cr else 'Заявок от людей нет')
     raw, clean = cl.get('Просмотров у людей до очистки'), cl.get('Просмотров у людей после очистки')
@@ -281,7 +286,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     pr = sheet_names.get('Проблемы', 'Проблемы')
     for k, color in (('Срочно', ORANGE), ('Важно', DARK), ('К сведению', DARK)):
         S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
-        S.cell('B', k, Font(name='Arial', size=10, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
+        S.cell('B', k, Font(name='Arial', size=11, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
         S.cell('C', cnt[k], Font(name='Arial', size=12 if k == 'Срочно' else 11, bold=(k == 'Срочно'), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
         ws.merge_cells(f'C{S.r}:F{S.r}')
         ws.row_dimensions[S.r].height = 22

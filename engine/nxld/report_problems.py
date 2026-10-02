@@ -1,8 +1,8 @@
 """NXLD: лист «Проблемы» карточками (ТЗ, раздел 16.5).
 
 Срочно и Важно — карточка на проблему: заголовок с цветом важности и меткой статуса, затем строки
-«Что происходит / Доказательство / Как найдено / Что сделать / Где править / Как проверить / Подробно».
-К сведению — по строке на проблему. В конце (при повторной проверке) — «Исправлено» и «Отмечено как норма».
+«Из показаний / Что делать / Признак устранения / Расследование и улики (Основание, Доказательство) / Подробно».
+Остальные — такие же карточки, но без признака устранения и расследования. В конце (при повторной проверке) — «Исправлено» и «Отмечено как норма».
 Оформление — как у индексного листа (общий класс Sheet).
 """
 import re
@@ -80,9 +80,7 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
         plaque(S, 'К сведению', len(xs), xs)
         for x in xs:
             n += 1
-            text, target = link_for(x, here_file)
-            line = f"{n}. {x.get('тема', '')}: {cap(x.get('заголовок') or x['что_происходит'])}" + (f" — подробно: {text} →" if text else '')
-            one_line(S, line, target, status=x.get('статус_вид'), status_text=x.get('статус'))
+            card(S, x, n, 'К сведению', here_file, with_block, short=True)
     fixed = [x for x in items if x.get('статус_вид') == 'исправлена']
     if fixed:
         S.section(f'Исправлено с прошлой проверки — {len(fixed)}')
@@ -99,10 +97,10 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     return ws
 
 
-def card(S, x, n, sev, here_file, with_block):
+def card(S, x, n, sev, here_file, with_block, short=False):
     """Заголовок — оранжевый с оранжевой линией (как «Проверка» на индексе), тема — маркером справа.
-    Строки: Факт → Что делать (персиковая) → Как проверить → «Расследование и улики» (второй уровень).
-    Ссылка на подробности — курсивом под карточкой."""
+    Строки: Из показаний → Что делать → Признак устранения → «Расследование и улики» (второй уровень).
+    Ссылка на подробности — под карточкой. short=True (Остальные): без «Признака устранения» и расследования."""
     ws = S.ws
     title = f"{n}. {cap(x.get('заголовок') or x['что_происходит'])}"
     ws.merge_cells(f'B{S.r}:E{S.r}')
@@ -121,8 +119,9 @@ def card(S, x, n, sev, here_file, with_block):
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"
     if todo: S.pair('Что делать', todo, fill=F_LIGHT)
     crit, check = meta(x)
+    if short: crit, check = None, None
     if check and check != '—': S.pair('Признак устранения', check, fill=F_LIGHT)
-    rows = [(k, v) for k, v in (('Основание', crit), ('Доказательство', x.get('доказательство'))) if v]
+    rows = [(k, v) for k, v in (('Основание', crit), ('Доказательство', x.get('доказательство'))) if v and not short]
     if rows:
         S.pair('Расследование и улики', '', height=20, fill=F_CARD)
         for k, v in rows: S.pair(k, v, level=2, fill=F_LIGHT)

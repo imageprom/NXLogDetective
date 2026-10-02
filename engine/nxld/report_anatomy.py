@@ -33,18 +33,37 @@ def row4(S, label, c, d, ef, fill=F_CARD, bold=False):
     S.ws.merge_cells(f'E{S.r}:F{S.r}')
     S.cell('E', ef, Font(name='Arial', size=11, color='333333'), fill, Alignment(vertical='center', wrap_text=True, indent=1))
     from .report_index import row_height
-    S.ws.row_dimensions[S.r].height = max(row_height(label, 30), row_height(ef, 52))
+    S.ws.row_dimensions[S.r].height = max(row_height(label, 28), row_height(ef, 50)) + 2
     S.r += 1
 
 
+ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+
+
+def roman(d): return ROMAN[d] if d < len(ROMAN) else str(d)
+
+
 def level_label(lv, kind='каталога'):
-    if lv.get('роль') == 'промежуточные':
-        return f"Уровни {lv['глубина']}–{lv['до']}: промежуточные"
-    nm = lv['название']
-    nm = '' if str(nm).startswith('Уровень') else cap(nm)
-    role = {'индексная': f'Индексная {kind}', 'раздел': 'раздел', 'подраздел': 'подраздел', 'элемент': 'элемент'}.get(lv.get('роль'), lv.get('роль') or '')
-    if lv.get('роль') == 'индексная': return f"Уровень 1: {role}"
-    return f"Уровень {lv['глубина']}: " + (f"{nm} ({role})" if nm else role)
+    """Ур. I: Индексная каталога · Ур. II: Раздел — Проект · Ур. III: Подразделы · Ур. VII: Элементы — Квартира."""
+    role = lv.get('роль')
+    if role == 'промежуточные':
+        return f"Ур. {roman(lv['глубина'])}–{roman(lv['до'])}: Промежуточные"
+    nm = '' if str(lv['название']).startswith('Уровень') or role == 'подраздел' else cap(lv['название'])
+    head = {'индексная': f'Индексная {kind}', 'раздел': 'Раздел', 'подраздел': 'Подразделы', 'элемент': 'Элементы'}.get(role, cap(role or ''))
+    return f"Ур. {roman(lv['глубина'])}: {head}" + (f" — {nm}" if nm and role != 'индексная' else '')
+
+
+def level_addr(lv):
+    if lv['адресов'] == 1: return lv['пример']
+    lines = []
+    if lv.get('шаблон') and lv['шаблон'] != lv['пример']: lines.append(f"Шаблон: {lv['шаблон']}")
+    if lv.get('примеры'):
+        from .anatomy import slug_name
+        for w, a in lv['примеры'].items():
+            lines.append(f"{cap(slug_name(w, 1) or w)}: {a}")
+    else:
+        lines.append(f"Пример: {lv['пример']}")
+    return '\n'.join(lines)
 
 
 def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
@@ -99,10 +118,9 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
         for c in A[key]:
             st = [f"разделов — {n(c['разделов'])}" if c.get('разделов') else '', f"подразделов — {n(c['подразделов'])}" if c.get('подразделов') else '',
                   f"элементов «{c['элемент']}» — {n(c['элементов'])}"]
-            row4(S, f"{word} {c['раздел']}", c['страниц'], c['визитов'], ' · '.join(x for x in st if x), bold=True)
+            row4(S, f"{word} {c['раздел']}", c['страниц'], c['визитов'], '\n'.join(cap(x) for x in st if x), bold=True)
             for lv in c['уровни']:
-                adr = (f"Шаблон: {lv['шаблон']}\nПример: {lv['пример']}" if lv.get('шаблон') and lv['шаблон'] != lv['пример'] else f"Пример: {lv['пример']}")
-                row4(S, level_label(lv, 'каталога' if key == 'каталоги' else 'ленты'), lv['адресов'], lv['визитов'], adr, fill=F_LIGHT)
+                row4(S, level_label(lv, 'каталога' if key == 'каталоги' else 'ленты'), lv['адресов'], lv['визитов'], level_addr(lv), fill=F_LIGHT)
             if c.get('фильтры') or c.get('страниц_фильтра'):
                 txt = ('Параметры: ' + ', '.join(c['фильтры'])) if c.get('фильтры') else ''
                 if c.get('страниц_фильтра'): txt += ('\n' if txt else '') + 'Страницы фильтра: адреса вида …/filter/…/apply/'

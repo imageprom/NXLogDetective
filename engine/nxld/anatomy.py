@@ -220,7 +220,8 @@ def levels(g, sec):
         small_set = d > 1 and len(words) <= 5 and all(re.fullmatch(r'[a-z_]+', w) for w in words)
         known = [w for w, _ in words.most_common() if w in SLUG]
         x = dict(глубина=int(d), адресов=len(gd), визитов=int(gd['визитов'].sum()), пример=gd.sort_values('визитов', ascending=False)['адрес'].iloc[0], шаблон=shape(gd['адрес']),
-                 слова=', '.join(w for w, _ in words.most_common(4)) if small_set else '', слово_сверху=word, литерал=bool(small_set))
+                 слова=', '.join(w for w, _ in words.most_common(4)) if small_set else '', слово_сверху=word, литерал=bool(small_set),
+                 примеры={w: gd[segs == w].sort_values('визитов', ascending=False)['адрес'].iloc[0] for w, _ in words.most_common(5)} if small_set else {})
         if d == 1:
             x['название'] = 'Список'
         elif small_set and known:

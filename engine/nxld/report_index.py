@@ -13,6 +13,8 @@ from .prepare import VERSION
 ORANGE, ORANGE2, GREY, DARK = 'F57041', 'FF6D01', '666666', '333333'
 INK = '404040'   # серый текст на белом фоне — контрастнее фирменного #666666
 F_CARD, F_NOTE, F_HEAD = 'EFEFEF', 'FCE5CD', 'E5E5E5'
+# тысячи — всегда пробелом, независимо от языка Excel (запятая путается с десятичным знаком)
+NUM_FMT = '[>=1000000]#\\ ###\\ ###;[>=1000]#\\ ###;0'
 LOGO = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'brand', 'logo_cybermechanica.png')
 COMPANY_URL = 'https://cybermechanica.ru'
 MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
@@ -145,7 +147,7 @@ class Sheet:
                 al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
                                indent=0 if i in center else 1)   # отступ от края и у чисел
                 c = put(i, v, font, fill, al, Border(bottom=SEP))
-                if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = '#,##0' if isinstance(v, int) else '0%'
+                if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = NUM_FMT if isinstance(v, int) or (hasattr(v, 'is_integer') and float(v).is_integer() and not isinstance(v, float)) else '0%'
                 if links and (k, i) in links:
                     c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11 if i else 10, bold=(i == 0), color=ORANGE2, underline='single')
             width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * wrap

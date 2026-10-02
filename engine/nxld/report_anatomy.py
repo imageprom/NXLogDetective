@@ -4,7 +4,7 @@
 подгружаемые блоки → формы и заявки → параметры в адресах. Ссылки на подробности — строкой под блоком.
 """
 from openpyxl.styles import Font, Alignment, Border
-from .report_index import Sheet, ORANGE, ORANGE2, ru_num, plural, cap, SEP, F_CARD
+from .report_index import Sheet, ORANGE, ORANGE2, ru_num, plural, cap, SEP, F_CARD, NUM_FMT
 
 F_LIGHT = 'F7F7F7'   # второй уровень
 
@@ -29,7 +29,7 @@ def row4(S, label, c, d, ef, fill=F_CARD, bold=False):
     for col, v in (('C', c), ('D', d)):
         x = S.cell(col, int(v) if isinstance(v, (int, float)) and v != '' else v, Font(name='Arial', size=11, bold=bold, color='000000' if bold else '333333'), fill,
                    Alignment(horizontal='right', vertical='center', indent=1))
-        if isinstance(v, (int, float)): x.number_format = '#,##0'
+        if isinstance(v, (int, float)): x.number_format = NUM_FMT
     S.ws.merge_cells(f'E{S.r}:F{S.r}')
     S.cell('E', ef, Font(name='Arial', size=11, color='333333'), fill, Alignment(vertical='center', wrap_text=True, indent=1))
     from .report_index import row_height
@@ -47,9 +47,12 @@ def level_label(lv, kind='каталога'):
     """Ур. I: Индексная каталога · Ур. II: Раздел — Проект · Ур. III: Подразделы · Ур. VII: Элементы — Квартира."""
     role = lv.get('роль')
     if role == 'промежуточные':
-        return f"Ур. {roman(lv['глубина'])}–{roman(lv['до'])}: Промежуточные"
+        return f"Ур. {roman(lv['глубина'])}–{roman(lv['до'])}: Подразделы\nпромежуточные"
     nm = '' if str(lv['название']).startswith('Уровень') or role == 'подраздел' else cap(lv['название'])
     head = {'индексная': f'Индексная {kind}', 'раздел': 'Раздел', 'подраздел': 'Подразделы', 'элемент': 'Элементы'}.get(role, cap(role or ''))
+    if role == 'подраздел' and lv.get('примеры'):
+        from .anatomy import slug_name
+        return f"Ур. {roman(lv['глубина'])}: {head}\n" + '\n'.join(cap(slug_name(w, 1) or w) for w in lv['примеры'])
     return f"Ур. {roman(lv['глубина'])}: {head}" + (f" — {nm}" if nm and role != 'индексная' else '')
 
 

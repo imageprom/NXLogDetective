@@ -1,5 +1,5 @@
 """NXLD: сборка результата — Excel по блокам, текст для Redmine (Textile), снимок, архив."""
-import json, os, re, zipfile
+import json, numbers, os, re, zipfile
 from datetime import datetime
 import numpy as np, pandas as pd
 from openpyxl import load_workbook
@@ -147,6 +147,7 @@ def write_xlsx(path, sheets, hidden=None):
                 widths[c.column] = max(widths.get(c.column, 0), min(L, 70))
                 if L > 70: c.alignment = Alignment(wrap_text=True, vertical='top')
                 if isinstance(v, datetime): c.number_format = 'yyyy-mm-dd hh:mm'
+                elif isinstance(v, numbers.Integral) and not isinstance(v, bool) and abs(v) >= 1000: c.number_format = report_index.NUM_FMT
             if sev_col:
                 v = row[sev_col - 1].value
                 if v in SEV_FILL:

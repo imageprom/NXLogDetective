@@ -58,6 +58,8 @@ def level_label(lv, kind='каталога'):
 
 def level_addr(lv):
     if lv['адресов'] == 1: return lv['пример']
+    if lv.get('роль') == 'индексная':   # индексная — это сами адреса, без «Шаблон» и «Пример»
+        return '\n'.join(lv.get('все') or [lv['пример']])
     lines = []
     if lv.get('шаблон') and lv['шаблон'] != lv['пример']: lines.append(f"Шаблон: {lv['шаблон']}")
     if lv.get('примеры'):

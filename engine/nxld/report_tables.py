@@ -2,13 +2,13 @@
 import numbers
 import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
-from .report_index import ORANGE, INK, F_NOTE, NUM_FMT
+from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT
 
 SEP = Side(style='thin', color='D9D9D9')
 WHITE = Side(style='thin', color='FFFFFF')
 
 
-def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None):
+def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9):
     """Пересобирает лист name: строка 1 — заголовок, 2 — пояснение, 4 — шапка, дальше данные.
     widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None."""
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
@@ -19,14 +19,21 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     ws.column_dimensions['A'].width = 2.5          # поле слева, как на остальных листах
     ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE)
     ws.row_dimensions[1].height = 34
-    if note:
-        ws['B2'] = note; ws['B2'].font = Font(name='Arial', size=10, color=INK)
+    if note:   # подзаголовок — фирменным Comfortaa, как на обзоре
+        ws['B2'] = note; ws['B2'].font = Font(name='Comfortaa', size=11, bold=True, color=GREY)
         ws['B2'].alignment = Alignment(vertical='center', wrap_text=False)
+    ws.row_dimensions[2].height = 24
     X = 1   # сдвиг колонок
+    if kpi:   # цифры сводки — справа от заголовка: подпись мелко, число крупно
+        c0 = (cols.index(kpi_col) if kpi_col in cols else max(0, len(cols) - len(kpi))) + 1 + X
+        for k, (lab, val) in enumerate(kpi):
+            a = ws.cell(1, c0 + k, lab); a.font = Font(name='Arial', size=9, color=INK); a.alignment = Alignment(horizontal='center', vertical='bottom', wrap_text=True)
+            b = ws.cell(2, c0 + k, val); b.font = Font(name='Arial', size=14, bold=True, color='000000'); b.alignment = Alignment(horizontal='center', vertical='center')
+            if isinstance(val, int) and val >= 1000: b.number_format = NUM_FMT
     H = 4
     for j, c in enumerate(cols, 1):
         cell = ws.cell(H, j + X, c)
-        cell.font = Font(name='Arial', size=10, bold=True, color='FFFFFF')
+        cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF')
         cell.fill = PatternFill('solid', fgColor=ORANGE)
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
         cell.border = Border(left=WHITE, right=WHITE)
@@ -39,7 +46,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             cell = ws.cell(i, j + X, v)
             col = cols[j - 1]
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
-            cell.font = Font(name='Arial', size=10, bold=bool(bold_rule and bold_rule(col, v)), color='000000')
+            cell.font = Font(name='Arial', size=size, bold=bool(bold_rule and bold_rule(col, v)), color='000000')
             hz = 'center' if col in center else ('right' if isnum else 'left')
             cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
@@ -49,6 +56,10 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     for j, c in enumerate(cols, 1):
         letter = ws.cell(H, j + X).column_letter
         ws.column_dimensions[letter].width = (widths or {}).get(c) or min(45, max(10, len(str(c)) + 2, int(df[c].astype(str).str.len().quantile(0.9)) + 2 if len(df) else 10))
+    r_ = H + len(df) + 2   # ссылки — под таблицей, как на других листах
+    for text, target in links:
+        c = ws.cell(r_, 1 + X, f'{text}: лист «{target}» →'); c.hyperlink = f"#'{target}'!A1"
+        c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single'); r_ += 1
     ws.freeze_panes = ws.cell(H + 1, 1 + X)
     if len(df):
         ws.auto_filter.ref = f"{ws.cell(H, 1 + X).coordinate}:{ws.cell(H + len(df), len(cols) + X).coordinate}"
@@ -82,11 +93,10 @@ def conversions(wb, C, name='Конверсии'):
     }).sort_values('_t').drop(columns='_t')   # по времени
     d = d.astype(object).where(d.notna(), None)
     n_ = lambda g: int((C['группа'] == g).sum())
-    note = (f"Все отправки форм за период — {len(C)}: люди — {n_('Люди')}, боты — {n_('Боты')}, свои — {n_('Свои')}. "
-            f"Принято у людей — {int(((C['группа'] == 'Люди') & (C['принята'] == 'да')).sum())}. Сводка по формам — на листе «Анатомия сайта».")
-    widths = {'Время': 17, 'Кто': 13, 'Форма': 22, 'Принята': 10, 'Код ответа': 9, 'Канал': 18, 'Страница входа': 40, 'Откуда пришёл': 30,
+    kpi = [('Отправок', len(C)), ('Люди', n_('Люди')), ('Принято у людей', int(((C['группа'] == 'Люди') & (C['принята'] == 'да')).sum())), ('Боты', n_('Боты')), ('Свои', n_('Свои'))]
+    widths = {'Время': 17, 'Кто': 13, 'Форма': 22, 'Принята': 10, 'Код ответа': 9, 'Канал': 18, 'Страница входа': 28, 'Откуда пришёл': 24,
               'Страниц до отправки': 11, 'Секунд от входа': 10, 'Почему бот': 34, 'IP': 16, 'Сеть': 22, 'Обработчик': 50}
     fill = lambda col, v: F_NOTE if (col == 'Кто' and v == 'Боты') else ('EFEFEF' if (col == 'Кто' and str(v).startswith('Свои')) else None)
     bold = lambda col, v: col == 'Принята' and v == 'да'
-    data_sheet(wb, name, d, 'Конверсии', note, widths,
-               wrap=('Почему бот',), fill_rule=fill, bold_rule=bold, center=('IP', 'Код ответа', 'Принята'))
+    data_sheet(wb, name, d, 'Конверсии', 'Все отправки форм за период', widths, wrap=('Почему бот',), fill_rule=fill, bold_rule=bold,
+               center=('IP', 'Код ответа', 'Принята'), kpi=kpi, kpi_col='Канал', links=[('Сводка по формам', 'Анатомия сайта')])

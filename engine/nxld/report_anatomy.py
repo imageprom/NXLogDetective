@@ -37,12 +37,12 @@ def row4(S, label, c, d, ef, fill=F_CARD, bold=False):
     S.r += 1
 
 
-def level_label(lv):
+def level_label(lv, kind='каталога'):
     if lv.get('роль') == 'промежуточные':
         return f"Уровни {lv['глубина']}–{lv['до']}: промежуточные"
     nm = lv['название']
     nm = '' if str(nm).startswith('Уровень') else cap(nm)
-    role = {'индексная': 'Индексная каталога', 'раздел': 'раздел', 'подраздел': 'подраздел', 'элемент': 'элемент'}.get(lv.get('роль'), lv.get('роль') or '')
+    role = {'индексная': f'Индексная {kind}', 'раздел': 'раздел', 'подраздел': 'подраздел', 'элемент': 'элемент'}.get(lv.get('роль'), lv.get('роль') or '')
     if lv.get('роль') == 'индексная': return f"Уровень 1: {role}"
     return f"Уровень {lv['глубина']}: " + (f"{nm} ({role})" if nm else role)
 
@@ -102,7 +102,7 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             row4(S, f"{word} {c['раздел']}", c['страниц'], c['визитов'], ' · '.join(x for x in st if x), bold=True)
             for lv in c['уровни']:
                 adr = (f"Шаблон: {lv['шаблон']}\nПример: {lv['пример']}" if lv.get('шаблон') and lv['шаблон'] != lv['пример'] else f"Пример: {lv['пример']}")
-                row4(S, level_label(lv), lv['адресов'], lv['визитов'], adr, fill=F_LIGHT)
+                row4(S, level_label(lv, 'каталога' if key == 'каталоги' else 'ленты'), lv['адресов'], lv['визитов'], adr, fill=F_LIGHT)
             if c.get('фильтры') or c.get('страниц_фильтра'):
                 txt = ('Параметры: ' + ', '.join(c['фильтры'])) if c.get('фильтры') else ''
                 if c.get('страниц_фильтра'): txt += ('\n' if txt else '') + 'Страницы фильтра: адреса вида …/filter/…/apply/'

@@ -196,6 +196,7 @@ def build(c, res):
 
 
 def junk_path(p):
+    if '//' in p: return True          # двойной слэш — битая ссылка, не отдельная страница
     for seg in p.strip('/').split('/'):
         if '.' in seg and not re.search(r'\.(html?|php)$', seg): return True
         if len(seg) >= 20 and re.search(r'[A-Z]', seg) and re.search(r'\d', seg): return True

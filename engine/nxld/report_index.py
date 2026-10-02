@@ -117,7 +117,7 @@ class Sheet:
         self.ws.row_dimensions[self.r].height = height or row_height(str(value), 92)
         self.r += 1
 
-    def table(self, headers, rows, spans, num=(), links=None, fills=None, center=()):
+    def table(self, headers, rows, spans, num=(), links=None, fills=None, center=(), body=None, wrap=1.05):
         """Таблица в стиле карточек: шапка — белый жирный на оранжевом; строки на светлом фоне с тонким светлым разделителем;
         первая колонка — подпись строки (чёрный жирный, как в карточках); числа справа. Без чёрной сетки.
         spans — для каждой колонки строка столбцов листа, например 'B', 'C', 'EF' (объединяются)."""
@@ -139,7 +139,7 @@ class Sheet:
         for k, row in enumerate(rows):
             for i, v in enumerate(row):
                 isnum, sev = i in num, (fills or {}).get((k, i))
-                fill = sev or F_CARD
+                fill = sev or body or F_CARD
                 if i == 0 and not sev: font = Font(name='Arial', size=11, bold=True, color='000000')
                 else: font = Font(name='Arial', size=11, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
                 al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
@@ -148,7 +148,7 @@ class Sheet:
                 if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = '#,##0' if isinstance(v, int) else '0%'
                 if links and (k, i) in links:
                     c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11 if i else 10, bold=(i == 0), color=ORANGE2, underline='single')
-            width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * 1.05
+            width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * wrap
             shown = lambda v: f'{v:.0%}' if isinstance(v, float) else (f'{v:,}' if isinstance(v, int) else str(v))
             self.ws.row_dimensions[self.r].height = max(row_height(shown(v), int(width(spans[i])) - 3) for i, v in enumerate(row))
             self.r += 1

@@ -108,19 +108,20 @@ def build(c, res):
         adm = str(m['admin_regex']).lstrip('^')
         staff = m.get('staff_ips') or []
         staff = staff if isinstance(staff, list) else re.findall(r'\d+\.\d+\.\d+\.\d+', str(staff))
-        zones.append(dict(что='Админка движка', адрес=adm, подробно=f"входили {len(staff)} адресов сотрудников" if staff else 'входов сотрудников по логу не видно'))
+        zones.append(dict(что='Админка движка', адрес=adm, подробно=f"входили {len(staff)} адресов сотрудников" if staff else 'входов сотрудников по логу не видно', входили=len(staff)))
     OS = res.get('sheets', {}).get('Нагрузка и безопасность', {}).get('Открытые служебные разделы', pd.DataFrame())
     for _, r in (OS[(OS['форма_входа'] == 'да') & (OS['IP_с_200'] >= 3)].iterrows() if len(OS) and 'IP_с_200' in OS else []):
-        d = f"форма входа; вошли {int(r['адресов_вошло'])} адресов"
-        if r.get('адресов_без_входа', 0): d += f"; без входа открывались {r['страницы_без_входа']}"
-        zones.append(dict(что='Служебный раздел', адрес=r['раздел'], подробно=d))
+        zones.append(dict(что='Служебный раздел', адрес=r['раздел'], подробно='вход по паролю (форма входа)', входили=int(r['адресов_вошло']),
+                          без_входа=r['страницы_без_входа'] if r.get('адресов_без_входа', 0) else ''))
     for sec, v in sec_visits.items():
         if re.match(CABINET, sec) and v >= 5:
-            zones.append(dict(что='Личный кабинет', адрес=sec, подробно=f"{int(v)} визитов людей"))
+            g_ = pages[pages['раздел'] == sec]
+            sub = [x for x in levels(g_, sec) if x['глубина'] >= 2] if len(g_) else []
+            zones.append(dict(что='Личный кабинет', адрес=sec, визитов=int(v), подробно=f"{int(v)} визитов людей", уровни=sub))
     hosts = m.get('site_hosts') or []
     for h in hosts[1:]:
         if re.search(r'(^|\.)(dev|test|stage|staging|demo|beta)\.', h + '.'):
-            zones.append(dict(что='Тестовая копия', адрес=h, подробно='встречается в логах этого сервера'))
+            zones.append(dict(что='Тестовая копия', адрес=h, подробно='запросы к ней есть в этих логах'))
     A['зоны'] = zones
     # --- разделы: каталоги, ленты, простые
     cats_, feeds, simple = [], [], []
@@ -138,6 +139,7 @@ def build(c, res):
         deep = max(x['глубина'] for x in (heavy or lv))
         el = [x for x in lv if x['глубина'] == deep][0]
         nf = int(flt_pages[flt_pages.index.str.startswith(sec)].sum()) if len(flt_pages) else 0
+        lv = roles(lv)
         card = dict(раздел=sec, визитов=v, страниц=len(g), уровни=collapse(lv, v), элементов=el['адресов'], элемент=el['название'] if not el['название'].startswith('Уровень') else 'элемент',
                     глубина_элементов=deep, фильтры=filters_of(R, pg, sec), страниц_фильтра=nf, шаблоны=templates_of(R, pg, sec, deep))
         (feeds if (feedish or (deep <= 2 and word in FEED_HINT)) else cats_).append(card)
@@ -206,7 +208,7 @@ def levels(g, sec):
         words = Counter(segs)
         small_set = d > 1 and len(words) <= 5 and all(re.fullmatch(r'[a-z_]+', w) for w in words)
         known = [w for w, _ in words.most_common() if w in SLUG]
-        x = dict(глубина=int(d), адресов=len(gd), визитов=int(gd['визитов'].sum()), пример=gd.sort_values('визитов', ascending=False)['адрес'].iloc[0],
+        x = dict(глубина=int(d), адресов=len(gd), визитов=int(gd['визитов'].sum()), пример=gd.sort_values('визитов', ascending=False)['адрес'].iloc[0], шаблон=shape(gd['адрес']),
                  слова=', '.join(w for w, _ in words.most_common(4)) if small_set else '', слово_сверху=word, литерал=bool(small_set))
         if d == 1:
             x['название'] = 'Список'
@@ -234,6 +236,32 @@ def levels(g, sec):
     return lv
 
 
+def shape(addrs):
+    """Шаблон уровня: одинаковые части — как есть, небольшой набор слов — {a|b}, остальное — *."""
+    rows = [a.strip('/').split('/') for a in addrs]
+    if not rows or rows == [['']]: return '/'
+    out = []
+    for i in range(max(len(r) for r in rows)):
+        vals = Counter(r[i] for r in rows if len(r) > i)
+        if len(vals) == 1: out.append(next(iter(vals)))
+        elif len(vals) <= 5 and all(re.fullmatch(r'[a-z_]+', v) for v in vals): out.append('{' + '|'.join(v for v, _ in vals.most_common()) + '}')
+        else:
+            pre = re.match(r'^([a-z_-]*?)(?=\d)', next(iter(vals)))
+            pre = pre.group(1) if pre else ''
+            out.append(f'{pre}*' if pre and all(re.fullmatch(re.escape(pre) + r'\d+', v) for v in vals) else '*')
+    return '/' + '/'.join(out) + '/'
+
+
+def roles(lv):
+    """Роль уровня: индексная, раздел, подраздел, элемент."""
+    if not lv: return lv
+    deep = max((x for x in lv if x['адресов'] >= 10), key=lambda y: y['глубина'], default=lv[-1])['глубина']
+    for x in lv:
+        d = x['глубина']
+        x['роль'] = ('индексная' if d == 1 else 'элемент' if d == deep else 'подраздел' if x.get('литерал') else 'раздел' if d < deep else 'страница внутри элемента')
+    return lv
+
+
 def collapse(lv, sec_visits):
     """Промежуточные неназванные уровни с малым трафиком склеиваем в одну строку."""
     out, buf = [], []
@@ -251,7 +279,7 @@ def collapse(lv, sec_visits):
 def merge(buf):
     if len(buf) == 1: return buf[0]
     return dict(глубина=buf[0]['глубина'], до=buf[-1]['глубина'], адресов=sum(x['адресов'] for x in buf), визитов=sum(x['визитов'] for x in buf),
-                пример=buf[-1]['пример'], название=f"Уровни {buf[0]['глубина']}–{buf[-1]['глубина']}", слова='')
+                пример=buf[-1]['пример'], шаблон=buf[-1].get('шаблон', ''), название='промежуточные уровни', роль='промежуточные', слова='')
 
 
 def filters_of(R, pg, sec):

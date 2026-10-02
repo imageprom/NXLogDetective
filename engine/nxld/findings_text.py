@@ -9,12 +9,12 @@ import pandas as pd
 THEME = {
     'bot_leads': 'Заявки', 'operator': 'Заявки', 'lost_leads': 'Заявки',
     'ad_landing_errors': 'Реклама', 'campaign_zero': 'Реклама', 'placements_off': 'Реклама', 'placement_type_low': 'Реклама', 'placement_type_zero': 'Реклама',
-    '5xx': 'Сайт', '5xx_section': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт', 'no_service': 'Сайт',
+    '5xx': 'Сайт', '5xx_section': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
     'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
     'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность',
     'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
-    'search_errors': 'Поиск',
+    'search_errors': 'Поиск', 'no_service': 'Поиск', 'hotlink': 'Нагрузка', 'broken_labels': 'Реклама',
 }
 GRADE = {'Срочно': 'Приоритетные', 'Важно': 'Важные', 'К сведению': 'Остальные'}
 MON = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
@@ -185,6 +185,21 @@ def humanize(items, sheets, summary):
                 who = re.search(r'кто: ([^;]+);', x['факты'])
                 f = (f"{nw(int(v.group(1)), 'ответ', 'ответа', 'ответов')} 200 получили {nw(int(v.group(2)), 'адрес', 'адреса', 'адресов')}, которые в разделе не входили"
                      + (f" ({who.group(1)})" if who else '') + (f". Страницы: {pages.group(1)}." if pages else '.'))
+            elif t == 'search_errors' and obj == 'templates':
+                g = re.findall(r'(\S+) (/\S*) — (\d+) из (\d+) \(([^)]*)\)', x['факты'])
+                h = 'Поисковые роботы получают ошибки в отдельных разделах'
+                f = 'Ошибки у роботов: ' + '; '.join(f"{rb} на {tp} — {e} из {q} запросов ({cd})" for rb, tp, e, q, cd in g[:4]) + '.'
+            elif t == 'no_service':
+                who = re.search(r'запрашивают: (.*)$', x['факты'])
+                h = f"На сайте нет {obj}"
+                f = f"{obj} отвечает 404: {nw(nums(x['факты'])[0], 'запрос', 'запроса', 'запросов')} за период" + (f", его ищут {who.group(1)}." if who else '.')
+            elif t == 'hotlink':
+                h = 'Чужие сайты показывают картинки сайта'
+                f = x['факты'].replace('; тестовые копии:', '. Похоже на тестовую копию сайта:') + '.'
+            elif t == 'broken_labels':
+                h = 'Рекламные метки сломаны'
+                f = x['факты'].replace('Макрос не подставился ({...} в адресе)', 'макросы Директа не подставились').replace('yclid без UTM-меток', 'метка yclid без UTM') + '. Эти клики теряют кампанию и объявление в статистике.'
+                f = f[0].upper() + f[1:]
             elif t == 'exposed':
                 h = 'Служебные файлы отданы посторонним'; f = x['факты']
             elif t == 'fake_crawlers':

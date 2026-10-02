@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import visits, blocks, brief, recon, findings_meta, findings_text
+from . import coverage, visits, blocks, brief, recon, findings_meta, findings_text
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -112,9 +112,24 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['compare'] = pd.DataFrame(rows)
         res['prev_period'] = prev.get('period')
     findings_meta.proofs(c, F.items, res['sheets'])
+    flood_circumstance(F.items, res['sheets'])
     findings_text.humanize(F.items, res['sheets'], res['summary'])
     res['findings'] = F.items
+    res['coverage'], res['loose_signals'] = coverage.check(res, F.items)
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')
     return res
+
+
+def flood_circumstance(items, sheets):
+    """Подделка, которая ещё и флудит, — обстоятельство к карточке подделок (не отдельная проблема)."""
+    fl = sheets.get('Нагрузка и безопасность', {}).get('Флуд', pd.DataFrame())
+    fk = sheets.get('Боты', {}).get('Подделки', pd.DataFrame())
+    if not len(fl) or not len(fk): return
+    top = fl[fl['запросов_в_минуту'] >= 1000].groupby('ip')['запросов_в_минуту'].max()
+    hit = top[top.index.astype(str).isin(fk['ip'].astype(str))].sort_values(ascending=False)
+    for x in items:
+        if x['key'].split(':')[1] == 'fake_crawlers' and len(hit):
+            add = f"подделка ещё и нагружает сервер: {hit.index[0]} — до {int(hit.iloc[0])} запросов в минуту" + (f" (и ещё {len(hit) - 1})" if len(hit) > 1 else '')
+            x['почему'] = '; '.join(v for v in (x.get('почему'), add) if v)

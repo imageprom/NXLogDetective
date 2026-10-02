@@ -326,8 +326,9 @@ def errors(c, F):
         for b, g in SV.groupby('base', observed=True):
             gl = g[g['legit']]
             if not ((len(gl) >= 10 and (gl['status'] >= 400).mean() > 0.8) or (ever_ok.get(b, 0) >= 5 and (g['status'].iloc[-max(1, len(g) // 5):] >= 400).mean() > 0.8)):
-                if re.fullmatch(r'/(robots\.txt|sitemap\.xml)', str(b)) and (g['status'] == 404).mean() > 0.9:
-                    F.add('Ошибки', 'К сведению', 'no_service', str(b), f'На сайте нет {b}', f"{len(g)} запросов, все получили 404", 'сайт', f'Создать {b}', len(g), 'Служебные файлы')
+                other_map = 'sitemap' in str(b) and SV[SV['base'].astype(str).str.contains('sitemap') & (SV['base'].astype(str) != str(b)) & (SV['status'] == 200)].shape[0] >= 5   # карта есть под другим именем
+                if not other_map and re.fullmatch(r'/(robots\.txt|sitemap\.xml)', str(b)) and len(g[(g['status'] < 300) | (g['status'] >= 400)]) and (g.loc[(g['status'] < 300) | (g['status'] >= 400), 'status'] == 404).mean() > 0.9:
+                    F.add('Ошибки', 'Важно' if 'sitemap' in str(b) else 'К сведению', 'no_service', str(b), f'На сайте нет {b}', f"{int((g['status'] == 404).sum())} запросов получили 404; запрашивают: {topn(g['fam'].astype(str).replace('', 'браузеры'), 3)}", 'сайт', f'Создать {b}', len(g), 'Служебные файлы')
                 continue
             if True:
                 feed = not re.search(r'robots|sitemap', str(b))
@@ -338,10 +339,16 @@ def errors(c, F):
     so = c.search_ok
     if so.any():
         SE = R.loc[so, ['fam', 'tpl', 'status']]
-        se = SE.assign(ошибка=SE['status'] >= 400).groupby(['fam', 'tpl'], observed=True).agg(запросов=('status', 'size'), ошибок=('ошибка', 'sum')).reset_index()
+        se = SE.assign(ошибка=SE['status'] >= 400).groupby(['fam', 'tpl'], observed=True).agg(запросов=('status', 'size'), ошибок=('ошибка', 'sum'),
+                                                                                       коды=('status', lambda x: topn(x[x >= 400], 3))).reset_index()
         se = se[se['ошибок'] > 0].sort_values('ошибок', ascending=False)
         S['Ошибки у поисковиков'] = se.head(300).rename(columns={'fam': 'робот', 'tpl': 'шаблон'})
         share = (SE['status'] >= 400).mean()
+        conc = se[(se['запросов'] >= 30) & (se['ошибок'] >= 20) & (se['ошибок'] / se['запросов'] >= 0.3)]
+        if share <= 0.05 and len(conc):
+            F.add('Ошибки', 'Важно', 'search_errors', 'templates', f'Поисковые роботы получают ошибки в {len(conc)} шаблонах',
+                  '; '.join(f"{r['fam']} {r['tpl']} — {int(r['ошибок'])} из {int(r['запросов'])} ({r['коды']})" for _, r in conc.head(5).iterrows()),
+                  'код сайта / редиректы', 'Исправить страницы или убрать их из индекса', int(conc['ошибок'].sum()), 'Ошибки у поисковиков')
         if share > 0.05:
             F.add('Ошибки', 'Важно', 'search_errors', 'all', f'Поисковые роботы получают ошибки: {share*100:.1f}% запросов',
                   f"Главные шаблоны: {', '.join(se.head(5)['шаблон'].astype(str))}", 'код сайта / редиректы', 'Убрать из индекса или исправить', round(share * 100, 1), 'Ошибки у поисковиков')
@@ -350,7 +357,7 @@ def errors(c, F):
     if len(ad):
         S['Реклама: посадочные с ошибками'] = ad.groupby(['entry', 'entry_status']).agg(кликов=('ip', 'size'), первый=('day', 'min'), последний=('day', 'max')).sort_values('кликов', ascending=False).reset_index()
     # мягкие ошибки: одинаковый размер ответа на множестве разных адресов
-    pg = R.loc[R['is_page'].values & (st == 200), ['base', 'bytes']]
+    pg = R.loc[R['is_page'].values & (st == 200) & (R['method'].values != 'HEAD'), ['base', 'bytes']]
     sz = pg.groupby('bytes')['base'].nunique()
     soft = sz[(sz >= 200) & (sz.index < 20000)].sort_values(ascending=False)
     if len(soft):
@@ -372,7 +379,10 @@ def errors(c, F):
     S['Изменения статусов'] = pd.DataFrame(ch)
     # защита: кого блокирует
     blk = np.isin(st, [403, 429, 444, 503])
-    PB = R.loc[blk & (c.human | c.search_ok | (R['fam'] == 'YaDirectFetcher').values), ['day', 'status', 'nettype', 'cc', 'ua_webview', 'base', 'fam']]
+    # «люди» — только визиты, которые смотрели сайт (есть страница с ответом 200); сканер служебных файлов — не человек
+    browsing = np.isin(R['vid'].values, np.unique(R['vid'].values[c.human & R['is_page'].values & (st == 200)]))
+    probe = R['base'].cat.categories.to_series().str.contains(r'\.log$|/logs?/|^/(upload|uploads|images|files|bitrix|local)/$', regex=True, case=False).values[R['base'].cat.codes.values]   # логи и листинги папок ищут сканеры
+    PB = R.loc[blk & ~vuln_b & ~probe & ((c.human & browsing) | c.search_ok | (R['fam'] == 'YaDirectFetcher').values), ['day', 'status', 'nettype', 'cc', 'ua_webview', 'base', 'fam']]
     if len(PB):
         PB = PB.assign(кто=np.where(PB['fam'].astype(str) == '', 'люди', PB['fam'].astype(str)))
         S['Защита: кого блокирует'] = PB.groupby(['кто', 'status', 'nettype', 'cc'], observed=True).agg(ответов=('day', 'size'), дней=('day', 'nunique'), пример=('base', 'first')).sort_values('ответов', ascending=False).reset_index().head(300)
@@ -451,6 +461,12 @@ def load_security(c, F):
     hot = hot[~hot['ref_host'].astype(str).str.contains(r'yandex|google|bing|ya\.ru|mail\.ru|webvisor|metrika', regex=True)]
     if len(hot):
         S['Хотлинк'] = hot.groupby('ref_host', observed=True)['bytes'].agg(['size', 'sum']).rename(columns={'size': 'запросов', 'sum': 'байт'}).sort_values('байт', ascending=False).head(50).reset_index()
+        hk = S['Хотлинк']; big = hk[hk['байт'] >= 50 * 1024 ** 2]
+        if len(big):
+            dev = big[big['ref_host'].astype(str).str.contains(r'dev|test|stage|staging|demo|local', regex=True)]
+            F.add('Нагрузка и безопасность', 'К сведению', 'hotlink', 'site', f'Чужие сайты показывают картинки сайта: {len(big)}',
+                  '; '.join(f"{r['ref_host']} — {r['байт'] / 1024 ** 2:.0f} МБ" for _, r in big.head(5).iterrows()) + (f"; тестовые копии: {', '.join(dev['ref_host'].astype(str))}" if len(dev) else ''),
+                  'nginx (защита от хотлинка)', 'Запретить отдачу картинок чужим сайтам; тестовой копии — брать картинки со своего сервера', int(big['байт'].sum() / 1024 ** 2), 'Хотлинк')
     # админка
     A = R.loc[R['is_admin'].values, ['ip', 'status', 'method', 'base', 'day', 'nettype', 'cc', 'fam']]
     if len(A):
@@ -843,6 +859,9 @@ def marketing(c, F):
         noutm = AD[(AD['entry_query'].str.contains('yclid=')) & ~AD['entry_query'].str.contains('utm_')]
         if len(noutm): lab.append(dict(проблема='yclid без UTM-меток', кликов=len(noutm), пример=noutm['entry_query'].iloc[0][:200]))
         S['Метки: проблемы'] = pd.DataFrame(lab)
+        if (len(mac) >= 10) or (len(noutm) >= 50):
+            F.add('Маркетинг', 'Важно', 'broken_labels', 'all', 'Рекламные метки сломаны',
+                  '; '.join(f"{x['проблема']} — {x['кликов']} кликов" for x in lab), 'рекламный кабинет', 'Проверить шаблон отслеживания в кампаниях', int(len(mac) + len(noutm)), 'Метки: проблемы')
         # боты в оплачиваемом трафике
         bad = Vall_ad[Vall_ad['group'] == 'Боты']
         s['Доля ботов в рекламном трафике, %'] = round(len(bad) / max(1, len(Vall_ad)) * 100, 1)

@@ -49,6 +49,11 @@ def ru_short(x):
     return ru_num(x)
 
 
+def cap(t):
+    t = str(t or '')
+    return t[:1].upper() + t[1:]
+
+
 def plural(n, one, few, many):
     n = abs(int(n)) % 100
     if 11 <= n <= 19: return many
@@ -244,7 +249,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
            ('Боты', sm.get('Визитов: Боты', 0), 'притворяются браузерами, спамят формы, сканируют'),
            ('Свои', sm.get('Визитов: Свои', 0), 'сотрудники, подрядчик, свои мониторинги')]
     total = sum(v for _, v, _ in grp) or 1
-    S.table(['Кто', 'Визитов', 'Доля', 'Кто это'], [(g, int(v), v / total, note) for g, v, note in grp], ['B', 'C', 'D', 'EF'], num=(1, 2))
+    S.table(['Кто', 'Визитов', 'Доля', 'Кто это'], [(g, int(v), v / total, cap(note)) for g, v, note in grp], ['B', 'C', 'D', 'EF'], num=(1, 2))
     S.r += 1
     cl = res.get('cleaning', {})
     S.pair('Просмотры страниц людьми', f"{ru_short(sm.get('Просмотров страниц людьми', 0))}; визитов во встроенных браузерах приложений — {ru_short(cl.get('Визитов людей во встроенных браузерах приложений', 0))}")
@@ -269,7 +274,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     for k, color in (('Срочно', ORANGE), ('Важно', DARK), ('К сведению', DARK)):
         S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
         S.cell('B', k, Font(name='Arial', size=10, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
-        S.cell('C', cnt[k], Font(name='Arial', size=12, bold=True, color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
+        S.cell('C', cnt[k], Font(name='Arial', size=12 if k == 'Срочно' else 11, bold=(k == 'Срочно'), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
         ws.merge_cells(f'C{S.r}:F{S.r}')
         ws.row_dimensions[S.r].height = 22
         S.r += 1
@@ -288,7 +293,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
             else:
                 c.font = Font(name='Arial', size=11, color='000000')
             ws.merge_cells(f'C{S.r}:F{S.r}')
-            S.cell('C', note, Font(name='Arial', size=10, color=GREY), align=Alignment(vertical='center', indent=1))
+            S.cell('C', cap(note), Font(name='Arial', size=11, color=GREY), align=Alignment(vertical='center', indent=1))
             ws.row_dimensions[S.r].height = 18
             S.r += 1
 

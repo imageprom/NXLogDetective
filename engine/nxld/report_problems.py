@@ -122,7 +122,7 @@ def card(S, x, n, sev, here_file, with_block):
     if todo: S.pair('Что делать', todo, fill=F_LIGHT)
     crit, check = meta(x)
     if check and check != '—': S.pair('Как проверить', check, fill=F_LIGHT)
-    rows = [(k, v) for k, v in (('Доказательство', x.get('доказательство')), ('Как найдено', crit)) if v]
+    rows = [(k, v) for k, v in (('Основание', crit), ('Доказательство', x.get('доказательство'))) if v]
     if rows:
         S.pair('Расследование и улики', '', height=20, fill=F_CARD)
         for k, v in rows: S.pair(k, v, level=2, fill=F_LIGHT)

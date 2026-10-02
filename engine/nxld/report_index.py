@@ -96,7 +96,7 @@ class Sheet:
     def pair(self, label, value, fill=F_CARD, link=None, height=None):
         """Строка карточки: подпись слева, значение справа; тонкий разделитель снизу, текст не прилипает к линиям."""
         self._fill_row('BCDEF', fill, Border(bottom=SEP))
-        self.cell('B', label, Font(name='Arial', size=10, bold=True, color=GREY), fill, Alignment(vertical='center', wrap_text=True, indent=1))
+        self.cell('B', label, Font(name='Arial', size=10, bold=True, color='000000'), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         self.ws.merge_cells(f'C{self.r}:F{self.r}')
         c = self.cell('C', value, Font(name='Arial', size=11, color=DARK), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         if link:
@@ -106,32 +106,37 @@ class Sheet:
         self.r += 1
 
     def table(self, headers, rows, spans, num=(), links=None, fills=None, center=()):
-        """Таблица в фирменном стиле: оранжевая шапка (белый жирный), сетка, отступы, числа справа на светло-сером.
+        """Таблица в стиле карточек: шапка — белый жирный на оранжевом; строки на светлом фоне с тонким светлым разделителем;
+        первая колонка — подпись строки (чёрный жирный, как в карточках); числа справа. Без чёрной сетки.
         spans — для каждой колонки строка столбцов листа, например 'B', 'C', 'EF' (объединяются)."""
-        def put(i, v, font, fill, al):
+        def put(i, v, font, fill, al, border):
             cols = spans[i]
             if len(cols) > 1: self.ws.merge_cells(f'{cols[0]}{self.r}:{cols[-1]}{self.r}')
             for col in cols:
                 cc = self.ws[f'{col}{self.r}']
-                cc.border = Border(left=LINE, right=LINE, top=LINE, bottom=LINE)
+                cc.border = border
                 if fill: cc.fill = PatternFill('solid', fgColor=fill)
             return self.cell(cols[0], v, font, fill, al)
+        white = Side(style='thin', color='FFFFFF')
         for i, h in enumerate(headers):
-            put(i, h, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE, Alignment(horizontal='center', vertical='center', wrap_text=True))
+            put(i, h, Font(name='Arial', size=10, bold=True, color='FFFFFF'), ORANGE,
+                Alignment(horizontal='left' if i == 0 else ('right' if i in num else ('center' if i in center else 'left')), vertical='center', wrap_text=True, indent=1),
+                Border(left=white, right=white))
         self.ws.row_dimensions[self.r].height = 24
         self.r += 1
         for k, row in enumerate(rows):
             for i, v in enumerate(row):
-                isnum = i in num
-                fill = (fills or {}).get((k, i)) or ('F3F3F3' if isnum else None)
-                fc = DARK
-                if fills and (k, i) in fills and fills[(k, i)] == ORANGE: fc = 'FFFFFF'
-                al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True, indent=0 if (isnum or i in center) else 1)
-                c = put(i, v, Font(name='Arial', size=11, color=fc, bold=bool(fills and (k, i) in fills)), fill, al)
+                isnum, sev = i in num, (fills or {}).get((k, i))
+                fill = sev or F_CARD
+                if i == 0 and not sev: font = Font(name='Arial', size=10, bold=True, color='000000')
+                else: font = Font(name='Arial', size=11, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
+                al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
+                               indent=0 if i in center else 1)
+                c = put(i, v, font, fill, al, Border(bottom=SEP))
                 if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = '#,##0' if isinstance(v, int) else '0%'
                 if links and (k, i) in links:
-                    c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
-            width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * 1.05   # примерно символов в строке
+                    c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11 if i else 10, bold=(i == 0), color=ORANGE2, underline='single')
+            width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * 1.05
             lines = max(-(-len(str(v)) // max(1, int(width(spans[i])) - 2)) for i, v in enumerate(row))
             self.ws.row_dimensions[self.r].height = max(22, 15 * lines + 8)
             self.r += 1
@@ -261,9 +266,15 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     act = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
     pr = sheet_names.get('Проблемы', 'Проблемы')
-    S.table(['Срочно', 'Важно', 'К сведению', 'Где смотреть'], [(cnt['Срочно'], cnt['Важно'], cnt['К сведению'], f'лист «{pr}» →')],
-            ['B', 'C', 'D', 'EF'], center=(0, 1, 2), links={(0, 3): f"#'{pr}'!A1"},
-            fills={(0, 0): ORANGE, (0, 1): F_NOTE, (0, 2): 'F3F3F3'})
+    top = S.r + 1
+    S.table(['Важность', 'Найдено', 'Где смотреть'],
+            [('Срочно', cnt['Срочно'], f'Факты и шаги исправления — лист «{pr}»'), ('Важно', cnt['Важно'], ''), ('К сведению', cnt['К сведению'], '')],
+            ['B', 'C', 'DEF'], num=(1,), links={(0, 2): f"#'{pr}'!A1"},
+            fills={(0, 0): ORANGE, (1, 0): F_NOTE, (2, 0): 'F3F3F3'})
+    ws.unmerge_cells(f'D{top}:F{top}'); ws.unmerge_cells(f'D{top + 1}:F{top + 1}'); ws.unmerge_cells(f'D{top + 2}:F{top + 2}')
+    ws.merge_cells(f'D{top}:F{top + 2}')
+    ws[f'D{top}'].alignment = Alignment(vertical='center', horizontal='left', wrap_text=True, indent=1)
+    for rr in range(top, top + 3): ws.row_dimensions[rr].height = 22
     # --- содержимое документа (листы этого файла, включая обзор)
     S.section('Содержимое документа')
     rows, links = [(title, 'этот лист: паспорт проверки, технологии, трафик, оглавление')], {(0, 0): f"#'{title}'!A1"}

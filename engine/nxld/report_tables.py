@@ -102,3 +102,115 @@ def conversions(wb, C, name='Конверсии'):
     bold = lambda col, v: col == 'Принята' and v == 'да'
     data_sheet(wb, name, d, 'Конверсии', 'Все отправки форм за период', widths, wrap=('Почему бот',), fill_rule=fill, bold_rule=bold,
                center=('IP', 'Код ответа', 'Принята'), kpi=kpi, kpi_col='Канал', links=[('Сводка по формам', 'Анатомия сайта')], row_rule=row_rule)
+
+
+# ---- точки приёма данных и POST-отправки ----
+SITE_KINDS = ('Заявка', 'Вход', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Служебный скрипт сайта', 'Админка', 'Загрузка файлов', 'Проверить')
+
+
+def _codes(s):
+    import re
+    return {int(k): int(v) for k, v in re.findall(r'(\d{3}):\s*(\d+)', str(s))}
+
+
+def classify_post(r, login_roots, engine):
+    """Что это за адрес и почему — человеческим языком."""
+    import re
+    a, out = str(r['адрес']), str(r.get('вывод', ''))
+    cd = _codes(r.get('коды'))
+    tot = max(1, sum(cd.values()))
+    ok = sum(v for k, v in cd.items() if 200 <= k < 400 and k not in (301,)) / tot
+    if out.startswith('цель'):
+        return 'Заявка', ('успех — переадресация после отправки (3xx)' if '3xx' in out else 'успех по коду ответа не виден (всегда 200)')
+    if any(a == root or a.startswith(root) and a.rstrip('/') == root.rstrip('/') for root in login_roots) or (a in login_roots):
+        return 'Вход', 'форма входа: неудачный вход возвращает ту же страницу, удачный — другую'
+    if re.search(r'/bitrix/admin/|/wp-admin/|/administrator/', a):
+        return 'Админка', 'запросы из админки движка (работа сотрудников)'
+    if re.search(r'/wp-|wordpress|xmlrpc|^/wp/', a) and engine != 'WordPress':
+        return 'Сканер', 'адрес WordPress, а сайт на другом движке'
+    bad = cd.get(404, 0) + cd.get(405, 0) + cd.get(301, 0) + cd.get(302, 0)
+    if cd and cd.get(404, 0) + cd.get(405, 0) >= 0.8 * tot:
+        return 'Сканер', 'такой страницы нет на сайте (404)'
+    if cd and bad >= 0.8 * tot:
+        return 'Сканер', 'страницы нет (404) или перенаправление (301) — форму не принимает'
+    if cd and cd.get(403, 0) >= 0.5 * tot:
+        return 'Сканер', 'защита отказала (403)'
+    if 'upload' in a:
+        return 'Загрузка файлов', 'загрузка файлов на сервер'
+    if any(a.startswith(root) for root in login_roots):
+        return 'Служебный скрипт сайта', 'скрипт внутри закрытого раздела'
+    if re.search(r'ajax|/tools/|/services/|autosave|\.php$', a) and a not in ('/index.php',) and ok >= 0.5:
+        return 'Служебный скрипт сайта', 'скрипт сайта: подгружает данные, не заявка'
+    if ok >= 0.5:
+        return 'Проверить', 'обычная страница отвечает на POST — AJAX-подгрузка или боты'
+    return 'Сканер', 'обычная страница, форму не принимает — отправляют боты и сканеры'
+
+
+def _post_rows(res):
+    m = res.get('site_map') or {}
+    F = m.get('forms') or []
+    if isinstance(F, str):
+        try: F = eval(F)
+        except Exception: F = []
+    OS = res.get('sheets', {}).get('Нагрузка и безопасность', {}).get('Открытые служебные разделы', pd.DataFrame())
+    roots = set(OS.loc[OS['форма_входа'] == 'да', 'раздел'].astype(str)) if len(OS) and 'форма_входа' in OS else set()
+    engine = ((m.get('engines') or [{}])[0] or {}).get('движок', '')
+    rows = []
+    for f in F:
+        if not isinstance(f, dict): continue
+        kind, why = classify_post(f, roots, engine)
+        rows.append({'Адрес': f['адрес'], 'Метод': 'POST', 'Что это': kind, 'Почему так': why, 'Отправок': int(f.get('отправок') or 0), 'IP': int(f.get('IP') or 0),
+                     'Коды ответа': str(f.get('коды', '')), '_t0': pd.to_datetime(f.get('первый')), '_t1': pd.to_datetime(f.get('последний'))})
+    return rows
+
+
+def _finish(rows):
+    d = pd.DataFrame(rows)
+    if not len(d): return d
+    d['Первая'] = d['_t0'].dt.strftime('%d.%m.%Y %H:%M'); d['Последняя'] = d['_t1'].dt.strftime('%d.%m.%Y %H:%M')
+    order = {k: i for i, k in enumerate(SITE_KINDS + ('Сканер',))}
+    d['_k'] = d['Что это'].map(order).fillna(99)
+    d = d.sort_values(['_k', 'Отправок'], ascending=[True, False]).drop(columns=['_k', '_t0', '_t1'])
+    return d
+
+
+WIDTHS = {'Адрес': 50, 'Метод': 8, 'Что это': 20, 'Почему так': 44, 'Отправок': 10, 'IP': 8, 'Коды ответа': 22, 'Первая': 16, 'Последняя': 16}
+
+
+def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
+    """Overview: только то, что сайт реально принимает — заявки, вход, фильтры и поиск, свои скрипты, админка."""
+    rows = [r for r in _post_rows(res) if r['Что это'] != 'Сканер']
+    for g in (res.get('anatomy') or {}).get('get_приём', []):
+        rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Что это': g['что'], 'Почему так': g['почему'], 'Отправок': g['отправок'], 'IP': g['IP'],
+                     'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
+    d = _finish(rows)
+    if not len(d): return
+    if name not in wb.sheetnames: wb.create_sheet(name, wb.sheetnames.index(before) if before in wb.sheetnames else len(wb.sheetnames))
+    cnt = d['Что это'].value_counts()
+    kpi = [('Точек приёма', len(d)), ('Заявки', int(cnt.get('Заявка', 0))), ('Вход', int(cnt.get('Вход', 0))),
+           ('Фильтры и поиск', int(sum(cnt.get(k, 0) for k in ('Фильтр каталога', 'Поиск по сайту', 'Форма (GET)')))),
+           ('Служебные', int(sum(cnt.get(k, 0) for k in ('Служебный скрипт сайта', 'Админка', 'Загрузка файлов'))))]
+    row_rule = lambda r: 'EFEFEF' if r.get('Что это') in ('Служебный скрипт сайта', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Что это') == 'Проверить' else None)
+    bold = lambda col, v: col == 'Что это' and v in ('Заявка', 'Вход')
+    data_sheet(wb, name, d, 'Точки приёма данных', 'Куда сайт принимает данные посетителей: формы, вход, фильтры и поиск', WIDTHS,
+               wrap=('Почему так',), bold_rule=bold, center=('Метод', 'IP'), kpi=kpi, kpi_col='Отправок', row_rule=row_rule,
+               links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
+
+
+def post_all(wb, res, name='POST-отправки', after='GET-отправки'):
+    """03 Безопасность: все POST-отправки, включая сканеры."""
+    d = _finish(_post_rows(res))
+    if not len(d): return
+    d = d.drop(columns=['Метод'])
+    if name not in wb.sheetnames:
+        pos = wb.sheetnames.index(after) + 1 if after in wb.sheetnames else len(wb.sheetnames)
+        wb.create_sheet(name, pos)
+    sc = d[d['Что это'] == 'Сканер']
+    kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Отправок сканеров', int(sc['Отправок'].sum()))]
+    row_rule = lambda r: F_NOTE if r.get('Что это') == 'Сканер' else None
+    data_sheet(wb, name, d, 'POST-отправки', 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
+               wrap=('Почему так',), center=('IP',), kpi=kpi, kpi_col='Отправок', row_rule=row_rule)
+    ws = wb[name]   # ссылка на другой файл
+    r_ = ws.max_row + 2
+    c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')
+    c.hyperlink = "NXLD_01_Overview.xlsx#'Точки приёма данных'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')

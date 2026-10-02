@@ -294,11 +294,15 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         wb = load_workbook(path)
         report_problems.build_problems(wb, res, res['findings'] if b == 'Общий анализ' else items, file_names[b], with_block=(b == 'Общий анализ'))
         names = {'Проблемы': 'Проблемы', **names}
+        if b == 'Нагрузка и безопасность':
+            report_tables.post_all(wb, res)
         if b == 'Общий анализ':
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
             own_people(wb, res['site_map'])
             report_tables.conversions(wb, S.get('Конверсии'))
+            report_tables.intake(wb, res)
+            names['Точки приёма данных'] = 'Точки приёма данных'
             pos = wb.sheetnames.index('Анатомия сайта') + 1 if 'Анатомия сайта' in wb.sheetnames else None
             for k in [k for k in list(names) if k.startswith('Анатомия —')][::-1]:   # приложения — сразу за «Анатомией»
                 if pos and names[k] in wb.sheetnames:

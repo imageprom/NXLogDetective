@@ -192,6 +192,7 @@ def build(c, res):
     A['подгружаемые'] = embedded_groups(m)
     A['параметры'] = param_groups(m, res)
     A['подсказки'] = hints(pages, res, m)
+    A['get_приём'] = get_receivers(R, c, st)
     return A
 
 
@@ -479,14 +480,6 @@ def appendix(res):
     m = res.get('site_map') or {}
     ev = lambda v: (eval(v) if isinstance(v, str) and v[:1] in '[{' else v) or []
     out = {}
-    F_ = pd.DataFrame(ev(m.get('forms')))
-    if len(F_):
-        F_['что это'] = [('заявка' if str(r.get('вывод', '')).startswith('цель') else
-                         'админка движка' if _re.search(r'/bitrix/admin/|/wp-admin/|/administrator/', str(r['адрес'])) else
-                         'загрузка файлов' if 'upload' in str(r['адрес']) else
-                         'AJAX и служебные скрипты' if _re.search(r'ajax|/tools/|/services/|autosave|\.php$', str(r['адрес'])) else
-                         'главная и разделы (в основном сканеры)' if str(r['адрес']).count('/') <= 2 else 'прочие') for _, r in F_.iterrows()]
-        out['Анатомия — отправки форм'] = F_[['адрес', 'что это', 'вывод', 'отправок', 'IP', 'коды', 'первый', 'последний']].rename(columns={'вывод': 'почему так решили'})
     E_ = pd.DataFrame(ev(m.get('embedded_templates')))
     if len(E_):
         E_['доля_сразу_после_страницы'] = (E_['доля_сразу_после_страницы'].astype(float) * 100).round(1)
@@ -505,3 +498,28 @@ def appendix(res):
         rows = [dict(параметр=p_, группа=next((nm for nm, rx in PARAM_GROUPS if _re.search(rx, p_, _re.I)), 'Прочие'), применений=n_) for p_, n_ in cnt.most_common() if len(str(p_)) >= 2]
         out['Анатомия — параметры'] = pd.DataFrame(rows)
     return out
+
+
+GET_SUBMIT = r'(?:^|&)(set_filter|submit|send|web_form_submit|web_form_apply|q|search|query|s|find|poisk)='
+
+
+def get_receivers(R, c, st):
+    """GET-формы: фильтры и поиск — по параметру кнопки или ключу поиска в адресе (не обычные просмотры)."""
+    qc = R['query'].cat.categories.to_series()
+    hit = qc.str.contains(GET_SUBMIT, regex=True, case=False).values[R['query'].cat.codes.values]
+    m = hit & (R['method'].values == 'GET') & c.human
+    if not m.any(): return []
+    Q = pd.DataFrame({'tpl': R['tpl'].values[m], 'q': R['query'].values[m].astype(str), 'ip': R['ip'].values[m].astype(str),
+                      'st': st[m], 'ts': R['ts'].values[m]})
+    Q['кнопка'] = Q['q'].str.extract(GET_SUBMIT, flags=re.I)[0].str.lower()
+    out = []
+    Q['раздел'] = Q['tpl'].astype(str).map(first_seg)
+    for (sec, k), g in Q.groupby(['раздел', 'кнопка']):   # одна строка на раздел: фильтр работает на многих страницах
+        if len(g) < 5: continue
+        kind = 'Фильтр каталога' if k in ('set_filter',) else 'Поиск по сайту' if k in ('q', 'search', 'query', 's', 'find', 'poisk') else 'Форма (GET)'
+        codes = Counter(g['st'])
+        np_ = g['tpl'].nunique()
+        why = {'Фильтр каталога': f'кнопка фильтра в адресе (set_filter)', 'Поиск по сайту': f'поисковый запрос в адресе ({k})'}.get(kind, f'параметр отправки в адресе ({k})')
+        out.append(dict(адрес=f"{sec} — на {np_} {'странице' if np_ == 1 else 'страницах'}", метод='GET', что=kind, почему=why, отправок=len(g), IP=g['ip'].nunique(),
+                        коды=', '.join(f'{a}:{b}' for a, b in codes.most_common(4)), первый=pd.to_datetime(g['ts'].min(), unit='s'), последний=pd.to_datetime(g['ts'].max(), unit='s')))
+    return sorted(out, key=lambda x: -x['отправок'])

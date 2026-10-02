@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from .findings import SEV_ORDER
+from . import report_index
 
 FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'отмечено как норма': 'EDEDED'}
@@ -230,7 +231,7 @@ def apply_edits(res, edits):
     return res
 
 
-def build(res, outdir, site=None, edits=None, redmine=None):
+def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     """redmine — путь к тексту, который написал ИИ по brief.json (work/NXLD_Redmine.textile).
     Если его нет, кладётся запасной черновик движка с пометкой «черновик»."""
     os.makedirs(outdir, exist_ok=True)
@@ -244,11 +245,13 @@ def build(res, outdir, site=None, edits=None, redmine=None):
     about, files = about_df(res), files_df(res)
     written = []
     for b in res['selected']:
+        if only and b not in only: continue
         S = res['sheets'].get(b, {})
         items = [x for x in res['findings'] if x['блок'] == b]
         summ = kv_df(res['summary'].get(b, {}))
         if b == 'Общий анализ':
-            sheets = {'О данных': about, 'Файлы': files, 'Сводка': summ, 'Главное': main_sheet(res, file_names), 'Проблемы': problems_df(items), **site_map_sheets(res['site_map']), **S, 'IP': res['ips']}
+            # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
+            sheets = {'Проблемы': problems_df(res['findings'], with_block=True), 'Файлы': files, **site_map_sheets(res['site_map']), **S, 'IP': res['ips']}
             hidden = snap_json
         else:
             sheets = {'Проблемы': problems_df(items), 'Сводка': summ, 'О данных': about}
@@ -261,8 +264,14 @@ def build(res, outdir, site=None, edits=None, redmine=None):
             cmp_ = res['compare']
             sheets['Было → стало'] = cmp_ if b == 'Общий анализ' else cmp_[cmp_['блок'] == b]
         path = os.path.join(outdir, file_names[b])
-        write_xlsx(path, sheets, hidden)
+        names = write_xlsx(path, sheets, hidden)
+        if b == 'Общий анализ':
+            wb = load_workbook(path)
+            report_index.build_index(wb, res, names)
+            wb.save(path)
         written.append(path)
+    if only:
+        return dict(files=written, zip=None, stem=stem)
     tx = os.path.join(outdir, 'NXLD_Redmine.textile')
     if redmine and os.path.exists(redmine):
         text = open(redmine, encoding='utf-8').read()

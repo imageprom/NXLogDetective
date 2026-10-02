@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import visits, blocks, brief
+from . import visits, blocks, brief, recon
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -56,7 +56,9 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     V = visits.mark_form_spam(V, R)
     c = blocks.Ctx(R, V, E, T, m, inv, G)
     F = Findings()
-    res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V)}
+    res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V),
+           'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
+           'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None}
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
           'Маркетинг': lambda: blocks.marketing(c, F)}

@@ -199,3 +199,28 @@ def mask_pd(s):
     s = re.sub(r'([\w.-])[\w.-]*@([\w-])[\w.-]*', r'\1***@\2***', s)
     s = re.sub(r'(?i)((?:name|fio|message|comment)=)[^&]+', r'\1***', s)
     return s
+
+
+def detect_hosting(E, rules_path=None):
+    """Тип хостинга и ОС по путям на сервере из error-лога. Правила — data/hosting_rules.json."""
+    import json, os
+    rules_path = rules_path or os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'hosting_rules.json')
+    cfg = json.load(open(rules_path, encoding='utf-8')) if os.path.exists(rules_path) else {'правила': [], 'иначе': 'тип хостинга по логам не определён'}
+    if E is None or not len(E):
+        return dict(тип='по логам не видно (нет error-лога)', путь=None, ос='по логам не видно (нет error-лога)', другие_пользователи=[])
+    msg = E['msg'].astype(str)
+    paths = msg.str.extractall(r'(/(?:var|mnt|home|srv|usr|opt|etc)/[^\s"\',:;)]+)')[0]
+    win = msg.str.contains(r'[A-Za-z]:\\', regex=True).any()
+    os_ = 'Linux/Unix (по путям на сервере; дистрибутив и версия по логам не видны)' if len(paths) else ('Windows (по путям на сервере)' if win else 'по логам не видно')
+    roots = paths.str.extract(r'^(/var/www/[^/]+/data/www/[^/]+|/mnt/data/www/[^/]+|/home/[^/]+/[^/]+|/var/www/[^/]+)')[0].dropna()
+    if not len(roots):
+        return dict(тип=cfg['иначе'], путь=None, ос=os_, другие_пользователи=[])
+    root = roots.value_counts().index[0]
+    kind = cfg['иначе']
+    for r in cfg.get('правила', []):
+        if re.match(r['шаблон'], root):
+            kind = r['тип']; break
+    users = sorted(set(roots.str.extract(r'^/var/www/([^/]+)')[0].dropna()) - {re.sub(r'^/var/www/([^/]+).*', r'\1', root)})
+    if users:
+        kind += '; в логах видны другие пользователи сервера'
+    return dict(тип=kind, путь=root, ос=os_, другие_пользователи=users[:10])

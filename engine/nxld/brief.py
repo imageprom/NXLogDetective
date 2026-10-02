@@ -60,13 +60,6 @@ def slash_check(rows, R):
     return rows
 
 
-def ba_verdict(r):
-    b, a, ch = r.get('в среднем за день до'), r.get('в среднем за день после'), r.get('изменение, %')
-    if ch is None: return 'не было до точки'
-    if abs(ch) < 15: return f'почти не изменилось ({b} → {a} в день)'
-    return f"{'выросло' if ch > 0 else 'упало'} на {abs(ch):.0f}% ({b} → {a} в день)"
-
-
 def build(res, c, prev=None):
     S, sm, inv, m = res['sheets'], res['summary'], res['inventory'], res['site_map']
     V, R = c.V, c.R
@@ -155,7 +148,6 @@ def build(res, c, prev=None):
             tp['визитов_на_заявку'] = [round(v / p) if p else None for v, p in zip(tp['визитов'], tp['принято'])]
         org = H[H['channel'] == 'Поиск']
         kc = SM.get('Реклама: Кампании', pd.DataFrame())
-        ba = SM.get('До и после', pd.DataFrame())
         pl = SM.get('Площадки к отключению', pd.DataFrame())
         B['маркетинг'] = dict(
             органический_поиск=dict(визитов=int(len(org)), заявок=int(org['n_conv'].sum()), визитов_на_заявку=round(len(org) / org['n_conv'].sum()) if org['n_conv'].sum() else None),
@@ -163,11 +155,9 @@ def build(res, c, prev=None):
             кампании_без_заявок=recs(kc[(kc['принято'] == 0)].sort_values('визитов', ascending=False), ['кампания', 'визитов', 'мгновенный_уход_%', 'смотрели_каталог_%'], n=6) if len(kc) else [],
             кампании_с_заявками=recs(kc[kc['принято'] > 0].sort_values('принято', ascending=False), ['кампания', 'визитов', 'принято'], n=6) if len(kc) else [],
             площадки_к_отключению=dict(всего=len(pl), визитов=int(pl['визитов'].sum()) if len(pl) else 0, крупнейшие=recs(pl, ['source', 'тип', 'визитов'], n=6)),
-            до_и_после=dict(окно=sm.get('Маркетинг', {}).get('До и после: окно сравнения'),
-                            строки=[dict(r, вывод=ba_verdict(r)) for r in recs(ba[ba[['в среднем за день до', 'в среднем за день после']].max(axis=1) >= 5], n=14)] if len(ba) else []),
             метки=recs(SM.get('Метки: проблемы'), n=4),
             где=dict(типы=ref('Маркетинг', 'Реклама: системы и типы площадок'), кампании=ref('Маркетинг', 'Реклама: Кампании'),
-                     площадки=ref('Маркетинг', 'Площадки к отключению'), до_и_после=ref('Маркетинг', 'До и после')))
+                     площадки=ref('Маркетинг', 'Площадки к отключению')))
     # --- ошибки
     SE = S.get('Ошибки', {})
     st = SE.get('Изменения статусов', pd.DataFrame())

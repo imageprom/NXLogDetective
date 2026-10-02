@@ -695,54 +695,7 @@ def placement_type(src, system_source):
     return 'РСЯ: сторонние приложения'
 
 
-def before_after(H, AD, control_point, min_clicks=20):
-    """Честное «до и после»: одно и то же окно по часам (от времени контрольной точки до конца суток, а если данные обрываются — до времени обрыва)
-    в днях до точки против дня точки и следующих дней. Сравниваются средние за день в окне и доли типов площадок."""
-    cp = int(pd.Timestamp(control_point).timestamp())
-    cday, csec = cp // 86400, cp % 86400
-    last = int(H['start'].max())
-    esec = last % 86400 if last // 86400 >= cday and last % 86400 > csec else 86400   # последний день неполный — окно режется по нему для всех дней
-    def prep(df, key):
-        d = df[['start', 'n_pages', 'dur', 'n_conv']].copy()
-        d['ключ'] = df[key].astype(str).values
-        d['день'] = (d['start'] // 86400).astype(int)
-        d = d[((d['start'] % 86400) >= csec) & ((d['start'] % 86400) < esec)]
-        d['период'] = np.where(d['день'] >= cday, 'после', 'до')
-        return d
-    parts = [('Канал (все люди)', prep(H, 'channel'))]
-    if AD is not None: parts.append(('Тип площадки (реклама)', prep(AD, 'тип_площадки')))
-    rows, drafts = [], []
-    days_all = sorted(set((H['start'] // 86400).astype(int)))
-    days_b = [d for d in days_all if d < cday]; days_a = [d for d in days_all if d >= cday]
-    if not days_b or not days_a:
-        return pd.DataFrame(), 'нет дней до или после контрольной точки', []
-    nb, na = len(days_b), len(days_a)
-    for what, d in parts:
-        tot = d.groupby('период').size()
-        for k, g in d.groupby('ключ'):
-            b, a = g[g['период'] == 'до'], g[g['период'] == 'после']
-            mb, ma = len(b) / nb, len(a) / na
-            ch = (ma - mb) / mb * 100 if mb else None
-            rows.append({'разрез': what, 'значение': k, 'в среднем за день до': round(mb, 1), 'в среднем за день после': round(ma, 1),
-                         'изменение, %': round(ch, 0) if ch is not None else None,
-                         'доля до, %': round(len(b) / max(1, tot.get('до', 0)) * 100, 1), 'доля после, %': round(len(a) / max(1, tot.get('после', 0)) * 100, 1),
-                         'уход сразу до, %': round(((b['n_pages'] <= 1) & (b['dur'] < 10)).mean() * 100, 1) if len(b) else None,
-                         'уход сразу после, %': round(((a['n_pages'] <= 1) & (a['dur'] < 10)).mean() * 100, 1) if len(a) else None,
-                         'заявок до': int(b['n_conv'].sum()), 'заявок после': int(a['n_conv'].sum())})
-            if max(mb, ma) >= min_clicks and ch is not None and abs(ch) >= 50 and abs(ma - mb) >= min_clicks:
-                drafts.append(dict(ключ=f'{what}:{k}', цифра=int(round(ma - mb)),
-                                   заголовок=f"После {pd.Timestamp(cp, unit='s'):%d.%m %H:%M}: {k} — {'рост' if ch > 0 else 'падение'} на {abs(ch):.0f}%",
-                                   факты=f"{what}: в те же часы было в среднем {mb:.0f} в день, стало {ma:.0f}; доля {rows[-1]['доля до, %']}% → {rows[-1]['доля после, %']}%; уход сразу {rows[-1]['уход сразу до, %']}% → {rows[-1]['уход сразу после, %']}%."))
-    def fd(x): return pd.Timestamp(x * 86400, unit='s').strftime('%d.%m')
-    endt = '24:00' if esec >= 86400 else pd.Timestamp(esec, unit='s').strftime('%H:%M')
-    info = (f"каждый день с {pd.Timestamp(cp, unit='s'):%H:%M} до {endt}; до — {nb} дн. ({fd(days_b[0])}–{fd(days_b[-1])}), "
-            f"после — {na} дн. ({fd(days_a[0])}–{fd(days_a[-1])}); в день точки считается только время после неё")
-    D = pd.DataFrame(rows)
-    D = D.sort_values(['разрез', 'в среднем за день до'], ascending=[True, False])
-    return D, info, drafts
-
-
-def marketing(c, F, control_point=None):
+def marketing(c, F):
     R, V, H = c.R, c.V, c.H
     S = {}
     # каналы подробно (люди)
@@ -847,13 +800,4 @@ def marketing(c, F, control_point=None):
         # боты в оплачиваемом трафике
         bad = Vall_ad[Vall_ad['group'] == 'Боты']
         s['Доля ботов в рекламном трафике, %'] = round(len(bad) / max(1, len(Vall_ad)) * 100, 1)
-    # до и после контрольной точки: те же часы прошлых дней против дня изменения
-    if control_point:
-        D, info, drafts = before_after(H, AD if len(AD) else None, control_point)
-        if len(D):
-            S['До и после'] = D
-            s['До и после: окно сравнения'] = info
-            for d in drafts:
-                F.add('Маркетинг', 'К сведению', 'before_after', d['ключ'], d['заголовок'], d['факты'] + f' Окно: {info}.',
-                      'рекламный кабинет / сайт', 'Проверить, совпадает ли изменение с правкой в кабинете или на сайте (черновик — подтвердить или удалить)', d['цифра'], 'До и после')
     return S, s

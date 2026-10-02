@@ -3,7 +3,7 @@
 
 Пример:
   python3 nxld_run.py --logs ./logs --work ./work --out ./out
-  python3 nxld_run.py --logs ./logs --work ./work --out ./out --blocks errors,bots --check-ips 1.2.3.4,5.6.7.8 --control-point "2026-10-01 15:40"
+  python3 nxld_run.py --logs ./logs --work ./work --out ./out --blocks errors,bots --check-ips 1.2.3.4,5.6.7.8
   python3 nxld_run.py --work ./work --out ./out --stage analyze      # пересчитать блоки без повторного разбора логов
 
 Этапы: prepare (разбор логов, ~1–3 мин на 10 млн строк), analyze (блоки), report (Excel, Redmine, снимок, архив).
@@ -22,7 +22,6 @@ def main():
     ap.add_argument('--out', help='папка для результата')
     ap.add_argument('--blocks', default='all', help='overview,errors,load,bots,marketing или all (overview и errors — всегда)')
     ap.add_argument('--check-ips', default='', help='IP через запятую для проверки')
-    ap.add_argument('--control-point', default=None, help='момент для сравнения «до и после», например "2026-10-01 15:40"')
     ap.add_argument('--marks', default=None, help='JSON {ключ_проблемы: комментарий} — отметки «это норма» или прошлый снимок .snapshot.json')
     ap.add_argument('--map-override', default=None, help='JSON с поправками карты сайта (site_hosts, staff_ips, catalog_templates ...)')
     ap.add_argument('--prev', default=None, help='снимок прошлой проверки (.snapshot.json) — для сравнения')
@@ -41,7 +40,7 @@ def main():
         prepare.run(a.logs, a.work, map_override=ovr)
     if a.stage in ('all', 'analyze'):
         prev = json.load(open(a.prev, encoding='utf-8')) if a.prev else None
-        analyze.run(a.work, sel, [x.strip() for x in a.check_ips.split(',') if x.strip()], a.control_point, marks, prev)
+        analyze.run(a.work, sel, [x.strip() for x in a.check_ips.split(',') if x.strip()], marks, prev)
     if a.stage in ('all', 'analyze', 'report') and a.out:
         import pickle
         res = pickle.load(open(os.path.join(a.work, 'results.pkl'), 'rb'))

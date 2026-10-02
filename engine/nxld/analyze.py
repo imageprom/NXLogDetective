@@ -42,7 +42,7 @@ def important_ips(c, S_bots):
     return D
 
 
-def run(workdir, selected=None, check_ips=(), control_point=None, marks=None, prev=None, log=print):
+def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     selected = selected or BLOCKS
     selected = ['Общий анализ', 'Ошибки'] + [b for b in selected if b not in ('Общий анализ', 'Ошибки')]
     log('Загрузка подготовленных таблиц')
@@ -59,7 +59,7 @@ def run(workdir, selected=None, check_ips=(), control_point=None, marks=None, pr
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V)}
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
-          'Маркетинг': lambda: blocks.marketing(c, F, control_point)}
+          'Маркетинг': lambda: blocks.marketing(c, F)}
     for b in BLOCKS:
         if b in selected or b == 'Боты':   # боты считаем всегда: нужны для листа IP и спама форм
             log(f'Блок: {b}')

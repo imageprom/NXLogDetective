@@ -26,6 +26,7 @@ GROUP_TITLES = {
     'campaign_zero': 'Кампании с заметным трафиком и без заявок', 'unknown_robot': 'Неопознанные роботы и мониторинги',
     'placement_type_low': 'Типы рекламных площадок с конверсией в разы ниже поиска',
 }
+GEN = {'Реклама': 'рекламы', 'Карты': 'Карт', 'Поиск': 'поиска'}
 LOWER = {'Срочно': 'Важно', 'Важно': 'К сведению', 'К сведению': 'К сведению'}
 
 
@@ -58,8 +59,9 @@ def calibrate(items, human_visits, period_end_ts, rules=None):
         t = x['key'].split(':')[1]
         obj = x['key'].split(':', 2)[2] if x['key'].count(':') >= 2 else ''
         if t == '404_entry' and obj in hot:
-            if x['важность'] == 'К сведению': set_sev(x, 'Важно', f'вход из «{obj}» — горячий канал')
-            elif not x.get('почему'): x['почему'] = f'вход из «{obj}» — горячий канал'
+            why = f"вход из {GEN.get(obj, obj)} — горячий канал: человек ищет конкретную страницу"
+            if x['важность'] == 'К сведению': set_sev(x, 'Важно', why)
+            elif not x.get('почему'): x['почему'] = why
         elif t in PEOPLE_METRIC and isinstance(x.get('главная_цифра'), (int, float)) and x['главная_цифра'] < small and x['важность'] != 'К сведению':
             set_sev(x, 'К сведению', f'задело меньше {small:.0f} визитов людей')
         if t == 'missing_static' and x.get('файлы') and all(invisible.search(f) for f in x['файлы']):
@@ -101,5 +103,13 @@ def calibrate(items, human_visits, period_end_ts, rules=None):
                         факты='; '.join(f"{x['что_происходит']} — {x['факты']}" for x in xs), где_править=xs[0]['где_править'],
                         что_сделать=xs[0]['что_сделать'], главная_цифра=sum(nums) if nums else None, лист=xs[0]['лист'],
                         также_в=xs[0].get('также_в', ''), статус='', состав=[x['key'] for x in xs], калибровка=f'сведено {len(xs)} однотипных',
-                        почему=xs[0].get('почему', ''), файлы=sum((x.get('файлы', []) for x in xs), [])))
+                        почему=group_why(xs), файлы=sum((x.get('файлы', []) for x in xs), [])))
     return sorted(out, key=lambda x: SEV_ORDER[x['важность']])
+
+
+def group_why(xs):
+    import re
+    ch = [m.group(1) for x in xs for m in [re.match(r'вход из (\S+) — горячий канал', str(x.get('почему', '')))] if m]
+    if len(ch) > 1:
+        return f"входы из {' и '.join(dict.fromkeys(ch))} — горячие каналы: человек ищет конкретную страницу"
+    return xs[0].get('почему', '')

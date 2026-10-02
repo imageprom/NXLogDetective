@@ -191,7 +191,21 @@ def detect_get_pd(R):
     hit = cats.str.contains(PD_PARAMS, regex=True).values
     m = hit[R['query'].cat.codes.values] & (R['method'].values == 'GET')
     G = R.loc[m, ['ts', 'ip', 'base', 'query', 'status', 'ua', 'fam']].copy()
-    return G
+    return G[G['query'].astype(str).map(has_pd)]
+
+
+def has_pd(q):
+    """Персональные данные — по значениям, а не по имени параметра: телефон, почта или явное поле ФИО/телефона/почты.
+    name=Квартал Заречный — это название проекта в загрузке формы, не данные человека."""
+    from urllib.parse import unquote_plus
+    for part in str(q).split('&'):
+        k, _, v = part.partition('=')
+        v = unquote_plus(v).strip()
+        if not v or re.search(r'autodiscover|/|\\.json', v, re.I): continue   # зонды сканеров, а не данные
+        if re.search(r'@[\w-]+\.[a-z]{2,}', v, re.I) and not re.search(r'autodiscover|\.json', v, re.I): return True
+        if len(re.sub(r'\D', '', v)) >= 10 and re.fullmatch(r'[\d\s()+-]+', v): return True
+        if re.fullmatch(r'(?i)(phone|tel|telephone|mobile|email|e-mail|mail|fio|surname|lastname|last_name|passport|snils|inn)', k): return True
+    return False
 
 
 def mask_pd(s):

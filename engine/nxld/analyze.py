@@ -70,6 +70,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['sheets'][b] = S
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
+    # GET-отправки — в «Нагрузку и безопасность» (03), рядом с карточкой о персональных данных
+    go = res['sheets'].get('Общий анализ', {}).pop('GET-отправки', None)
+    if go is not None and 'Нагрузка и безопасность' in res['sheets']:
+        res['sheets']['Нагрузка и безопасность']['GET-отправки'] = go
     sp = V[V['subgroup'].str.startswith('спам форм')].sort_values('start')
     res['spam_examples'] = [dict(класс=k, ip=g['ip'].iloc[-1], время=str(blocks.dt(g['start'].iloc[-1]))[:16], вход=g['entry'].iloc[-1], визитов=len(g)) for k, g in sp.groupby('subgroup')]
     if 'Боты' not in selected:

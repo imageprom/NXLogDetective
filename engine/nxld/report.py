@@ -273,7 +273,9 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         summ = kv_df(res['summary'].get(b, {}))
         if b == 'Общий анализ':
             # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
-            sheets = {'Файлы': files, **S, 'IP': res['ips']}   # «Карта сайта» заменена листом «Анатомия сайта» (ТЗ, 3 октября)
+            from .anatomy import appendix
+            sheets = {'Файлы': files, **S, **appendix(res)}   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
+            if 'Боты' not in res['selected']: sheets['IP'] = res['ips']      # иначе лист IP — в 04 Bots
             hidden = snap_json
         else:
             sheets = {'Сводка': summ, 'О данных': about}
@@ -281,6 +283,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
                 O = res['sheets'].get('Общий анализ', {})
                 sheets.update({f'Общее: {k}': O[k] for k in ('По дням', 'Каналы', 'Разделы', 'Спрос', 'Конверсии') if k in O})
             sheets.update(S)
+            if b == 'Боты': sheets['IP'] = res['ips']
             hidden = None
         if res.get('compare') is not None:
             cmp_ = res['compare']
@@ -295,6 +298,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
             own_people(wb, res['site_map'])
+            pos = wb.sheetnames.index('Анатомия сайта') + 1 if 'Анатомия сайта' in wb.sheetnames else None
+            for k in [k for k in list(names) if k.startswith('Анатомия —')][::-1]:   # приложения — сразу за «Анатомией»
+                if pos and names[k] in wb.sheetnames:
+                    wb.move_sheet(names[k], offset=pos - wb.sheetnames.index(names[k]))
             report_index.build_index(wb, res, names)
         wb.save(path)
         written.append(path)

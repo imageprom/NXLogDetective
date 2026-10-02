@@ -2,6 +2,7 @@
 import re
 from collections import Counter, defaultdict
 import numpy as np, pandas as pd
+from . import recon
 from .recon import mask_pd
 from . import operators
 
@@ -91,11 +92,17 @@ def overview(c, F):
     P['принята'] = np.where(P['goal_success'], 'да', 'нет')
     S['Конверсии'] = P[['время', 'ip', 'goal', 'status', 'принята', 'группа', 'подгруппа', 'канал', 'страниц_до', 'ресурсов_грузил', 'сек_от_входа', 'вход', 'вход_реферер', 'сеть']].rename(columns={'goal': 'цель', 'status': 'код'})
     # GET-отправки персональных данных
-    if c.G is not None and len(c.G):
-        g = c.G.copy()
+    G_ = c.G[c.G['query'].astype(str).map(recon.has_pd)] if c.G is not None and len(c.G) else None
+    if G_ is not None and len(G_):
+        g = G_.copy()
         g['запрос'] = g['query'].astype(str).map(mask_pd)
         g['время'] = dt(g['ts'])
         S['GET-отправки'] = g[['время', 'ip', 'base', 'запрос', 'status', 'fam']].head(2000).rename(columns={'base': 'адрес', 'status': 'код', 'fam': 'робот'})
+        ppl = g[g['fam'].astype(str) == '']
+        if len(ppl) >= 5:
+            F.add('Нагрузка и безопасность', 'Важно', 'pd_in_get', 'forms', 'Персональные данные уходят в адресе страницы (GET)',
+                  f"{len(ppl)} запросов с {ppl['ip'].nunique()} адресов; адреса: {', '.join(ppl['base'].astype(str).value_counts().index[:3])}",
+                  'код форм сайта', 'Отправлять формы методом POST; убрать данные из адресов и из логов', len(ppl), 'GET-отправки')
     # сводка
     hv = len(H)
     acc = P[P['goal_success']]

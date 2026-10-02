@@ -471,3 +471,37 @@ def hints(pages, res, m):
                 рекламные_фразы=[f for f in dict.fromkeys(unquote(str(q)).split('|')[0].strip() for q in ph.sort_values(ph.columns[1], ascending=False)[col].head(40))
                                  if f and not f.startswith('---')][:20] if col else [],
                 кампании=kc['кампания'].astype(str).head(10).tolist() if len(kc) and 'кампания' in kc else [])
+
+
+def appendix(res):
+    """Подробные таблицы к «Анатомии» — доказательства, по которым собраны сводки."""
+    import re as _re
+    m = res.get('site_map') or {}
+    ev = lambda v: (eval(v) if isinstance(v, str) and v[:1] in '[{' else v) or []
+    out = {}
+    F_ = pd.DataFrame(ev(m.get('forms')))
+    if len(F_):
+        F_['что это'] = [('заявка' if str(r.get('вывод', '')).startswith('цель') else
+                         'админка движка' if _re.search(r'/bitrix/admin/|/wp-admin/|/administrator/', str(r['адрес'])) else
+                         'загрузка файлов' if 'upload' in str(r['адрес']) else
+                         'AJAX и служебные скрипты' if _re.search(r'ajax|/tools/|/services/|autosave|\.php$', str(r['адрес'])) else
+                         'главная и разделы (в основном сканеры)' if str(r['адрес']).count('/') <= 2 else 'прочие') for _, r in F_.iterrows()]
+        out['Анатомия — отправки форм'] = F_[['адрес', 'что это', 'вывод', 'отправок', 'IP', 'коды', 'первый', 'последний']].rename(columns={'вывод': 'почему так решили'})
+    E_ = pd.DataFrame(ev(m.get('embedded_templates')))
+    if len(E_):
+        E_['доля_сразу_после_страницы'] = (E_['доля_сразу_после_страницы'].astype(float) * 100).round(1)
+        out['Анатомия — подгружаемые блоки'] = E_.rename(columns={'доля_сразу_после_страницы': 'запрошен сразу после страницы, %'})
+    S_ = pd.DataFrame(ev(m.get('service_files')))
+    if len(S_):
+        S_.insert(1, 'группа', S_['адрес'].astype(str).map(lambda a: next((nm for nm, rx in SERVICE_GROUPS if _re.search(rx, a, _re.I)), 'Прочие')))
+        out['Анатомия — служебные файлы'] = S_
+    cnt = Counter()
+    for k in ('ad_params', 'other_entry_params'):
+        for p_, n_ in (ev(m.get(k)) or {}).items(): cnt[p_] += int(n_)
+    Fl = res.get('sheets', {}).get('Общий анализ', {}).get('Фильтры и поиск', pd.DataFrame())
+    if len(Fl):
+        for p_, n_ in Fl.groupby('ключ')['применений'].sum().items(): cnt[p_] = max(cnt[p_], int(n_))
+    if cnt:
+        rows = [dict(параметр=p_, группа=next((nm for nm, rx in PARAM_GROUPS if _re.search(rx, p_, _re.I)), 'Прочие'), применений=n_) for p_, n_ in cnt.most_common() if len(str(p_)) >= 2]
+        out['Анатомия — параметры'] = pd.DataFrame(rows)
+    return out

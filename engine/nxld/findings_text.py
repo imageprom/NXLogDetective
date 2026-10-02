@@ -11,7 +11,7 @@ THEME = {
     'ad_landing_errors': 'Реклама', 'campaign_zero': 'Реклама', 'placements_off': 'Реклама', 'placement_type_low': 'Реклама', 'placement_type_zero': 'Реклама',
     '5xx': 'Сайт', '5xx_section': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
-    'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
+    'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'pd_in_get': 'Безопасность', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
     'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность',
     'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
     'search_errors': 'Поиск', 'no_service': 'Поиск', 'hotlink': 'Нагрузка', 'broken_labels': 'Реклама',
@@ -200,6 +200,11 @@ def humanize(items, sheets, summary):
                 h = 'Рекламные метки сломаны'
                 f = x['факты'].replace('Макрос не подставился ({...} в адресе)', 'макросы Директа не подставились').replace('yclid без UTM-меток', 'метка yclid без UTM') + '. Эти клики теряют кампанию и объявление в статистике.'
                 f = f[0].upper() + f[1:]
+            elif t == 'pd_in_get':
+                v = re.match(r'(\d+) запросов с (\d+) адресов; адреса: (.*)$', x['факты'])
+                h = 'Телефоны и почты уходят в адресе страницы'
+                f = (f"{nw(int(v.group(1)), 'отправка', 'отправки', 'отправок')} с {nw(int(v.group(2)), 'адреса', 'адресов', 'адресов')} передали персональные данные прямо в адресе (GET): {v.group(3)}. "
+                     'Такие данные оседают в логах сервера, аналитике и истории браузера.') if v else x['факты']
             elif t == 'exposed':
                 h = 'Служебные файлы отданы посторонним'; f = x['факты']
             elif t == 'fake_crawlers':

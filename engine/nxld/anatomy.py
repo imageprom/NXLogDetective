@@ -94,6 +94,7 @@ def build(c, res):
     cl = pages['адрес'].map(clean_path)
     pages['фильтр'] = [f for _, f in cl]; pages['адрес'] = [p_ for p_, _ in cl]
     flt_pages = pages[pages['фильтр']].groupby('адрес').size()
+    flt_visits = pages[pages['фильтр']].groupby('адрес')['визитов'].sum()
     pages = pages.groupby('адрес', as_index=False).agg(просмотров=('просмотров', 'sum'), визитов=('визитов', 'sum'))
     pages['раздел'] = pages['адрес'].map(first_seg)
     pages['глубина'] = pages['адрес'].map(lambda p: 0 if p.strip('/') == '' else len(p.strip('/').split('/')))
@@ -144,9 +145,13 @@ def build(c, res):
         deep = max(x['глубина'] for x in (heavy or lv))
         el = [x for x in lv if x['глубина'] == deep][0]
         nf = int(flt_pages[flt_pages.index.str.startswith(sec)].sum()) if len(flt_pages) else 0
+        nfv = int(flt_visits[flt_visits.index.str.startswith(sec)].sum()) if len(flt_visits) else 0
+        cnt = Counter()
+        for x in collapse(roles(lv), v): cnt[x['роль']] += x['адресов']
         lv = roles(lv)
         card = dict(раздел=sec, визитов=v, страниц=len(g), уровни=collapse(lv, v), элементов=el['адресов'], элемент=el['название'] if not el['название'].startswith('Уровень') else 'элемент',
-                    глубина_элементов=deep, фильтры=filters_of(R, pg, sec), страниц_фильтра=nf, шаблоны=templates_of(R, pg, sec, deep))
+                    глубина_элементов=deep, фильтры=filters_of(R, pg, sec), страниц_фильтра=nf, визитов_фильтра=nfv,
+                    разделов=cnt['раздел'], подразделов=cnt['подраздел'], шаблоны=templates_of(R, pg, sec, deep))
         (feeds if (feedish or (deep <= 2 and word in FEED_HINT)) else cats_).append(card)
     A['каталоги'] = sorted(cats_, key=lambda x: -x['визитов'])
     A['ленты'] = sorted(feeds, key=lambda x: -x['визитов'])

@@ -4,7 +4,7 @@
 подгружаемые блоки → формы и заявки → параметры в адресах. Ссылки на подробности — строкой под блоком.
 """
 from openpyxl.styles import Font, Alignment, Border
-from .report_index import Sheet, ORANGE, ORANGE2, ru_num, plural, cap, SEP
+from .report_index import Sheet, ORANGE, ORANGE2, ru_num, plural, cap, SEP, F_CARD
 
 F_LIGHT = 'F7F7F7'   # второй уровень
 
@@ -19,6 +19,21 @@ def link_row(S, text, name, names):
     c = S.cell('B', f'{text}: лист «{name}» →', align=Alignment(vertical='center', indent=1))
     c.hyperlink = f"#'{name}'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
     S.ws.row_dimensions[S.r].height = 20
+    S.r += 1
+
+
+def row4(S, label, c, d, ef, fill=F_CARD, bold=False):
+    """Строка таблицы уровней: B — подпись, C — страниц, D — визитов, E:F — адреса или пояснение."""
+    S._fill_row('BCDEF', fill, Border(bottom=SEP))
+    S.cell('B', label, Font(name='Arial', size=11, bold=bold, color='000000'), fill, Alignment(vertical='center', wrap_text=True, indent=1 if bold else 3))
+    for col, v in (('C', c), ('D', d)):
+        x = S.cell(col, int(v) if isinstance(v, (int, float)) and v != '' else v, Font(name='Arial', size=11, bold=bold, color='000000' if bold else '333333'), fill,
+                   Alignment(horizontal='right', vertical='center', indent=1))
+        if isinstance(v, (int, float)): x.number_format = '#,##0'
+    S.ws.merge_cells(f'E{S.r}:F{S.r}')
+    S.cell('E', ef, Font(name='Arial', size=11, color='333333'), fill, Alignment(vertical='center', wrap_text=True, indent=1))
+    from .report_index import row_height
+    S.ws.row_dimensions[S.r].height = max(row_height(label, 30), row_height(ef, 52))
     S.r += 1
 
 
@@ -76,21 +91,23 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             for lv in z.get('уровни') or []:
                 S.pair(f"Уровень {lv['глубина']}" + (f": {cap(lv['название'])}" if not str(lv['название']).startswith('Уровень') else ''),
                        f"{lv.get('шаблон') or lv['пример']} — {n(lv['адресов'])} {plural(lv['адресов'], 'адрес', 'адреса', 'адресов')}, {n(lv['визитов'])} визитов", fill=F_LIGHT, level=2)
-    # 2. каталоги и ленты
+    # 3. каталоги и ленты: шапка таблицы один раз, строка каталога — на сером жирным, уровни — светло-серые
     for key, head, word in (('каталоги', 'Каталоги', 'Каталог'), ('ленты', 'Ленты', 'Лента')):
         if not A.get(key): continue
         S.section(head)
+        S.table(['Уровень', 'Страниц', 'Визитов', 'Адреса'], [], ['B', 'C', 'D', 'EF'])
         for c in A[key]:
-            S.pair(f"{word} {c['раздел']}", f"{n(c['визитов'])} визитов · {n(c['страниц'])} страниц · {n(c['элементов'])} элементов «{c['элемент']}»")
-            rows = [[level_label(lv), int(lv['адресов']), int(lv['визитов']), f"{lv.get('шаблон') or ''}\nпример: {lv['пример']}" if lv.get('шаблон') and lv.get('шаблон') != lv['пример'] else lv['пример']]
-                    for lv in c['уровни']]
-            S.table(['Уровень', 'Адресов', 'Визитов', 'Шаблон и пример'], rows, ['B', 'C', 'D', 'EF'], num=(1, 2), body=F_LIGHT, wrap=0.9)
+            st = [f"разделов — {n(c['разделов'])}" if c.get('разделов') else '', f"подразделов — {n(c['подразделов'])}" if c.get('подразделов') else '',
+                  f"элементов «{c['элемент']}» — {n(c['элементов'])}"]
+            row4(S, f"{word} {c['раздел']}", c['страниц'], c['визитов'], ' · '.join(x for x in st if x), bold=True)
+            for lv in c['уровни']:
+                adr = (f"Шаблон: {lv['шаблон']}\nПример: {lv['пример']}" if lv.get('шаблон') and lv['шаблон'] != lv['пример'] else f"Пример: {lv['пример']}")
+                row4(S, level_label(lv), lv['адресов'], lv['визитов'], adr, fill=F_LIGHT)
             if c.get('фильтры') or c.get('страниц_фильтра'):
-                f = ', '.join(c['фильтры'])
-                if c.get('страниц_фильтра'): f = (f + '; ' if f else '') + f"страниц фильтра с отдельным адресом — {n(c['страниц_фильтра'])}"
-                S.pair('Фильтры', f, fill=F_LIGHT, level=2)
+                txt = ('Параметры: ' + ', '.join(c['фильтры'])) if c.get('фильтры') else ''
+                if c.get('страниц_фильтра'): txt += ('\n' if txt else '') + 'Страницы фильтра: адреса вида …/filter/…/apply/'
+                row4(S, 'Фильтры', c.get('страниц_фильтра') or '', c.get('визитов_фильтра') or '', txt, fill=F_LIGHT)
         link_row(S, 'Статистика по шаблонам', 'Шаблоны страниц', names)
-        if key == 'каталоги' or not A.get('ленты'): pass
     # 3. простые разделы (и главная)
     if A.get('простые') or A.get('главная'):
         S.section('Простые разделы')

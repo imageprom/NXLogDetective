@@ -102,19 +102,17 @@ def proofs(c, items, sheets):
                 v = V[(V['group'] == 'Люди') & (V['entry_status'] == 404) & (V['channel'] == obj)].sort_values('start', ascending=False)
                 if len(v):
                     r = v.iloc[0]; p = f"{_t(r['start'])}: вход на {r['entry']} → 404" + (f", пришёл с {r['entry_ref_host']}" if str(r.get('entry_ref_host', '')) not in ('', '-', 'nan') else '')
-            elif t in ('service_err', 'no_service', 'exposed', 'open_section', 'trap', 'missing_static'):
+            elif t in ('service_err', 'no_service', 'exposed', 'open_section', 'missing_static'):
                 key = obj.replace('*', '') if obj not in ('files', 'list', 'all', 'site') else ''
                 if key:
-                    m = R['base'].astype(str).str.startswith(key).values
-                    if t == 'service_err': m &= st >= 400
-                    if t == 'missing_static': m &= st == 404
-                    if t == 'open_section': m &= (st == 200)
-                    if t == 'trap': m &= R['query'].astype(str).values != ''
+                    m = R['base'].astype(str).str.startswith(key).values.copy()
+                    if t == 'service_err': m = m & (st >= 400)
+                    if t == 'missing_static': m = m & (st == 404)
+                    if t == 'open_section': m = m & (st == 200)
                     r = req(m)
                     if r is not None:
                         r = r.iloc[0]
-                        q = f"?{str(r['query'])[:80]}" if t == 'trap' and str(r['query']) else ''
-                        p = f"{_t(r['ts'])}: {r['base']}{q} → {int(r['status'])}, запросил {r['fam'] if str(r['fam']) not in ('', 'nan') else r['ip']}"
+                        p = f"{_t(r['ts'])}: {r['base']} → {int(r['status'])}, запросил {r['fam'] if str(r['fam']) not in ('', 'nan') else r['ip']}"
             elif t == 'ad_landing_errors':
                 a = V[(V['channel'] == 'Реклама') & (V['entry_status'] >= 400)].sort_values('start', ascending=False)
                 if len(a):
@@ -132,7 +130,66 @@ def proofs(c, items, sheets):
                 h = sheets.get('Нагрузка и безопасность', {}).get('Тяжёлые файлы', pd.DataFrame())
                 if len(h):
                     r = h.iloc[0]; p = f"{r['файл']}: {int(r['средний_КБ'])} КБ, запрошен {int(r['запросов'])} раз"
+            if not p:
+                p = sheet_proof(t, obj, x, sheets)
         except Exception:
             p = ''
         if p: x['доказательство'] = p
     return items
+
+
+def sheet_proof(t, obj, x, sheets):
+    """Пример из уже посчитанных листов (дёшево и без перебора 10 млн строк)."""
+    sh = lambda b, k: sheets.get(b, {}).get(k, pd.DataFrame())
+    if t == 'broken_links':
+        b = sh('Ошибки', 'Битые ссылки')
+        if len(b):
+            r = b.iloc[0]; cols = list(b.columns)
+            return '; '.join(f'{c}: {r[c]}' for c in cols[:4])
+    if t == 'blocked_people':
+        b = sh('Ошибки', 'Защита: кого блокирует')
+        b = b[b['кто'] == 'люди'] if len(b) else b
+        if len(b):
+            r = b.iloc[0]; return f"{r['ответов']} ответов {r['status']} людям из сети «{r['nettype']}» ({r['cc']}), например на {r['пример']}"
+    if t == 'errlog':
+        e = sh('Ошибки', 'Error-лог'); e = e[e['тип'] == obj] if len(e) else e
+        if len(e): return f"«{str(e.iloc[0]['пример'])[:180]}»"
+    if t == 'heavy_robot':
+        f = sh('Боты', 'Роботы: семейства'); f = f[f['семейство'] == obj] if len(f) else f
+        if len(f):
+            r = f.iloc[0]; return f"{r['IP']} адресов, {r['дней']} дн.; {int(r['404'])} ответов «не найдено»; смотрел: {r['что_смотрел']}"
+    if t == 'placements_off':
+        f = sh('Маркетинг', 'Площадки к отключению')
+        if len(f):
+            r = f.iloc[0]; return f"{r['source']} ({r['тип']}): {r['почему']}"
+    if t == 'missing_static':
+        f = sh('Ошибки', 'Отсутствующие ресурсы')
+        if len(f):
+            r = f.iloc[0]; return f"{r['файл']} — {int(r['запросов'])} запросов с {int(r['страниц'])} страниц, ответ 404"
+    if t == 'trap':
+        f = sh('Нагрузка и безопасность', 'Ловушки для роботов')
+        if len(f):
+            r = f.iloc[0]; return f"{r['шаблон']} — {int(r['разных_параметров'])} разных вариантов параметров у роботов"
+    if t == 'unknown_robot':
+        f = sh('Боты', 'Роботы: семейства'); f = f[f['категория'].astype(str).str.contains('Мониторинг')] if len(f) else f
+        if len(f):
+            r = f.iloc[0]; return f"{r['семейство']}: {int(r['запросов'])} запросов с {r['IP']} адресов за {r['дней']} дн.; смотрит: {r['что_смотрел']}"
+    if t == 'placement_type_low':
+        f = sh('Маркетинг', 'Реклама: Площадки')
+        if len(f) and 'тип' in f:
+            f = f[f['тип'].astype(str).str.startswith('РСЯ')].sort_values('визитов', ascending=False)
+            if len(f):
+                r = f.iloc[0]; return f"{r['source']} ({r['тип']}): {int(r['визитов'])} визитов, заявок {int(r['принято'])}, уход сразу {r['мгновенный_уход_%']}%"
+    if t == 'campaign_zero':
+        f = sh('Маркетинг', 'Реклама: Кампании'); f = f[f['принято'] == 0].sort_values('визитов', ascending=False) if len(f) else f
+        if len(f):
+            r = f.iloc[0]; return f"{r['кампания']}: {int(r['визитов'])} визитов, уход сразу {r['мгновенный_уход_%']}%, каталог смотрели {r['смотрели_каталог_%']}%"
+    if t == '5xx' and obj == 'группа':
+        f = sh('Ошибки', '5xx по шаблонам'); f = f[f['у_людей'] < 20] if len(f) else f
+        if len(f):
+            r = f.iloc[0]; return f"{r['пример']}: {int(r['у_людей'])} ошибок у людей, {r['первый_день']} — {r['последний_день']}"
+    if t == '404_entry' and obj == 'группа':
+        f = sh('Ошибки', '404: входы извне'); f = f[f['канал'].isin(['Карты', 'Поиск'])] if len(f) else f
+        if len(f):
+            r = f.iloc[0]; return f"{r['адрес']} — {int(r['визитов'])} визитов из канала «{r['канал']}», реферер: {r['реферер']}"
+    return ''

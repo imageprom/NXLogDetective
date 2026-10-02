@@ -16,7 +16,7 @@ from .findings_text import GRADE
 STATUS_STYLE = {'стала хуже': (ORANGE, True, None), 'новая': (ORANGE, False, None), 'исправлена частично': (DARK, False, F_NOTE), 'сохраняется': (DARK, False, None)}
 
 
-PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('E5E5E5', '000000')}
+PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('CCCCCC', '000000')}   # серый — как плашка в фирменном образце
 OLINE = Side(style='thin', color=ORANGE)
 F_LIGHT = 'F7F7F7'   # блок «Расследование и улики» — светлее основных строк карточки
 
@@ -121,7 +121,7 @@ def card(S, x, n, sev, here_file, with_block):
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"
     if todo: S.pair('Что делать', todo, fill=F_LIGHT)
     crit, check = meta(x)
-    if check and check != '—': S.pair('Как проверить', check, fill=F_LIGHT)
+    if check and check != '—': S.pair('Как убедиться, что исправлено', check, fill=F_LIGHT)
     rows = [(k, v) for k, v in (('Основание', crit), ('Доказательство', x.get('доказательство'))) if v]
     if rows:
         S.pair('Расследование и улики', '', height=20, fill=F_CARD)

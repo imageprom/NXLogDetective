@@ -1,10 +1,11 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import visits, blocks, brief, recon
+from . import visits, blocks, brief, recon, findings_meta
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
+STATUS_THRESHOLD = 0.30   # порог «стала хуже / исправлена частично» при повторной проверке
 BLOCKS = ['Общий анализ', 'Ошибки', 'Нагрузка и безопасность', 'Боты', 'Маркетинг']
 
 
@@ -84,17 +85,25 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             x['отметка'] = marks[x['key']]
     if prev:
         old = {x['key']: x for x in prev.get('findings', [])}
+        thr = STATUS_THRESHOLD
         for x in F.items:
-            if not x['статус']:
-                x['статус'] = 'сохраняется' if x['key'] in old else 'новая'
-                if x['key'] in old and isinstance(x['главная_цифра'], (int, float)) and isinstance(old[x['key']].get('главная_цифра'), (int, float)):
-                    o = old[x['key']]['главная_цифра']
-                    x['статус'] += f" (было {o}, стало {x['главная_цифра']})"
+            if x['статус']: continue
+            if x['key'] not in old:
+                x['статус'], x['статус_вид'] = 'новая', 'новая'; continue
+            o, n = old[x['key']].get('главная_цифра'), x['главная_цифра']
+            x['было'], x['стало'] = o, n
+            if isinstance(o, (int, float)) and isinstance(n, (int, float)) and o:
+                ch = (n - o) / abs(o)
+                vid = 'стала хуже' if ch >= thr else ('исправлена частично' if ch <= -thr else 'сохраняется')
+                x['статус'] = f"{vid}: {o:g} → {n:g}" + (f" ({ch:+.0%})" if vid == 'исправлена частично' else '')
+            else:
+                vid = 'сохраняется'; x['статус'] = vid
+            x['статус_вид'] = vid
         cur = {x['key'] for x in F.items}
         for k, o in old.items():
             if k not in cur and o.get('блок') in selected:
                 F.items.append(dict(key=k, блок=o['блок'], важность='К сведению', что_происходит=o['что_происходит'], факты='В новом периоде не обнаружено. Проверить: исправлено или просто нет запросов к этому адресу.',
-                                    где_править='', что_сделать='Убедиться, что исправлено', главная_цифра=None, лист='', также_в='', статус='не обнаружена (исправлена или нет данных)'))
+                                    где_править='', что_сделать='Убедиться, что исправлено', главная_цифра=None, лист='', также_в='', статус='исправлена', статус_вид='исправлена', было=o.get('главная_цифра')))
         rows = []
         for b, sm in res['summary'].items():
             for k, v in sm.items():
@@ -102,6 +111,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
                 rows.append(dict(блок=b, показатель=k, было=ov, стало=v))
         res['compare'] = pd.DataFrame(rows)
         res['prev_period'] = prev.get('period')
+    findings_meta.proofs(c, F.items, res['sheets'])
     res['findings'] = F.items
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)

@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from .findings import SEV_ORDER
-from . import report_index
+from . import report_index, report_problems
 
 FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'отмечено как норма': 'EDEDED'}
@@ -251,10 +251,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         summ = kv_df(res['summary'].get(b, {}))
         if b == 'Общий анализ':
             # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
-            sheets = {'Проблемы': problems_df(res['findings'], with_block=True), 'Файлы': files, **site_map_sheets(res['site_map']), **S, 'IP': res['ips']}
+            sheets = {'Файлы': files, **site_map_sheets(res['site_map']), **S, 'IP': res['ips']}
             hidden = snap_json
         else:
-            sheets = {'Проблемы': problems_df(items), 'Сводка': summ, 'О данных': about}
+            sheets = {'Сводка': summ, 'О данных': about}
             if b == 'Маркетинг':
                 O = res['sheets'].get('Общий анализ', {})
                 sheets.update({f'Общее: {k}': O[k] for k in ('По дням', 'Каналы', 'Разделы', 'Спрос', 'Конверсии') if k in O})
@@ -265,10 +265,13 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             sheets['Было → стало'] = cmp_ if b == 'Общий анализ' else cmp_[cmp_['блок'] == b]
         path = os.path.join(outdir, file_names[b])
         names = write_xlsx(path, sheets, hidden)
+        # «Проблемы» — карточками, первым листом блока (в Overview — вторым, после индекса); ТЗ 16.5
+        wb = load_workbook(path)
+        report_problems.build_problems(wb, res, res['findings'] if b == 'Общий анализ' else items, file_names[b], with_block=(b == 'Общий анализ'))
+        names = {'Проблемы': 'Проблемы', **names}
         if b == 'Общий анализ':
-            wb = load_workbook(path)
             report_index.build_index(wb, res, names)
-            wb.save(path)
+        wb.save(path)
         written.append(path)
     if only:
         return dict(files=written, zip=None, stem=stem)

@@ -27,6 +27,7 @@ def main():
     ap.add_argument('--map-override', default=None, help='JSON с поправками карты сайта (site_hosts, staff_ips, catalog_templates ...)')
     ap.add_argument('--prev', default=None, help='снимок прошлой проверки (.snapshot.json) — для сравнения')
     ap.add_argument('--edits', default=None, help='JSON с правками находок после расследования (add/remove/update)')
+    ap.add_argument('--redmine', default=None, help='текст для Redmine, написанный ИИ (по умолчанию work/NXLD_Redmine.textile, если есть)')
     ap.add_argument('--stage', default='all', choices=['all', 'prepare', 'analyze', 'report'])
     ap.add_argument('--site', default=None)
     a = ap.parse_args()
@@ -45,7 +46,10 @@ def main():
         import pickle
         res = pickle.load(open(os.path.join(a.work, 'results.pkl'), 'rb'))
         edits = json.load(open(a.edits, encoding='utf-8')) if a.edits else None
-        out = report.build(res, a.out, a.site, edits)
+        rm = a.redmine or os.path.join(a.work, 'NXLD_Redmine.textile')
+        out = report.build(res, a.out, a.site, edits, rm)
+        if not os.path.exists(rm):
+            print('Текста для Redmine от ИИ нет — в архив положен черновик движка. Напишите текст по work/brief.json и пересоберите --stage report.')
         print('Готово:', out['zip'])
 
 

@@ -477,16 +477,29 @@ def load_security(c, F):
         if len(got):
             gg = got.groupby('base', observed=True).agg(ответов_200=('ip', 'size'), IP=('ip', 'nunique'), размер=('bytes', 'median'), первый=('day', 'min'), последний=('day', 'max')).sort_values('ответов_200', ascending=False).reset_index()
             S['Служебные файлы: что отдано'] = gg
-            # отбрасываем «200», размер которых совпадает с типичным ответом соседних адресов (страница входа, заглушка, soft 404)
-            def typical(path):
+            # кому отдано: свои (сотрудники) или чужие; у чужих размер сравнивается с частыми ответами соседних адресов
+            # (страница входа, заглушка, soft 404). Полный ответ, полученный только своими, — не утечка.
+            staff = set(c.m.get('staff_ips', []))
+            cats = R['base'].cat.categories
+            is_staff = R['ip'].astype(str).isin(staff).values if staff else np.zeros(len(R), bool)
+            def verdict(path):
+                pc = np.where(cats == path)[0]
+                own = np.isin(R['base'].cat.codes.values, pc) & (st == 200) & (R['bytes'].values > 0)
+                n_staff, out_sz = int((own & is_staff).sum()), R['bytes'].values[own & ~is_staff]
                 d = re.sub(r'[^/]*$', '', str(path))
-                cats = R['base'].cat.categories
-                idx = np.where(cats.str.startswith(d))[0]
-                mm = np.isin(R['base'].cat.codes.values, idx) & (st == 200) & ~c.human
-                return np.median(R['bytes'].values[mm]) if mm.any() else -1
-            gg['типичный_размер_рядом'] = [typical(b) for b in gg['base']]
-            gg['вывод'] = np.where((gg['типичный_размер_рядом'] > 0) & ((gg['размер'] - gg['типичный_размер_рядом']).abs() <= 0.1 * gg['типичный_размер_рядом']),
-                                   'отдана заглушка/страница входа (как у соседних адресов)', 'ПРОВЕРИТЬ: ответ отличается от соседних')
+                idx = np.setdiff1d(np.where(cats.str.startswith(d))[0], pc)
+                nb = np.isin(R['base'].cat.codes.values, idx) & (st == 200) & ~is_staff
+                freq = pd.Series(R['bytes'].values[nb] // 100 * 100).value_counts()
+                freq = [v for v, k in freq.items() if k >= 3 and v > 0][:5]
+                if not len(out_sz):
+                    return n_staff, 0, None, 'полный ответ получили только свои (сотрудники) — утечки нет'
+                med = float(np.median(out_sz))
+                if any(abs(med - f) <= max(200, 0.1 * f) for f in freq):
+                    return n_staff, len(out_sz), med, 'чужим отдана страница входа/заглушка (как у соседних адресов)'
+                return n_staff, len(out_sz), med, 'ПРОВЕРИТЬ: чужим отдан ответ, не похожий на соседние'
+            vv = [verdict(b_) for b_ in gg['base']]
+            gg['получили_свои'] = [v[0] for v in vv]; gg['получили_чужие'] = [v[1] for v in vv]
+            gg['размер_у_чужих'] = [v[2] for v in vv]; gg['вывод'] = [v[3] for v in vv]
             S['Служебные файлы: что отдано'] = gg
             real = gg[gg['вывод'].str.startswith('ПРОВЕРИТЬ')]
             if len(real):

@@ -230,7 +230,9 @@ def apply_edits(res, edits):
     return res
 
 
-def build(res, outdir, site=None, edits=None):
+def build(res, outdir, site=None, edits=None, redmine=None):
+    """redmine — путь к тексту, который написал ИИ по brief.json (work/NXLD_Redmine.textile).
+    Если его нет, кладётся запасной черновик движка с пометкой «черновик»."""
     os.makedirs(outdir, exist_ok=True)
     res = apply_edits(res, edits)
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
@@ -262,7 +264,12 @@ def build(res, outdir, site=None, edits=None):
         write_xlsx(path, sheets, hidden)
         written.append(path)
     tx = os.path.join(outdir, 'NXLD_Redmine.textile')
-    open(tx, 'w', encoding='utf-8').write(textile(res, site, file_names))
+    if redmine and os.path.exists(redmine):
+        text = open(redmine, encoding='utf-8').read()
+    else:
+        text = textile(res, site, file_names).replace('h2. NX Log Detective:', 'h2. Черновик. NX Log Detective:', 1)
+        text = text.replace('\n\n', '\n\n_Черновик движка: связный текст пишет ИИ по brief.json (см. SKILL.md, шаг 5)._\n\n', 1)
+    open(tx, 'w', encoding='utf-8').write(text)
     sp = os.path.join(outdir, f'{stem}.snapshot.json')
     open(sp, 'w', encoding='utf-8').write(snap_json)
     written += [tx, sp]

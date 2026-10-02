@@ -1,8 +1,8 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, warnings
 import numpy as np, pandas as pd
-from . import visits, blocks
-from .findings import Findings
+from . import visits, blocks, brief
+from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
 BLOCKS = ['Общий анализ', 'Ошибки', 'Нагрузка и безопасность', 'Боты', 'Маркетинг']
@@ -72,6 +72,8 @@ def run(workdir, selected=None, check_ips=(), control_point=None, marks=None, pr
     if 'Боты' not in selected:
         res['sheets'].pop('Боты'); res['summary'].pop('Боты')
         F.items = [x for x in F.items if x['блок'] != 'Боты']
+    # важность по вреду, однотипное — одной проблемой
+    F.items = calibrate(F.items, int((V['group'] == 'Люди').sum()), int(R['ts'].max()))
     # отметки «это норма» из прошлого снимка или от человека
     marks = dict((prev or {}).get('marks', {}), **(marks or {}))
     for x in F.items:
@@ -100,5 +102,6 @@ def run(workdir, selected=None, check_ips=(), control_point=None, marks=None, pr
         res['prev_period'] = prev.get('period')
     res['findings'] = F.items
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
+    brief.save(brief.build(res, c, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')
     return res

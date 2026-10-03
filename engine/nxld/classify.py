@@ -1,0 +1,121 @@
+"""NXLD: реестр адресов — одна классификация на весь отчёт (ТЗ, «Общие критерии: адрес и тот, кто обращается»).
+
+У каждого запрошенного адреса три независимые оценки:
+  форма        — страница / файл (с группой) / конструкт — по виду адреса и справочнику расширений;
+  существование — живой (людям или своим 2xx) / переадресация / не существует (только 4xx) / сломан (5xx);
+  смысл        — зонд (однозначный, неоднозначный) / для роботов / обычное — по справочникам.
+Листы не держат своих условий, а берут срез реестра. Незнакомые расширения уходят Детективу (learned/extensions.json)."""
+import json
+import os
+import re
+import warnings
+
+import numpy as np
+import pandas as pd
+
+REF = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+# адресом это не является: шаблон JavaScript, параметры без «?», пробелы и кавычки, двойные слэши
+CONSTRUCT = re.compile(r"\$\{|\{\{|%7B%7B|%24%7B|'\s*\+|\+\s*'|[\"<>\s]|%22|%27|%3C|%3E|%20|//|&|\\", re.I)
+
+
+def _read(p):
+    try:
+        with open(p, encoding='utf-8') as f: return json.load(f)
+    except Exception:
+        return None
+
+
+def load_extensions():
+    """Справочник расширений + найденное Детективом (learned/extensions.json)."""
+    E = _read(os.path.join(REF, 'extensions.json')) or {}
+    L = _read(os.path.join(REF, 'learned', 'extensions.json')) or {}
+    ext2grp = {}
+    for g in E.get('группы', []):
+        for e in g['расширения']: ext2grp[e.lower()] = g['группа']
+    for x in L.get('расширения', []):
+        if x.get('группа') and x.get('расширение'): ext2grp.setdefault(x['расширение'].lower(), x['группа'])
+    by_addr = [(g['группа'], re.compile(g['шаблон'], re.I)) for g in E.get('по_адресу', [])]
+    pages = {e.lower() for e in E.get('страницы', [])}
+    tlds = {e.lower() for e in E.get('домены_в_хвосте', [])}
+    return dict(ext2grp=ext2grp, by_addr=by_addr, pages=pages, tlds=tlds)
+
+
+_EXT = None
+
+
+def ext_of(path):
+    """Расширение последнего звена адреса; у скрытых файлов (.env.local) — имя после точки (env)."""
+    leaf = str(path).rstrip('/').rsplit('/', 1)[-1]
+    if leaf.startswith('.'): return leaf[1:].split('.')[0].lower()
+    m = re.search(r'\.([A-Za-z0-9]{1,10})$', leaf)
+    return m.group(1).lower() if m else ''
+
+
+def form_of(path):
+    """(форма, группа, расширение, расширение_незнакомое) по виду адреса."""
+    global _EXT
+    if _EXT is None: _EXT = load_extensions()
+    p = str(path)
+    if CONSTRUCT.search(p[1:] if p.startswith('/') else p): return 'конструкт', '', '', False
+    for g, rx in _EXT['by_addr']:
+        if rx.search(p): return 'файл', g, ext_of(p), False
+    e = ext_of(p)
+    if not e or e in _EXT['pages'] or e in _EXT['tlds']: return 'страница', '', e, False
+    if re.fullmatch(r'\d+', e): return 'страница', '', e, False   # /v1.2 — версия в адресе, не расширение
+    g = _EXT['ext2grp'].get(e)
+    return 'файл', g or 'Неизвестный вид', e, g is None
+
+
+def build(R, human, staff=None, engines=()):
+    """Реестр по всем адресам лога (по категориям base). Возвращает DataFrame с индексом = код категории."""
+    from .visits import probe_rx
+    cats = R['base'].cat.categories.to_series().astype(str).reset_index(drop=True)
+    F = pd.DataFrame([form_of(p) for p in cats], columns=['форма', 'группа', 'расширение', 'незнакомое'])
+    F['адрес'] = cats.values
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        F['зонд'] = np.where(cats.str.contains(probe_rx(('однозначный',), engines), regex=True, case=False).values, 'однозначный',
+                     np.where(cats.str.contains(probe_rx(('неоднозначный',), engines), regex=True, case=False).values, 'неоднозначный', ''))
+    codes = R['base'].cat.codes.values
+    st = R['status'].values
+    who = np.asarray(human) | (np.asarray(staff) if staff is not None else np.zeros(len(R), bool))
+    L = len(cats)
+    ok = np.bincount(codes[who & (st >= 200) & (st < 300)], minlength=L)
+    r3 = np.bincount(codes[who & (st >= 300) & (st < 400)], minlength=L)
+    e4 = np.bincount(codes[(st >= 400) & (st < 500)], minlength=L)
+    e5 = np.bincount(codes[st >= 500], minlength=L)
+    ok_any = np.bincount(codes[(st >= 200) & (st < 300)], minlength=L)
+    F['существование'] = np.select([ok > 0, ok_any > 0, r3 > 0, e5 > 0, e4 > 0], ['живой', 'живой', 'переадресация', 'сломан', 'не существует'], 'не существует')
+    F['раздел'] = cats.str.extract(r'^(/[^/]*/?)')[0].values
+    return F
+
+
+def unknown_extensions(F, R, min_requests=3, top=30):
+    """Незнакомые расширения с примерами — Детективу (brief «незнакомые_расширения»)."""
+    U = F[F['незнакомое']]
+    if not len(U): return []
+    n = np.bincount(R['base'].cat.codes.values, minlength=len(F))
+    U = U.assign(запросов=n[U.index.values])
+    g = U.groupby('расширение').agg(запросов=('запросов', 'sum'), адресов=('адрес', 'size'), примеры=('адрес', lambda s: list(s.head(3))))
+    g = g[g['запросов'] >= min_requests].sort_values('запросов', ascending=False).head(top)
+    return [dict(расширение=e, запросов=int(r['запросов']), адресов=int(r['адресов']), примеры=r['примеры']) for e, r in g.iterrows()]
+
+
+def learn_extensions(items, site=''):
+    """Запись Детектива: [{расширение, группа, что, ссылка}] → learned/extensions.json (без ссылки — не принимается)."""
+    from .reference import anon
+    p = os.path.join(REF, 'learned', 'extensions.json')
+    L = _read(p) or {'расширения': []}
+    have = {x['расширение'].lower() for x in L['расширения']}
+    ok = []
+    for it in items or []:
+        e, g, url = str(it.get('расширение', '')).lower().lstrip('.'), it.get('группа'), str(it.get('ссылка', ''))
+        if not e or not g or not url.startswith('http') or e in have: continue
+        L['расширения'].append(dict(расширение=e, группа=g, что=it.get('что', ''), источник='поиск', ссылка=url, сайт=anon(site)))
+        ok.append(e); have.add(e)
+    if ok:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        json.dump(L, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+        global _EXT
+        _EXT = None
+    return ok

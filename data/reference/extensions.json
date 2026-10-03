@@ -1,0 +1,317 @@
+{
+  "id": "extensions",
+  "название": "Расширения и виды файлов",
+  "вид": "общий",
+  "описание": "Что считается страницей, а что файлом и какой группы. Один справочник для всех листов: «Разделы», «Страницы», «Файлы», «Типы страниц». Незнакомые расширения Детектив ищет и дописывает в learned/extensions.json.",
+  "заполнено": "полностью",
+  "страницы": [
+    "php",
+    "php3",
+    "php4",
+    "php5",
+    "php7",
+    "php8",
+    "phtml",
+    "html",
+    "htm",
+    "shtml",
+    "xhtml",
+    "asp",
+    "aspx",
+    "jsp",
+    "jspx",
+    "cfm",
+    "cgi",
+    "pl",
+    "do",
+    "action"
+  ],
+  "домены_в_хвосте": [
+    "ru",
+    "com",
+    "net",
+    "org",
+    "su",
+    "info",
+    "io",
+    "by",
+    "kz",
+    "ua",
+    "uz",
+    "biz",
+    "pro",
+    "online",
+    "site",
+    "store",
+    "shop",
+    "me",
+    "tv",
+    "club",
+    "рф",
+    "de",
+    "eu",
+    "uk",
+    "us",
+    "co",
+    "app",
+    "dev"
+  ],
+  "по_адресу": [
+    {
+      "группа": "Для роботов",
+      "шаблон": "^/(robots\\.txt|sitemap[\\w.-]*\\.xml(\\.gz)?|sitemap/.*|llms(-full)?\\.txt|ai\\.txt|ads\\.txt|app-ads\\.txt|humans\\.txt|security\\.txt)$"
+    },
+    {
+      "группа": "Проверочные файлы",
+      "шаблон": "(^/yandex_[0-9a-f]+\\.html$|^/google[0-9a-f]+\\.html$|^/\\.well-known/)"
+    },
+    {
+      "группа": "Фиды и выгрузки",
+      "шаблон": "(/export/|/feeds?(/|\\.xml$|$)|/rss(/|\\.xml$|$)|yandex[\\w-]*\\.xml$|google[\\w-]*\\.xml$)"
+    },
+    {
+      "группа": "Иконки и манифест",
+      "шаблон": "(favicon[\\w.-]*\\.(ico|png|svg)$|apple-touch[\\w.-]*\\.png$|/manifest\\.json$|\\.webmanifest$|/browserconfig\\.xml$)"
+    }
+  ],
+  "группы": [
+    {
+      "группа": "Картинки",
+      "расширения": [
+        "jpg",
+        "jpeg",
+        "jpe",
+        "jfif",
+        "png",
+        "apng",
+        "webp",
+        "gif",
+        "svg",
+        "svgz",
+        "avif",
+        "bmp",
+        "tif",
+        "tiff",
+        "ico",
+        "cur",
+        "heic",
+        "heif"
+      ]
+    },
+    {
+      "группа": "Видео и звук",
+      "расширения": [
+        "mp4",
+        "m4v",
+        "webm",
+        "mov",
+        "avi",
+        "mkv",
+        "wmv",
+        "flv",
+        "mpg",
+        "mpeg",
+        "3gp",
+        "ogv",
+        "mp3",
+        "ogg",
+        "oga",
+        "wav",
+        "m4a",
+        "aac",
+        "flac",
+        "opus",
+        "m3u8",
+        "ts"
+      ]
+    },
+    {
+      "группа": "Шрифты",
+      "расширения": [
+        "woff",
+        "woff2",
+        "ttf",
+        "otf",
+        "eot"
+      ]
+    },
+    {
+      "группа": "Стили и скрипты",
+      "расширения": [
+        "css",
+        "js",
+        "mjs",
+        "cjs",
+        "jsx",
+        "tsx",
+        "wasm"
+      ]
+    },
+    {
+      "группа": "Карты кода",
+      "расширения": [
+        "map"
+      ]
+    },
+    {
+      "группа": "Документы",
+      "расширения": [
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "xlsm",
+        "ppt",
+        "pptx",
+        "rtf",
+        "odt",
+        "ods",
+        "odp",
+        "txt",
+        "md",
+        "epub",
+        "djvu",
+        "fb2",
+        "mobi",
+        "csv",
+        "tsv"
+      ]
+    },
+    {
+      "группа": "Архивы",
+      "расширения": [
+        "zip",
+        "rar",
+        "7z",
+        "gz",
+        "tgz",
+        "tar",
+        "bz2",
+        "xz",
+        "lz",
+        "lzma",
+        "zst",
+        "z",
+        "cab",
+        "iso"
+      ]
+    },
+    {
+      "группа": "Данные для виджетов",
+      "расширения": [
+        "xml",
+        "json",
+        "jsonld",
+        "geojson",
+        "yml",
+        "yaml",
+        "ics",
+        "vcf",
+        "kml",
+        "kmz",
+        "gpx"
+      ]
+    },
+    {
+      "группа": "3D и графика",
+      "расширения": [
+        "glb",
+        "gltf",
+        "obj",
+        "fbx",
+        "usdz",
+        "stl",
+        "psd",
+        "ai",
+        "eps",
+        "cdr",
+        "dwg",
+        "dxf",
+        "sketch",
+        "fig"
+      ]
+    },
+    {
+      "группа": "Программы и пакеты",
+      "расширения": [
+        "exe",
+        "msi",
+        "dmg",
+        "pkg",
+        "apk",
+        "aab",
+        "ipa",
+        "deb",
+        "rpm",
+        "appimage",
+        "jar",
+        "war",
+        "bin",
+        "run"
+      ]
+    },
+    {
+      "группа": "Базы и дампы",
+      "расширения": [
+        "sql",
+        "sqlite",
+        "sqlite3",
+        "sqlitedb",
+        "db",
+        "mdb",
+        "accdb",
+        "dump",
+        "bak",
+        "old",
+        "orig",
+        "swp",
+        "save",
+        "backup"
+      ]
+    },
+    {
+      "группа": "Конфиги и исходники",
+      "расширения": [
+        "env",
+        "ini",
+        "conf",
+        "config",
+        "cfg",
+        "toml",
+        "properties",
+        "htaccess",
+        "htpasswd",
+        "py",
+        "rb",
+        "sh",
+        "bash",
+        "ps1",
+        "bat",
+        "java",
+        "c",
+        "cpp",
+        "go",
+        "rs",
+        "sln",
+        "lock",
+        "log",
+        "pem",
+        "key",
+        "crt",
+        "p12",
+        "pfx"
+      ]
+    },
+    {
+      "группа": "Прочие файлы",
+      "расширения": [
+        "swf",
+        "torrent",
+        "dat",
+        "xsl",
+        "xslt"
+      ]
+    }
+  ]
+}

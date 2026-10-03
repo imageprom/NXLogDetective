@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
 from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT, RED
 
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE as ILLEGAL
 SEP = Side(style='thin', color='D9D9D9')
 WHITE = Side(style='thin', color='FFFFFF')
 
@@ -44,6 +45,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
         for j, v in enumerate(row, 1):
             if isinstance(v, float) and pd.isna(v): v = None
             if hasattr(v, 'item'): v = v.item()
+            if isinstance(v, str): v = ILLEGAL.sub('�', v)   # управляющие символы из адресов сканеров Excel не принимает
             cell = ws.cell(i, j + X, v)
             col = cols[j - 1]
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
@@ -327,7 +329,7 @@ def service_files(wb, res, name='Файлы'):
     bad_ = list(d['_err'] > 0)
     d = d.drop(columns='_err')
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
-    missing = [nm for nm, _ in FILE_GROUPS if nm not in set(d['Группа']) and nm != 'Прочие файлы'] if res.get('files') is not None else []
+    missing = [nm for nm in ('Документы', 'Видео и звук') if nm not in set(d['Группа'])] if res.get('files') is not None else []   # заметные отсутствия
     links = [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
     data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта как отдельный файл', widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
                kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(bad_): F_NOTE if next(_it) else None)   # файлы с ошибками — персиковым
@@ -378,54 +380,48 @@ def embedded_sheet(wb, res, name='Динамические блоки'):
     return ws
 
 
-def top500_sheet(wb, T, name='TOP500'):
-    """500 самых посещаемых существующих страниц: интерес, заявки, ошибки, динамика, каналы визитов."""
+def pages_sheet(wb, T, name, mode):
+    """«Разделы», «Типы страниц», «Страницы» — один лист на срезе реестра адресов (blocks.top_pages)."""
     if T is None or not len(T) or name not in wb.sheetnames: return None
     from urllib.parse import unquote
     from .blocks import TOP_CHANNELS
     chans = [lab for _, lab in TOP_CHANNELS] + ['Прочие']
-    d = pd.DataFrame({'Страница': T['страница'].map(lambda x: unquote(str(x), errors='replace')),
-                      'Просмотров': T['просмотров'].astype(int), 'Визиты (люди)': T['визитов'].astype(int), 'IP (люди)': T['ip'].astype(int),
-                      'Заявок отправлено': T['заявок'].astype(int), 'Ошибки': T['ошибки'].map(lambda x: split_codes(x)[1] if x else ''),
-                      **{c_: T[c_].astype(int) for c_ in chans}})
-    kpi = [('Страниц', len(d)), ('Визиты (люди)', int(d['Визиты (люди)'].sum())), ('Заявок', int(d['Заявок отправлено'].sum())),
-           ('С ошибками', int(d['Ошибки'].astype(bool).sum()))]
-    widths = {'Страница': 55, 'Просмотров': 11, 'Визиты (люди)': 12, 'IP (люди)': 11, 'Заявок отправлено': 11, 'Ошибки': 22,
-              **{c_: 11 for c_ in chans}}
-    data_sheet(wb, name, d, 'TOP500', 'Самые посещаемые страницы сайта', widths, wrap=('Страница', 'Ошибки'),
-               kpi=kpi, kpi_col='Визиты (люди)',
-               links=[('Посещаемость по разделам', 'Разделы'), ('Устройство каталогов и лент', 'Анатомия сайта')])
+    dec = lambda x: unquote(str(x), errors='replace')
+    first = {'Разделы': 'Раздел', 'Типы страниц': 'Тип страницы', 'Страницы': 'Страница'}[mode]
+    cols = {first: T['страница'].map(dec)}
+    if mode == 'Разделы': cols['Статус'] = T['статус']
+    if mode in ('Разделы', 'Типы страниц'): cols['Страниц'] = T['страниц'].astype(int)
+    cols.update({'Просмотров': T['просмотров'].astype(int), 'Визиты (люди)': T['визитов'].astype(int), 'IP (люди)': T['ip'].astype(int),
+                 'Заявок отправлено': T['заявок'].astype(int)})
+    if 'ответы' in T:
+        sp = T['ответы'].fillna('').map(split_codes)
+        cols['Ответы'], cols['Ошибки'] = sp.str[0], sp.str[1]
+    else:
+        cols['Ошибки'] = T['ошибки'].map(lambda x: split_codes(x)[1] if x else '')
+    cols.update({c_: T[c_].astype(int) for c_ in chans})
+    if mode == 'Типы страниц': cols['Пример'] = T['пример'].map(dec)
+    d = pd.DataFrame(cols)
+    dead = list(T['статус'].isin(['не существует', 'сломан'])) if mode == 'Разделы' else [False] * len(d)
+    kpi = [({'Разделы': 'Разделов', 'Типы страниц': 'Типов', 'Страницы': 'Страниц'}[mode], len(d))]
+    if mode == 'Разделы': kpi.append(('Не существуют', int(sum(dead))))
+    kpi += [('Визиты (люди)', int(d['Визиты (люди)'].sum())), ('Заявок', int(d['Заявок отправлено'].sum()))]
+    if mode != 'Разделы': kpi.append(('С ошибками', int(d['Ошибки'].astype(bool).sum())))
+    widths = {first: 55 if mode != 'Разделы' else 30, 'Статус': 14, 'Страниц': 9, 'Просмотров': 11, 'Визиты (люди)': 12, 'IP (люди)': 11,
+              'Заявок отправлено': 11, 'Ответы': 30, 'Ошибки': 22, 'Пример': 50, **{c_: 11 for c_ in chans}}
+    note = {'Разделы': 'Запрашиваемые разделы сайта', 'Типы страниц': 'Страницы одного вида, собранные по шаблону адреса',
+            'Страницы': 'TOP500 — самые посещаемые страницы сайта'}[mode]
+    links = {'Разделы': [('Типы страниц внутри разделов', 'Типы страниц'), ('Устройство разделов', 'Анатомия сайта')],
+             'Типы страниц': [('Разделы', 'Разделы'), ('Отдельные страницы', 'Страницы'), ('Каталоги по уровням', 'Анатомия сайта')],
+             'Страницы': [('Типы страниц', 'Типы страниц'), ('Разделы', 'Разделы')]}[mode]
+    data_sheet(wb, name, d, mode, note, widths, wrap=(first, 'Ответы', 'Ошибки', 'Пример'), center=('Статус',),
+               kpi=kpi, kpi_col='Просмотров', row_rule=lambda r, _it=iter(dead): F_NOTE if next(_it) else None, links=links)
     ws = wb[name]
     r_ = ws.max_row + 2
-    for t_ in ('Только страницы, которые отвечали людям 200. Заявок отправлено — отправки форм с этой страницы.',
-               'Каналы — с чего начался визит, в котором была страница.'):
-        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
-    return ws
-
-
-def sections_sheet(wb, T, name='Разделы'):
-    """Запрашиваемые разделы сайта (первый уровень адреса): существует ли, интерес, заявки, ответы и ошибки, каналы визитов."""
-    if T is None or not len(T) or name not in wb.sheetnames: return None
-    from urllib.parse import unquote
-    from .blocks import TOP_CHANNELS
-    chans = [lab for _, lab in TOP_CHANNELS] + ['Прочие']
-    sp = T['ответы'].map(split_codes)
-    d = pd.DataFrame({'Раздел': T['страница'].map(lambda x: unquote(str(x), errors='replace')),
-                      'Статус': T['существует'].map(lambda x: 'существует' if x else 'не существует'),
-                      'Страниц': T['страниц'].astype(int), 'Просмотров': T['просмотров'].astype(int), 'Визиты (люди)': T['визитов'].astype(int),
-                      'IP (люди)': T['ip'].astype(int), 'Заявок отправлено': T['заявок'].astype(int), 'Ответы': sp.str[0], 'Ошибки': sp.str[1],
-                      **{c_: T[c_].astype(int) for c_ in chans}})
-    dead = list(~T['существует'].astype(bool))
-    kpi = [('Разделов', len(d)), ('Не существуют', int(sum(dead))), ('Визиты (люди)', int(d['Визиты (люди)'].sum())), ('Заявок', int(d['Заявок отправлено'].sum()))]
-    widths = {'Раздел': 30, 'Статус': 14, 'Страниц': 9, 'Просмотров': 11, 'Визиты (люди)': 12, 'IP (люди)': 11, 'Заявок отправлено': 11,
-              'Ответы': 30, 'Ошибки': 22, **{c_: 11 for c_ in chans}}
-    data_sheet(wb, name, d, 'Разделы', 'Запрашиваемые разделы сайта', widths, wrap=('Раздел', 'Ответы', 'Ошибки'), center=('Статус',),
-               kpi=kpi, kpi_col='Страниц', row_rule=lambda r, _it=iter(dead): F_NOTE if next(_it) else None,
-               links=[('Самые посещаемые страницы', 'TOP500'), ('Устройство разделов', 'Анатомия сайта')])
-    ws = wb[name]
-    r_ = ws.max_row + 2
-    for t_ in ('Раздел — первый уровень адреса. «Не существует» — людям там ни разу не ответили 2xx.',
-               'Каналы — с чего начался визит, в котором был раздел. Заявок отправлено — отправки форм со страниц раздела.'):
+    notes = {'Разделы': ['Раздел — первый уровень адреса страниц. «Не существует» — людям там ни разу не ответили 2xx.'],
+             'Типы страниц': ['Тип страницы — адреса, которые различаются только номерами и названиями (* — изменяемая часть). Пример — самая посещаемая страница этого типа.'],
+             'Страницы': ['Только страницы, которые отвечали людям 200.']}[mode]
+    notes.append('Заявок отправлено — отправки форм с этих страниц. Каналы — с чего начался визит. Зонды, файлы и битые адреса — на своих листах.')
+    for t_ in notes:
         c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
     return ws
 

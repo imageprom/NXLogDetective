@@ -293,7 +293,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             sheets = {'Сводка': summ, 'О данных': about}
             if b == 'Маркетинг':
                 O = res['sheets'].get('Общий анализ', {})
-                sheets.update({f'Общее: {k}': O[k] for k in ('По дням', 'Каналы', 'Разделы', 'TOP500', 'Конверсии') if k in O})
+                sheets.update({f'Общее: {k}': O[k] for k in ('По дням', 'Каналы', 'Разделы', 'Типы страниц', 'Страницы', 'Конверсии') if k in O})
             sheets.update(S)
             if b == 'Боты': sheets['IP'] = res['ips']
             hidden = None
@@ -314,8 +314,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             own_people(wb, res['site_map'])
             report_tables.conversions(wb, S.get('Конверсии'))
             report_tables.facets_sheet(wb, S.get('Фасеты'))
-            report_tables.top500_sheet(wb, S.get('TOP500'))
-            report_tables.sections_sheet(wb, S.get('Разделы'))
+            for nm_ in ('Разделы', 'Типы страниц', 'Страницы'): report_tables.pages_sheet(wb, S.get(nm_), nm_, nm_)
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
             if report_tables.embedded_sheet(wb, res) is not None:   # сразу за «Анатомией сайта»
@@ -335,6 +334,13 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             if report_files.build_files(wb, res) is not None: names['Логи'] = 'Логи'
             tail_ = [n_ for n_ in ('Файлы', 'Логи', '_snapshot') if n_ in wb.sheetnames]   # в конце: «Файлы», «Логи», затем снимок
             wb._sheets = [w for w in wb._sheets if w.title not in tail_] + [wb[n_] for n_ in tail_]
+            ORDER = ['Обзор', 'Проблемы', 'Анатомия сайта', 'Люди и боты', 'По дням', 'Каналы', 'Конверсии', 'Разделы', 'Типы страниц', 'Страницы',
+                     'Динамические блоки', 'Файлы', 'Фасеты', 'Точки приёма данных', 'Параметры запросов']
+            TAIL = ['Логи', '_snapshot']   # всё прочее — между списком и «Логами»
+            byname = {w.title: w for w in wb._sheets}
+            head_ = [byname[n_] for n_ in ORDER if n_ in byname]
+            tail_ = [byname[n_] for n_ in TAIL if n_ in byname]
+            wb._sheets = head_ + [w for w in wb._sheets if w not in head_ and w not in tail_] + tail_
             report_index.build_index(wb, res, names)
         report_tables.redden_codes(wb)   # ошибки в списках кодов — красным, на всех листах
         wb.save(path)

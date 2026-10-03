@@ -59,7 +59,7 @@
       "id": "backup_dirs",
       "цель": "Бэкапы и архивы",
       "сила": "неоднозначный",
-      "шаблон": "/backup|\\.(bak|old|swp|orig|save)$|\\.(tar|tgz|zip|rar)$",
+      "шаблон": "/backup|\\.(bak|old|swp|orig|save)$|\\.(tar|tgz|zip|rar|7z|bz2|xz|lz|lzma|zst|gz|z)$",
       "что": "папки бэкапов и архивы — бывают и настоящие файлы для скачивания"
     },
     {
@@ -82,6 +82,13 @@
       "сила": "неоднозначный",
       "шаблон": "^/(contacts?|contact-us|kontakty|kontaktyi|kontakti|o-nas|o-kompanii|about|about-us|company|team|rekvizity|requisites|advertis(e|ing)|for-advertisers|ad-info|adv|reklama|media-?kit|sotrudnichestvo|partners|impressum|feedback|obratnaya-svyaz|privacy(-policy)?|politika)/?$",
       "что": "угадывание страниц контактов, «о нас», рекламы — сборщики контактов и предложений; человек тоже может набрать один такой адрес"
+    },
+    {
+      "id": "login_guess",
+      "цель": "Поиск входа",
+      "сила": "неоднозначный",
+      "шаблон": "^/(login|signin|sign-in|logon|auth|user/login|users/sign_in|account/login|admin/login|login\\.(action|rsp|jsp|asp|aspx|do|cgi|html?))/?$",
+      "что": "угадывание адреса входа: свои знают настоящий вход сайта"
     }
   ],
   "сигнатуры": [

@@ -253,7 +253,7 @@ FILE_GROUPS = [   # порядок важен: первая подходящая
     ('Стили и скрипты', r'\.(css|js|mjs)$'),
     ('Карты кода', r'\.map$'),
     ('Видео и звук', r'\.(mp4|webm|mov|avi|m4v|mkv|mp3|ogg|wav|m4a|flac)$'),
-    ('Прочие файлы', r'\.(txt|swf|apk|exe|dmg|msi|epub|djvu|fb2|mobi|kml|kmz|gpx|ics|vcf|glb|gltf|obj|fbx|usdz|stl|wasm|bin|dat|xsl|xslt|psd|ai|eps|cdr|dwg|dxf|heic|jfif|torrent)$'),
+    ('Прочие файлы', r'\.(?!(?:ru|com|net|org|su|info|io|by|kz|ua|biz|pro|online|site|store|shop|me|tv|рф)$)[A-Za-z0-9]{1,8}$'),   # всё остальное с расширением — файл (страницы отсеяны раньше)
 ]
 PAGE_EXT = r'\.(php\d?|html?|shtml|aspx?|jsp|cgi|pl)$'   # это страницы, а не файлы
 FOLD_AS = {'Картинки': 'картинки', 'Шрифты': 'шрифты', 'Видео и звук': 'видео'}   # свёртка без разбора расширения
@@ -282,16 +282,20 @@ def _others(src, n=5, skip=('со страниц сайта', 'без перех
     return out + (f', и ещё {len(vc) - n}' if len(vc) > n else '')
 
 
-def files_inventory(R, min_req=3, T=None):
+def files_inventory(R, min_req=3, T=None, addr=None, people=None):
     """Все файлы, которые не страницы: для роботов, фиды, иконки, документы, данные виджетов, картинки, шрифты,
     стили и скрипты, карты кода, видео, прочее. Однотипные файлы одной папки сворачиваются в одну строку.
     Зонды сканеров отбрасываются: файл, ни разу не отданный (2xx/304), остаётся, только если его просят сами
     браузеры и роботы (AUTO_ASKED), много разных IP, или на него ссылаются страницы сайта с разных IP."""
     cats = R['base'].cat.categories.to_series().astype(str)
-    grp_c = cats.map(_file_group).values
+    if addr is not None:   # группа — по реестру адресов (справочник расширений); страницы и конструкты — не файлы
+        grp_c = np.where((addr['форма'] == 'файл').values, addr['группа'].values, None)
+    else:
+        grp_c = cats.map(_file_group).values
     codes = R['base'].cat.codes.values
     keep = pd.notna(grp_c[codes])
     S = R.loc[keep, ['ip', 'status', 'fam', 'bytes', 'day', 'ref_host', 'ref_internal']].copy()
+    S['_p'] = np.asarray(people)[keep] if people is not None else S['fam'].astype(str).eq('').values   # люди и свои
     if not len(S): return pd.DataFrame()
     bc = codes[keep]
     S['base'] = cats.values[bc]; S['grp'] = grp_c[bc]
@@ -301,13 +305,11 @@ def files_inventory(R, min_req=3, T=None):
     ok = (S['status'].between(200, 299) | (S['status'] == 304)).values
     good = set(pd.unique(S['base'].values[ok]))
     bad = S[~S['base'].isin(good)]
-    ips = bad.groupby('base')['ip'].nunique()
-    ips_in = bad[bad['ref_internal'].values].groupby('base')['ip'].nunique()
-    bgrp = bad.drop_duplicates('base').set_index('base')['grp']
-    for a_, n in ips.items():
-        t_any, t_auto = (T('файл_просят_сами'), T('файл_просят_сами_известный')) if T else (100, 10)
-        if n >= t_any or (n >= t_auto and re.search(AUTO_ASKED, a_, re.I)) or (bgrp.get(a_) in PAGE_ASSETS and ips_in.get(a_, 0) >= t_auto):
-            good.add(a_)
+    # не отданные ни разу — файл сайта, только если его просили со страниц сайта люди или свои (битая ссылка на файл)
+    # или его просят сами браузеры и роботы (robots, favicon); остальное — зонды, они на листах безопасности
+    asked = set(bad.loc[bad['ref_internal'].values & bad['_p'].values, 'base'])
+    for a_ in pd.unique(bad['base']):
+        if re.search(AUTO_ASKED, a_, re.I) or a_ in asked: good.add(a_)
     S = S[S['base'].isin(good)]
     cnt = S['base'].value_counts()
     S = S[S['base'].map(cnt).values >= min_req]

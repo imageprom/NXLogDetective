@@ -389,7 +389,11 @@ def service_groups(m, res):
             x['файлов'] += int(f['файлов']); x['запросов'] += int(f['запросов'])
             x['ошибок'] += sum(int(n) for k, n in re.findall(r'(\d{3}):\s*(\d+)', str(f['коды'])) if k[0] in '45' and k != '499')
             if len(x['примеры']) < 3: x['примеры'].append(f['адрес'])
-        return [g[k] for k, _ in FILE_GROUPS if k in g]
+        from .classify import REF
+        import json as _json, os as _os
+        E_ = _json.load(open(_os.path.join(REF, 'extensions.json'), encoding='utf-8'))
+        order_ = [x['группа'] for x in E_.get('по_адресу', [])] + [x['группа'] for x in E_.get('группы', [])] + ['Неизвестный вид']
+        return [g[k] for k in order_ if k in g] + [v for k, v in g.items() if k not in order_]
     sf = m.get('service_files') or []
     if isinstance(sf, str):
         try: sf = eval(sf)

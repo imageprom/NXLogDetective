@@ -54,10 +54,16 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
     m = json.load(open(os.path.join(workdir, 'site_map.json')))
     inv = json.load(open(os.path.join(workdir, 'inventory.json')))
+    # форма адреса — по реестру (classify): страница / файл / конструкт; страницами считаем только страницы
+    from . import classify
+    form_ = np.array([classify.form_of(p_)[0] for p_ in R['base'].cat.categories.astype(str)])
+    R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
     c = blocks.Ctx(R, V, E, T, m, inv, G)
+    engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
+    c.addr = classify.build(R, c.human, np.asarray(c.rg == 'Свои'), engines_)   # реестр адресов — общий для всех листов
     F = Findings()
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
@@ -130,7 +136,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     from .thresholds import Sizes
     T_ = Sizes(визиты=int((V['group'] == 'Люди').sum()), запросы=len(R), ip=int(R['ip'].nunique()))   # пороги — доли от размера лога
     try:
-        res['files'] = recon.files_inventory(R, T=T_).to_dict('records')
+        res['files'] = recon.files_inventory(R, T=T_, addr=c.addr, people=c.human | np.asarray(c.rg == 'Свои')).to_dict('records')
+        res['unknown_extensions'] = classify.unknown_extensions(c.addr, R, T_('незнакомый_ключ'))
     except Exception as e:
         log(f'files_inventory: {e}'); res['files'] = None
     if res['files']:

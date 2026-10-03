@@ -45,27 +45,43 @@ TOP_CHANNELS = [('Реклама', 'Реклама'), ('Поиск', 'Поиск
                 ('Ссылки с сайтов', 'Ссылки с сайтов'), ('Внутренний переход', 'Внутренние переходы')]
 
 
-def top_pages(c, n=500, by_section=False):
+def top_pages(c, n=500, by_section=False, by_template=False):
     """500 страниц по визитам людей: просмотры, визиты, IP, отправленные с них заявки, ошибки, каналы визитов."""
     R, V = c.R, c.V
     m = c.human & R['is_page'].values
     P = pd.DataFrame({'base': R['base'].values[m].astype(str), 'vid': R['vid'].values[m], 'ip': R['ip'].values[m].astype(str),
-                      'st': R['status'].values[m], 'ts': R['ts'].values[m]})
+                      'st': R['status'].values[m], 'ts': R['ts'].values[m], 'tpl': R['tpl'].values[m].astype(str)})
     if not len(P): return pd.DataFrame()
+    A = getattr(c, 'addr', None)
+    if A is not None:   # срез реестра: страницы (is_page уже по форме), без зондов — они на листах безопасности
+        code = R['base'].cat.codes.values[m]
+        P = P[(A['зонд'].values[code] == '')]
     if by_section:   # «Разделы»: первый уровень адреса; несуществующие остаются, но помечаются
         P['addr'] = P['base']
         P['base'] = P['base'].str.extract(r'^(/[^/]*/?)')[0]
     alive = set(P.loc[(P['st'] >= 200) & (P['st'] < 300), 'base'])
-    if not by_section: P = P[P['base'].isin(alive)]
+    if not by_section: P = P[P['base'].isin(alive)]   # только существующие страницы
+    if by_template:   # «Типы страниц»: шаблон адреса, под которым больше одной страницы
+        P['addr'] = P['base']
+        P['base'] = P['tpl']
+        k_ = P.groupby('base')['addr'].nunique()
+        P = P[P['base'].isin(k_[k_ >= 2].index)]
+        if not len(P): return pd.DataFrame()
     ch = V['channel'].astype(str)
     P['ch'] = P['vid'].map(ch)
     g = P.groupby('base')
     D = pd.DataFrame({'просмотров': g.size(), 'визитов': g['vid'].nunique(), 'ip': g['ip'].nunique()})
-    if by_section:
-        D['страниц'] = g['addr'].nunique(); D['существует'] = D.index.isin(alive)
+    if by_section or by_template:
+        D['страниц'] = g['addr'].nunique(); D['существует'] = D.index.isin(alive) if by_section else True
+        if by_section:   # статус раздела: существует / переадресация / сломан / не существует
+            r3_ = set(P.loc[(P['st'] >= 300) & (P['st'] < 400), 'base']); r5_ = set(P.loc[P['st'] >= 500, 'base'])
+            D['статус'] = ['существует' if b_ in alive else 'переадресация' if b_ in r3_ else 'сломан' if b_ in r5_ else 'не существует' for b_ in D.index]
         D['ответы'] = g['st'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().sort_index().items()))
     D = D.sort_values('визитов', ascending=False).head(n)
     T = P[P['base'].isin(D.index)]
+    if by_template:
+        D['ответы'] = T.groupby('base')['st'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().sort_index().items()))
+        D['пример'] = T.groupby(['base', 'addr'])['vid'].nunique().reset_index().sort_values('vid', ascending=False).drop_duplicates('base').set_index('base')['addr']
     D['ошибки'] = T[(T['st'] >= 400) & (T['st'] != 499)].groupby('base')['st'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().sort_index().items()))
     # заявки, отправленные со страницы: отправки форм людьми, у которых страница — источник
     goal = R['goal'].astype(str).values if 'goal' in R else np.array([''] * len(R))
@@ -100,10 +116,9 @@ def overview(c, F):
     S['Каналы'] = ch.reset_index().rename(columns={'channel': 'канал'})
     hp = R.loc[c.human & R['is_page'].values, ['base', 'tpl', 'vid', 'ip']]
     S['Разделы'] = top_pages(c, n=100, by_section=True)
-    tp = hp.groupby('tpl', observed=True).agg(просмотров=('vid', 'size'), визитов=('vid', 'nunique'), IP=('ip', 'nunique'), адресов=('base', 'nunique')).sort_values('визитов', ascending=False)
-    S['Шаблоны страниц'] = tp.head(200).reset_index().rename(columns={'tpl': 'шаблон'})
+    S['Типы страниц'] = top_pages(c, n=200, by_template=True)
     # TOP500: самые посещаемые существующие страницы (людям отвечали 2xx) — интерес, заявки, ошибки, динамика, каналы
-    S['TOP500'] = top_pages(c)
+    S['Страницы'] = top_pages(c)
     # фильтры и поиск по сайту
     q = R.loc[c.human & R['is_page'].values, ['query', 'ip', 'base']]
     q = q[q['query'].astype(str) != '']

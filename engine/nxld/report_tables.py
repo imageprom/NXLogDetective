@@ -106,7 +106,7 @@ def conversions(wb, C, name='Конверсии'):
 
 
 # ---- точки приёма данных и POST-отправки ----
-SITE_KINDS = ('Заявка', 'Заявка?', 'Вход', 'Обмен с 1С', 'API', 'Вебхук', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка', 'Служебный скрипт', 'Админка', 'Загрузка файлов', 'Проверить')
+SITE_KINDS = ('Заявка', 'Заявка?', 'Вход', 'Обмен с 1С', 'API', 'Вебхук', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка', 'Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов')
 
 
 def _codes(s):
@@ -114,7 +114,7 @@ def _codes(s):
     return {int(k): int(v) for k, v in re.findall(r'(\d{3}):\s*(\d+)', str(s))}
 
 
-def classify_post(r, login_roots, engine, ev=None):
+def classify_post(r, login_roots, engine, ev=None, prof=None):
     """Что это за адрес и почему — человеческим языком."""
     import re
     a, out = str(r['адрес']), str(r.get('вывод', ''))
@@ -150,8 +150,14 @@ def classify_post(r, login_roots, engine, ev=None):
         return 'Служебный скрипт', 'скрипт внутри закрытого раздела'
     if re.search(r'ajax|/tools/|/services/|autosave|\.php$', a) and a not in ('/index.php',) and ok >= 0.5:
         return 'Служебный скрипт', 'скрипт сайта: подгружает данные, не заявка'
+    p = (prof or {}).get(a, {})
+    if p.get('свои', 0) >= 0.8:
+        return 'Подгрузка на странице', f"POST шлют браузеры посетителей, которые уже на сайте ({int(p['свои'] * 100)}%) — страница подгружает данные (список, форму)"
+    if p:
+        tail = f", например параметр «{p['параметр']}»" if p.get('параметр') else ''
+        return 'Сканер', f"POST на обычную страницу без перехода с сайта ({int((1 - p.get('свои', 0)) * 100)}% запросов){tail} — боты и сканеры"
     if ok >= 0.5:
-        return 'Проверить', 'обычная страница отвечает на POST — AJAX-подгрузка или боты'
+        return 'Подгрузка на странице', 'обычная страница отвечает на POST'
     return 'Сканер', 'обычная страница, форму не принимает — отправляют боты и сканеры'
 
 
@@ -167,7 +173,7 @@ def _post_rows(res):
     rows = []
     for f in F:
         if not isinstance(f, dict): continue
-        kind, why = classify_post(f, roots, engine, res.get('form_evidence'))
+        kind, why = classify_post(f, roots, engine, res.get('form_evidence'), (res.get('anatomy') or {}).get('post_pages'))
         rows.append({'Адрес точки': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Запросов': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
                      'Коды ответа': str(f.get('коды', '')), '_t0': pd.to_datetime(f.get('первый')), '_t1': pd.to_datetime(f.get('последний'))})
     return rows
@@ -200,8 +206,8 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     kpi = [('Точек приёма', len(d)), ('Заявки', int(cnt.get('Заявка', 0) + cnt.get('Заявка?', 0))), ('Вход', int(cnt.get('Вход', 0))),
            ('API и обмен', int(sum(cnt.get(k, 0) for k in ('Обмен с 1С', 'API', 'Вебхук')))),
            ('Каталог: фильтры, поиск, навигация', int(sum(cnt.get(k, 0) for k in ('Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка')))),
-           ('Служебные', int(sum(cnt.get(k, 0) for k in ('Служебный скрипт', 'Админка', 'Загрузка файлов'))))]
-    row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Опознано как') == 'Проверить' else None)
+           ('Служебные', int(sum(cnt.get(k, 0) for k in ('Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов'))))]
+    row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов') else None
     bold = lambda col, v: col == 'Опознано как' and v in ('Заявка', 'Вход')
     data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные: формы, вход, API, фильтры, поиск и навигация', WIDTHS,
                wrap=('Улики',), bold_rule=bold, center=('Метод', 'Уникальных IP'), kpi=kpi, kpi_col='Метод', row_rule=row_rule,

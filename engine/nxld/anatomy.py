@@ -194,6 +194,7 @@ def build(c, res):
     A['подсказки'] = hints(pages, res, m)
     A['get_приём'] = get_receivers(R, c, st)
     A['api'] = api_points(R, c, st)
+    A['post_pages'] = post_profile(R)
     return A
 
 
@@ -567,4 +568,19 @@ def api_points(R, c, st):
             out.append(dict(адрес=b, метод='/'.join(sorted(set(g['meth']))), что=kind, почему='успешные обращения (2xx) не от сканеров', отправок=len(g), IP=g['ip'].nunique(),
                             коды=', '.join(f'{a}:{n}' for a, n in Counter(g['st']).most_common(3)), первый=pd.to_datetime(g['ts'].min(), unit='s'),
                             последний=pd.to_datetime(g['ts'].max(), unit='s'), кто=', '.join(f"{k or 'без подписи'}: {n}" for k, n in Counter(g['fam']).most_common(2))))
+    return out
+
+
+
+def post_profile(R):
+    """Кто шлёт POST на адрес: доля браузеров, пришедших со страниц сайта, и частый хвост запроса (для «обычных страниц»)."""
+    m = R['method'].values == 'POST'
+    if not m.any(): return {}
+    D = pd.DataFrame({'b': R['base'].values[m].astype(str), 'ok': (R['ua_browser'].values[m] & R['ref_internal'].values[m]),
+                      'q': R['query'].values[m].astype(str)})
+    out = {}
+    for b, g in D.groupby('b'):
+        if len(g) < 3: continue
+        qs = g.loc[g['q'] != '', 'q'].str.split('=').str[0].value_counts()
+        out[b] = dict(свои=round(float(g['ok'].mean()), 2), параметр=qs.index[0] if len(qs) else '')
     return out

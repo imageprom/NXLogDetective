@@ -216,52 +216,108 @@ def outage_windows(R, st, E, gap=3):
     return W, rows
 
 
-FACET_NAMES = {'rooms': 'Комнат', 'room': 'Комнат', 'house_num': 'Дом', 'house': 'Дом', 'total_area': 'Площадь', 'area': 'Площадь',
-               'complete_date': 'Срок сдачи', 'deadline': 'Срок сдачи', 'project': 'Проект', 'district': 'Район', 'finishing': 'Отделка',
-               'price': 'Цена', 'floor': 'Этаж', 'section': 'Секция', 'type': 'Тип', 'status': 'Статус', 'brand': 'Бренд', 'color': 'Цвет', 'size': 'Размер'}
+FACET_WORDS = {'rooms': 'Комнат', 'room': 'Комнат', 'komnat': 'Комнат', 'house_num': 'Дом', 'house': 'Дом', 'dom': 'Дом', 'total_area': 'Площадь',
+               'area': 'Площадь', 'square': 'Площадь', 'complete_date': 'Срок сдачи', 'deadline': 'Срок сдачи', 'project': 'Проект', 'district': 'Район',
+               'finishing': 'Отделка', 'price': 'Цена', 'cost': 'Цена', 'floor': 'Этаж', 'section': 'Секция', 'brand': 'Бренд', 'manufacturer': 'Производитель',
+               'color': 'Цвет', 'colour': 'Цвет', 'size': 'Размер', 'material': 'Материал', 'category': 'Категория', 'type': 'Тип', 'city': 'Город', 'region': 'Регион'}
+FACET_PATH = r'^([a-z][a-z0-9_]*)-(is|from|to)-(.+)$|^([a-z][a-z0-9_]*)[:=](.+)$'
+FACET_KEY = r'(?i)(filter|^f$|^f\[|\[\]$|_(min|max|from|to)$|^pa_|^attr|^prop|^price|^brand|^color|^size)'
+NOT_FACET = r'(?i)^(set_filter|del_filter|ajax\w*|sort\w*|order\w*|view|page|pagen_\d+|utm_\w+|yclid|gclid|fbclid|bxajaxid|clear_cache)$'
+
+
+def facet_name(key):
+    k = key.lower()
+    for w in sorted(FACET_WORDS, key=len, reverse=True):
+        if re.search(rf'(^|[_\[]){w}($|[_\]])', k): return FACET_WORDS[w]
+    return key
 
 
 def facets(R, c):
-    """Фасеты — что люди выбирают в фильтре каталога: из адресов фасетных страниц (…/filter/…/apply/) и из параметров фильтра."""
+    """Фасеты — что люди выбирают в фильтре каталога. Только по логу и общим признакам, без привязки к движку:
+    в пути (ключ-is-значение, ключ-from-…, ключ:значение) и в параметрах фильтра (filter…, …_min/_max, ключ[]= …)."""
     from urllib.parse import unquote
     pg = c.human & R['is_page'].values & (R['status'].values == 200)
     D = pd.DataFrame({'b': R['base'].values[pg].astype(str), 'q': R['query'].values[pg].astype(str), 'ip': R['ip'].values[pg].astype(str)})
     rows = []
-    fp = D[D['b'].str.contains('/filter/')]
+    fp = D[D['b'].str.contains(r'/[a-z][a-z0-9_]*-(?:is|from|to)-|/[a-z][a-z0-9_]*[:=]', regex=True)]
     for b, ip in zip(fp['b'], fp['ip']):
         segs = b.strip('/').split('/')
-        i = segs.index('filter')
         sec = '/' + segs[0] + '/'
-        for sg in segs[i + 1:]:
-            if sg in ('apply', 'clear') or not sg: continue
-            m_ = re.match(r'(.+?)-(is|from|to)-(.+)$', unquote(sg))
+        for sg in segs[1:]:
+            m_ = re.match(FACET_PATH, unquote(sg), re.I)
             if not m_: continue
-            k, op, v = m_.groups()
-            name = FACET_NAMES.get(k.lower(), k)
-            name += {'from': ' от', 'to': ' до'}.get(op, '')
-            for v1 in v.split('-or-'):
-                raw = v1.strip()
-                dec = {'y': 'да', 'n': 'нет'}.get(raw.lower(), raw)
-                if name == 'Комнат' and raw == '0': dec = 'студия'
-                rows.append((sec, f'{k}-{op}', raw, name, dec, ip, 'адрес фасетной страницы'))
-    pq = D[D['q'].str.contains(r'(?:^|&)(itemsFilter|arrFilter)', regex=True, case=False)]
+            if m_.group(1):
+                k, op, v = m_.group(1), m_.group(2), m_.group(3)
+                key = f'{k}-{op}'
+            else:
+                k, op, v = m_.group(4), 'is', m_.group(5)
+                key = k
+            name = facet_name(k) + {'from': ' от', 'to': ' до'}.get(op, '')
+            for v1 in re.split(r'-or-|,', v):
+                rows.append((sec, key, v1.strip(), name, ip, 'адрес фасетной страницы'))
+    pq = D[D['q'] != '']
     for b, q, ip in zip(pq['b'], pq['q'], pq['ip']):
         sec = '/' + (b.strip('/').split('/')[0] or '') + '/'
         for part in q.split('&'):
             k, _, v = part.partition('=')
-            mk = re.match(r'(?i)(itemsFilter|arrFilter\w*?)_(\d+)(?:_(MIN|MAX|\d+))?$', k)
-            if not mk or not v: continue
-            field, tail = mk.group(2), (mk.group(3) or '')
-            name = f'поле {field}' + (' от' if tail.upper() == 'MIN' else ' до' if tail.upper() == 'MAX' else '')
-            raw = unquote(v)
-            if tail.isdigit() and v.upper() == 'Y': dec = f'выбран вариант с кодом {tail}'
-            elif re.fullmatch(r'\d{7,}', raw): dec = 'код значения Битрикса'
-            else: dec = raw
-            rows.append((sec, k, raw, name, dec, ip, 'параметры фильтра (код Битрикса)'))
+            k = unquote(k)
+            if not v or re.match(NOT_FACET, k) or not re.search(FACET_KEY, k): continue
+            base_ = re.sub(r'(?i)_(min|max|from|to)$', '', k)
+            tail = ' от' if re.search(r'(?i)_(min|from)$', k) else ' до' if re.search(r'(?i)_(max|to)$', k) else ''
+            nm = facet_name(base_)
+            rows.append((sec, k, unquote(v), nm + tail if nm != base_ else k, ip, 'параметры фильтра'))   # неизвестный ключ — как есть
     if not rows: return pd.DataFrame()
-    F = pd.DataFrame(rows, columns=['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'ip', 'откуда'])
+    F = pd.DataFrame(rows, columns=['раздел', 'ключ', 'значение', 'условие', 'ip', 'откуда'])
+    F['расшифровка'] = [('студия' if u == 'Комнат' and v == '0' else {'y': 'да', 'n': 'нет'}.get(str(v).lower(), v)) for u, v in zip(F['условие'], F['значение'])]
+    F = decode_opaque(F)
     out = F.groupby(['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'откуда']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
     return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'запросов', 'людей', 'откуда']]
+
+
+OPAQUE = r'^(\d{6,}|[0-9a-f]{32}|[0-9a-f]{40})$'
+
+
+def decode_opaque(F):
+    """Непонятные значения (длинные числа, hex) пробуем расшифровать, если они — контрольная сумма понятного:
+    crc32, md5 или sha1 от значений фасетных страниц или небольших чисел. Не подобралось — оставляем как есть.
+    Галочка вида «ключ_<код>=Y» — код и есть значение. Название поля берём у фасета с теми же значениями."""
+    import zlib, hashlib
+    F = F.copy()
+    path = F[F['откуда'].str.startswith('адрес')]
+    cands = {str(i) for i in range(0, 2001)}
+    for v in path['значение'].astype(str):
+        cands |= {v, v.capitalize(), v.title(), v.upper(), v.lower()}
+    table = {}
+    for c_ in cands:
+        for enc in ('utf-8', 'cp1251'):
+            try: b_ = c_.encode(enc)
+            except Exception: continue
+            h = zlib.crc32(b_)
+            for k_ in (str(h), str(h - 2 ** 32 if h >= 2 ** 31 else h).lstrip('-'), hashlib.md5(b_).hexdigest(), hashlib.sha1(b_).hexdigest()):
+                table.setdefault(k_, c_)
+    def opaque(k, v):
+        tail = str(k).rsplit('_', 1)[-1]
+        if str(v).lower() in ('y', 'on', '1', 'true') and re.fullmatch(OPAQUE, tail.lower()): return tail.lower(), re.sub(r'_[^_]+$', '', str(k))
+        if re.fullmatch(OPAQUE, str(v).lower()): return str(v).lower(), re.sub(r'(?i)_(min|max|from|to)$', '', str(k))
+        return None, re.sub(r'(?i)_(min|max|from|to)$', '', str(k))
+    keys = [opaque(k, v) for k, v in zip(F['ключ'], F['значение'])]
+    F['_txt'] = [table.get(o) if o else None for o, _ in keys]
+    F['_stem'] = [st for _, st in keys]
+    cond_of = {}
+    for _, r in path.iterrows(): cond_of.setdefault(str(r['значение']).lower(), Counter())[re.sub(r' (от|до)$', '', r['условие'])] += 1
+    for stem, g in F[F['откуда'].str.startswith('параметры')].groupby('_stem'):
+        vote = Counter()
+        for t in g['_txt'].dropna():
+            if not str(t).isdigit(): vote.update(cond_of.get(str(t).lower(), Counter()))   # совпадение чисел — слабая улика, поле по нему не называем
+        if not vote: continue
+        name = vote.most_common(1)[0][0]
+        for i in g.index:
+            k = str(F.at[i, 'ключ'])
+            F.at[i, 'условие'] = name + (' от' if re.search(r'(?i)_(min|from)$', k) else ' до' if re.search(r'(?i)_(max|to)$', k) else '')
+    for i in F.index[F['_txt'].notna()]:
+        t = F.at[i, '_txt']
+        F.at[i, 'расшифровка'] = 'студия' if F.at[i, 'условие'] == 'Комнат' and t == '0' else t
+    return F.drop(columns=['_txt', '_stem'])
 
 
 def lead_status(P, R, m):

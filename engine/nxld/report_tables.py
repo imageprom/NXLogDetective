@@ -294,16 +294,16 @@ def service_files(wb, res, name='Файлы'):
         a = str(f.get('адрес', ''))
         cd = _codes(f.get('коды'))
         err = sum(v for k, v in cd.items() if 400 <= k and k != 499)
-        rows.append({'Файл': a, 'Группа': next((nm for nm, rx in SERVICE_GROUPS if re.search(rx, a, re.I)), 'Прочие'), 'Запросов': int(f.get('запросов') or 0),
+        rows.append({'Файл': a, 'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Группа': next((nm for nm, rx in SERVICE_GROUPS if re.search(rx, a, re.I)), 'Прочие'), 'Запросов': int(f.get('запросов') or 0),
                      'Ошибок': int(err), 'Коды ответа': fmt_codes(f.get('коды')), 'Кто забирает': _who(f.get('кто_забирает', '')),
-                     'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Первый день': pd.to_datetime(f.get('первый_день')).strftime('%d.%m.%Y') if f.get('первый_день') else '',
-                     'Последний день': pd.to_datetime(f.get('последний_день')).strftime('%d.%m.%Y') if f.get('последний_день') else ''})
+                     'Первый': pd.to_datetime(f.get('первый_день')).strftime('%d.%m.%Y') if f.get('первый_день') else '',
+                     'Последний': pd.to_datetime(f.get('последний_день')).strftime('%d.%m.%Y') if f.get('последний_день') else ''})
     d = pd.DataFrame(rows)
     if not len(d): return None
     d = d.sort_values('Запросов', ascending=False)
     if name not in wb.sheetnames: wb.create_sheet(name)
     kpi = [('Файлов', len(d)), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['Ошибок'] > 0).sum()))]
-    widths = {'Файл': 52, 'Группа': 18, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 30, 'Кто забирает': 50, 'Размер, КБ': 10, 'Первый день': 12, 'Последний день': 12}
+    widths = {'Файл': 52, 'Группа': 18, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 44, 'Кто забирает': 50, 'Размер, КБ': 10, 'Первый': 12, 'Последний': 12}
     data_sheet(wb, name, d, 'Файлы', 'Служебные файлы сайта: кто их забирает и что получает', widths, wrap=('Файл', 'Кто забирает'),
                kpi=kpi, kpi_col='Ошибок', row_rule=lambda r: F_NOTE if r.get('Ошибок') else None,
                links=[('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')])

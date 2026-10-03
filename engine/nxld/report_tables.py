@@ -324,12 +324,13 @@ def service_files(wb, res, name='Файлы'):
     d = d.sort_values('Запросов', ascending=False)
     if name not in wb.sheetnames: wb.create_sheet(name)
     kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['_err'] > 0).sum()))]
+    bad_ = list(d['_err'] > 0)
     d = d.drop(columns='_err')
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
     missing = [nm for nm, _ in FILE_GROUPS if nm not in set(d['Группа']) and nm != 'Прочие файлы'] if res.get('files') is not None else []
     links = [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
     data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта как отдельный файл', widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
-               kpi=kpi, kpi_col='Файлов', links=links)
+               kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(bad_): F_NOTE if next(_it) else None)   # файлы с ошибками — персиковым
     ws = wb[name]
     if missing:
         r = ws.max_row + 2

@@ -316,6 +316,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             report_tables.facets_sheet(wb, S.get('Фасеты'))
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
+            if report_tables.embedded_sheet(wb, res) is not None:   # сразу за «Анатомией сайта»
+                names['Динамические блоки'] = 'Динамические блоки'
+                if 'Анатомия сайта' in wb.sheetnames:
+                    w_ = wb['Динамические блоки']; wb._sheets.remove(w_); wb._sheets.insert(wb.sheetnames.index('Анатомия сайта') + 1, w_)
             if report_tables.params_sheet(wb, res) is not None: names['Параметры запросов'] = 'Параметры запросов'
             if 'Фасеты' in wb.sheetnames:   # перед «Фасетами»: «Точки приёма данных», «Параметры запросов»
                 mv = [wb[n_] for n_ in ('Точки приёма данных', 'Параметры запросов') if n_ in wb.sheetnames]

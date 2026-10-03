@@ -542,3 +542,48 @@ def _visits(n):
 def _strong(b_grp, ref_grp, n_sys, n_):
     """Поведение спорит со справочником настолько, что на листе побеждает поведение (только для записей из поиска)."""
     return b_grp != ref_grp and (b_grp != 'Служебные движка' or n_sys >= 0.95 * n_)
+
+
+# --- Динамические блоки: что браузер подгружает сам сразу после страницы -------------------------
+def embedded_inventory(R, human, emb_templates, admin_paths=(), zone_paths=()):
+    """Блоки, которые грузятся автоматически за страницей (формы и окна, встроенные HTML, подгрузка фильтра…):
+    вид по сочетанию улик, кто вызывает, коды, размер, даты. Однотипные блоки одной папки сворачиваются."""
+    E = pd.DataFrame(emb_templates or [])
+    if not len(E): return pd.DataFrame()
+    share = dict(zip(E['шаблон'].astype(str), E['доля_сразу_после_страницы'].astype(float)))
+    tpl = R['tpl'].astype(str)
+    m = tpl.isin(list(share)).values
+    S = pd.DataFrame({'tpl': tpl.values[m], 'vid': R['vid'].values[m], 'h': np.asarray(human)[m], 'st': R['status'].values[m],
+                      'b': R['bytes'].values[m], 'day': R['day'].astype(str).values[m], 'ref': R['ref_path'].astype(str).values[m]})
+    def kind(a):
+        if any(a.startswith(p) for p in admin_paths): return 'Админка движка'
+        if any(a.startswith(p) for p in zone_paths): return 'Служебный раздел сайта'
+        if '/filter/' in a and '/apply/' in a: return 'Подгрузка фильтра каталога'
+        if re.search(r'form|modal|popup|callback|getprice|consult|feedback', a, re.I): return 'Формы и окна'
+        if re.search(r'\.html?$', a): return 'Встроенные страницы (виджеты, туры)'
+        if re.search(r'ajax|component', a, re.I): return 'AJAX-блоки'
+        return 'Неопознанные'
+    # свёртка: одинаковое имя файла в одной папке второго уровня, если таких >= 3
+    U = pd.DataFrame({'tpl': list(share)})
+    U['seg'] = U['tpl'].str.extract(r'^(/[^/]+/[^/]+/)')[0]
+    U['leaf'] = U['tpl'].str.extract(r'([^/]+/?)$')[0]
+    U['key'] = U['tpl']
+    fl = U['tpl'].str.contains('/filter/') & U['tpl'].str.contains('/apply/')
+    U.loc[fl, 'key'] = U.loc[fl, 'tpl'].str.replace(r'/filter/.*/apply/$', '/filter/…/apply/', regex=True).str.replace(r'^(/[^/]+/)[^/]+/', r'\1…/', regex=True)
+    n = U[~fl].groupby(['seg', 'leaf'])['tpl'].transform('size')
+    f = U[~fl][(n >= 3) & U[~fl]['seg'].notna()]
+    U.loc[f.index, 'key'] = f['seg'] + '…/' + f['leaf']
+    S['key'] = S['tpl'].map(dict(zip(U['tpl'], U['key'])))
+    rows = []
+    for k, g in S.groupby('key'):
+        tp = g['tpl'].unique()
+        hv = g.loc[g['h'], 'vid'].nunique()
+        pre = k.split('…')[0]
+        sub = sorted({t[len(pre):].split('/')[0] for t in tp if '…' in k and '/' in t[len(pre):]})
+        rows.append(dict(блок=k, внутри=(f"папок {len(sub)}: " + ', '.join(sub[:6]) + (' …' if len(sub) > 6 else '')) if len(sub) >= 2 else '',
+                         вид=kind(str(tp[0])), блоков=len(tp), запросов=len(g), визитов_людей=int(hv),
+                         сразу_после_страницы=round(100 * float(np.mean([share[t] for t in tp])), 1),
+                         страниц_источников=int(g['ref'].replace('', np.nan).nunique()),
+                         коды=', '.join(f'{c}:{v}' for c, v in g['st'].value_counts().sort_index().items()),
+                         средний_размер_КБ=round(float(g['b'].mean()) / 1024, 1), первый_день=min(g['day']), последний_день=max(g['day'])))
+    return pd.DataFrame(rows).sort_values('запросов', ascending=False)

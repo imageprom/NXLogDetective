@@ -171,6 +171,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             h_ = allref.match(u['ключ'])
             if h_ and h_.get('файл', '').startswith('engines/'): u['есть_у_другого_движка'] = f"{h_['название_файла']}: {h_['группа']} — {h_.get('что', '')}"
         res['reference_files'] = [f['файл'] for f in ref.files]
+        adm_ = [p_ for p_ in ref.folders(('админка',)) if p_.startswith('/')]
+        res['embedded'] = recon.embedded_inventory(R, c.human, m.get('embedded_templates'), adm_, zones_).to_dict('records')
         ref.save()
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:

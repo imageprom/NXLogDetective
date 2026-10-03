@@ -503,7 +503,7 @@ def appendix(res):
     E_ = pd.DataFrame(ev(m.get('embedded_templates')))
     if len(E_):
         E_['доля_сразу_после_страницы'] = (E_['доля_сразу_после_страницы'].astype(float) * 100).round(1)
-        out['Анатомия — подгружаемые блоки'] = E_.rename(columns={'доля_сразу_после_страницы': 'запрошен сразу после страницы, %'})
+        if not res.get('embedded'): out['Анатомия — подгружаемые блоки'] = E_.rename(columns={'доля_сразу_после_страницы': 'запрошен сразу после страницы, %'})
     cnt = Counter()
     for k in ('ad_params', 'other_entry_params'):
         for p_, n_ in (ev(m.get(k)) or {}).items(): cnt[p_] += int(n_)

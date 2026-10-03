@@ -238,3 +238,83 @@ def detect_hosting(E, rules_path=None):
     if users:
         kind += '; в логах видны другие пользователи сервера'
     return dict(тип=kind, путь=root, ос=os_, другие_пользователи=users[:10])
+
+
+# --- Файлы: всё, что забирают напрямую, а не как часть страницы ---------------------------------
+FILE_GROUPS = [   # порядок важен: первая подходящая группа
+    ('Для роботов', r'^/(robots\.txt|sitemap[\w.-]*\.xml(\.gz)?|sitemap/.*|llms(-full)?\.txt|ads\.txt|app-ads\.txt|humans\.txt)$'),
+    ('Проверочные файлы', r'(^/yandex_[0-9a-f]+\.html$|^/google[0-9a-f]+\.html$|^/\.well-known/)'),
+    ('Фиды и выгрузки', r'(/export/|/feeds?(/|\.xml$|$)|/rss(/|\.xml$|$)|\.ya?ml(\.gz)?$|yandex[\w-]*\.xml$|google[\w-]*\.xml$|\.csv$)'),
+    ('Иконки и манифест', r'(favicon[\w.-]*\.(ico|png|svg)$|apple-touch[\w.-]*\.png$|/manifest\.json$|\.webmanifest$|/browserconfig\.xml$|\.ico$)'),
+    ('Документы', r'\.(pdf|docx?|xlsx?|pptx?|rtf|odt|ods|odp|zip|rar|7z|gz|tar)$'),
+    ('Данные для виджетов', r'\.(xml|json)$'),
+    ('Картинки напрямую', r'\.(jpe?g|png|webp|gif|svg|avif|bmp|tiff?)$'),
+]
+IMG_RX = FILE_GROUPS[-1][1]
+AUTO_ASKED = r'^/(robots\.txt|sitemap\.xml|favicon\.ico|apple-touch-icon[\w-]*\.png)$'   # их запрашивают сами, без ссылки
+
+
+def _file_group(a):
+    for nm, rx in FILE_GROUPS:
+        if re.search(rx, a, re.I): return nm
+    return None
+
+
+def _top(s, n=4):
+    vc = s.value_counts()
+    return ', '.join(f'{k}:{v}' for k, v in vc.head(n).items())
+
+
+def files_inventory(R, min_req=3):
+    """Файлы, которые забирают напрямую: для роботов, фиды, иконки, документы, данные виджетов,
+    картинки не со страниц сайта. Однотипные файлы одной папки сворачиваются в одну строку.
+    Зонды сканеров отбрасываются: оставляем файл, если он хоть раз отдан (2xx/304) или на него ведут со страниц сайта."""
+    b = R['base'].astype(str)
+    grp = pd.Series(b.unique()).map(_file_group)
+    gmap = dict(zip(pd.Series(b.unique()), grp))
+    g = b.map(gmap)
+    img = g.values == 'Картинки напрямую'
+    keep = g.notna().values & ~(img & R['ref_internal'].values)   # картинки со страниц сайта — это не «напрямую»
+    S = R.loc[keep, ['base', 'ip', 'status', 'fam', 'bytes', 'day', 'ref_host', 'ref_internal']].copy()
+    if not len(S): return pd.DataFrame()
+    S['base'] = S['base'].astype(str); S['grp'] = S['base'].map(gmap)
+    S['fam'] = S['fam'].astype(str).replace('', 'браузеры/прочие')
+    rh = S['ref_host'].astype(str).str.split(',').str[0].str.strip()
+    S['src'] = np.where(S['ref_internal'].values, 'со страниц сайта', np.where(rh.isin(['', 'nan', '-']), 'без перехода', rh))
+    ok = S['status'].between(200, 299) | (S['status'] == 304)
+    good = set(S.loc[ok, 'base'].unique())
+    # не отдан ни разу: оставляем то, что сами просят браузеры и роботы (много разных IP), а не зонды сканеров
+    ips = S[~S['base'].isin(good)].groupby('base')['ip'].nunique()
+    good |= {a for a, n in ips.items() if n >= 100 or (n >= 20 and re.search(AUTO_ASKED, a, re.I))}
+    S = S[S['base'].isin(good)]
+    cnt = S['base'].value_counts()
+    S = S[S['base'].map(cnt) >= min_req]
+    if not len(S): return pd.DataFrame()
+    # свёртка: файлы одной группы в одной папке второго уровня с одним расширением, если их >= 5
+    seg = S['base'].str.extract(r'^(/[^/]+/[^/]+/)')[0]
+    ext = S['base'].str.extract(r'\.([A-Za-z0-9]+)$')[0].str.lower().fillna('')
+    ext = np.where(S['grp'] == 'Картинки напрямую', 'картинки', ext)
+    S['key'] = S['base']
+    probe = pd.DataFrame({'base': S['base'], 'seg': seg, 'ext': ext, 'grp': S['grp']}).drop_duplicates('base')
+    probe = probe[probe['seg'].notna() & (probe['grp'] != 'Для роботов')]
+    nfiles = probe.groupby(['seg', 'ext', 'grp'])['base'].transform('size')
+    probe = probe[nfiles >= 3]
+    if len(probe):
+        lab = probe['seg'] + '…/' + np.where(probe['ext'] == 'картинки', '*.картинки', np.where(probe['ext'] == '', '*', '*.' + probe['ext']))
+        S.loc[S['base'].isin(probe['base']), 'key'] = S['base'].map(dict(zip(probe['base'], lab)))
+    rows = []
+    for k, s in S.groupby('key', sort=False):
+        files = s['base'].unique()
+        sub = ''
+        if len(files) > 1:
+            pre = k.split('…')[0]
+            ch = pd.Series([f[len(pre):].split('/')[0] if '/' in f[len(pre):] else '' for f in files])
+            ch = ch[ch != '']
+            named = ch[~ch.str.fullmatch(r'[0-9a-f]{2,}|\d+')]   # хеш-папки движка не называем
+            if named.nunique() >= 2 and len(named) >= len(ch) * 0.5: sub = f"папок {ch.nunique()}: " + ', '.join(ch.value_counts().index[:6]) + (' …' if ch.nunique() > 6 else '')
+        rows.append(dict(адрес=k, группа=s['grp'].iloc[0], файлов=int(len(files)), внутри=sub, запросов=int(len(s)),
+                         коды=', '.join(f'{c}:{v}' for c, v in s['status'].value_counts().sort_index().items()),
+                         кто_забирает=_top(s['fam']), откуда=_top(s['src']),
+                         средний_размер_КБ=round(float(s['bytes'].mean()) / 1024, 1),
+                         первый_день=str(min(s['day'].astype(str))), последний_день=str(max(s['day'].astype(str)))))
+    return pd.DataFrame(rows).sort_values('запросов', ascending=False)

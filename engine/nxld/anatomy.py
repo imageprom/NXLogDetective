@@ -378,6 +378,15 @@ def forms(R, res, m):
 
 
 def service_groups(m, res):
+    if res.get('files'):   # полный перечень по логу (recon.files_inventory)
+        from .recon import FILE_GROUPS
+        g = {}
+        for f in res['files']:
+            x = g.setdefault(f['группа'], dict(группа=f['группа'], файлов=0, запросов=0, ошибок=0, примеры=[]))
+            x['файлов'] += int(f['файлов']); x['запросов'] += int(f['запросов'])
+            x['ошибок'] += sum(int(n) for k, n in re.findall(r'(\d{3}):\s*(\d+)', str(f['коды'])) if k[0] in '45' and k != '499')
+            if len(x['примеры']) < 3: x['примеры'].append(f['адрес'])
+        return [g[k] for k, _ in FILE_GROUPS if k in g]
     sf = m.get('service_files') or []
     if isinstance(sf, str):
         try: sf = eval(sf)

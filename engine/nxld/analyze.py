@@ -127,6 +127,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     res['coverage'], res['loose_signals'] = coverage.check(res, F.items)
     res['query_params'] = getattr(c, 'query_params', None)
     try:
+        res['files'] = recon.files_inventory(R).to_dict('records')
+    except Exception as e:
+        log(f'files_inventory: {e}'); res['files'] = None
+    try:
         res['anatomy'] = anatomy.build(c, res)
         sp_, np_ = res.get('site_profile') or {}, res['anatomy'].get('всего_страниц')
         if np_ and sp_.get('страниц'):   # одно число страниц везде: после склейки фильтров и без мусорных адресов

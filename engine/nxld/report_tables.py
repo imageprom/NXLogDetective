@@ -280,31 +280,45 @@ def _who(s):
 
 
 def service_files(wb, res, name='Файлы'):
-    """Служебные файлы сайта: что это, кто забирает, коды, размер, когда."""
+    """Файлы, которые забирают напрямую: для роботов, фиды, иконки, документы, данные виджетов, картинки не со страниц сайта."""
     import re
-    from .anatomy import SERVICE_GROUPS
-    m = res.get('site_map') or {}
-    sf = m.get('service_files') or []
-    if isinstance(sf, str):
-        try: sf = eval(sf)
-        except Exception: sf = []
+    from .recon import FILE_GROUPS
+    sf = res.get('files')
+    if sf is None:   # старый анализ: только служебные файлы из карты
+        from .anatomy import SERVICE_GROUPS
+        sf = (res.get('site_map') or {}).get('service_files') or []
+        if isinstance(sf, str):
+            try: sf = eval(sf)
+            except Exception: sf = []
+        for f in sf:
+            if isinstance(f, dict): f.setdefault('группа', next((nm for nm, rx in SERVICE_GROUPS if re.search(rx, str(f.get('адрес', '')), re.I)), 'Прочие'))
     rows = []
     for f in sf:
         if not isinstance(f, dict): continue
-        a = str(f.get('адрес', ''))
         cd = _codes(f.get('коды'))
         err = sum(v for k, v in cd.items() if 400 <= k and k != 499)
-        rows.append({'Файл': a, 'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Группа': next((nm for nm, rx in SERVICE_GROUPS if re.search(rx, a, re.I)), 'Прочие'), 'Запросов': int(f.get('запросов') or 0),
-                     'Ошибок': int(err), 'Коды ответа': fmt_codes(f.get('коды')), 'Кто забирает': _who(f.get('кто_забирает', '')),
-                     'Первый': pd.to_datetime(f.get('первый_день')).strftime('%d.%m.%Y') if f.get('первый_день') else '',
-                     'Последний': pd.to_datetime(f.get('последний_день')).strftime('%d.%m.%Y') if f.get('последний_день') else ''})
+        from urllib.parse import unquote
+        a = unquote(str(f.get('адрес', '')), errors='replace') + (f"\n{f['внутри']}" if f.get('внутри') else '')
+        day = lambda k: pd.to_datetime(f.get(k)).strftime('%d.%m.%Y') if f.get(k) else ''
+        rows.append({'Файл': a, 'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Группа': f.get('группа', 'Прочие'),
+                     'Файлов': int(f.get('файлов') or 1), 'Запросов': int(f.get('запросов') or 0), 'Ошибок': int(err),
+                     'Коды ответа': fmt_codes(f.get('коды')), 'Кто забирает': _who(f.get('кто_забирает', '')),
+                     'Откуда': _who(f.get('откуда', '')) if f.get('откуда') else '',
+                     'Первый': day('первый_день'), 'Последний': day('последний_день')})
     d = pd.DataFrame(rows)
     if not len(d): return None
+    if not d['Откуда'].astype(bool).any(): d = d.drop(columns='Откуда')
     d = d.sort_values('Запросов', ascending=False)
     if name not in wb.sheetnames: wb.create_sheet(name)
-    kpi = [('Файлов', len(d)), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['Ошибок'] > 0).sum()))]
-    widths = {'Файл': 52, 'Группа': 18, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 44, 'Кто забирает': 50, 'Размер, КБ': 10, 'Первый': 12, 'Последний': 12}
-    data_sheet(wb, name, d, 'Файлы', 'Служебные файлы сайта: кто их забирает и что получает', widths, wrap=('Файл', 'Кто забирает'),
-               kpi=kpi, kpi_col='Ошибок', row_rule=lambda r: F_NOTE if r.get('Ошибок') else None,
-               links=[('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')])
+    kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['Ошибок'] > 0).sum()))]
+    widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 44, 'Кто забирает': 44, 'Откуда': 40, 'Первый': 12, 'Последний': 12}
+    missing = [nm for nm, _ in FILE_GROUPS if nm not in set(d['Группа'])] if res.get('files') is not None else []
+    links = [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
+    data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта напрямую, а не как часть страницы', widths, wrap=('Файл', 'Кто забирает', 'Откуда'),
+               kpi=kpi, kpi_col='Ошибок', row_rule=lambda r: F_NOTE if r.get('Ошибок') else None, links=links)
+    ws = wb[name]
+    if missing:
+        r = ws.max_row + 2
+        ws.cell(r, 2, 'Не найдено: ' + ', '.join(missing).lower() + '. Обращения сканеров к несуществующим файлам сюда не попадают.')
+        ws.cell(r, 2).font = Font(name='Arial', size=9, italic=True, color=GREY)
     return wb[name]

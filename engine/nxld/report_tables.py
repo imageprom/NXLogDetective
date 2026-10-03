@@ -264,3 +264,47 @@ def facets_sheet(wb, F, name='Фасеты'):
                row_rule=lambda r: 'EFEFEF' if str(r.get('Откуда', '')).startswith('параметры') else None,
                links=[('Где фильтр принимает запросы', 'Точки приёма данных'), ('Устройство каталога', 'Анатомия сайта')])
 
+
+
+
+def _who(s):
+    """«браузеры/прочие:41384, Applebot:122» → «браузеры (41 384), Applebot (122)»."""
+    import re
+    out = []
+    for part in str(s).split(', '):
+        k, _, v = part.rpartition(':')
+        if k and v.strip().isdigit():
+            out.append(f"{k.replace('браузеры/прочие', 'браузеры')} ({int(v):,})".replace(',', '\u00a0'))
+        elif part: out.append(part)
+    return ', '.join(out)
+
+
+def service_files(wb, res, name='Файлы'):
+    """Служебные файлы сайта: что это, кто забирает, коды, размер, когда."""
+    import re
+    from .anatomy import SERVICE_GROUPS
+    m = res.get('site_map') or {}
+    sf = m.get('service_files') or []
+    if isinstance(sf, str):
+        try: sf = eval(sf)
+        except Exception: sf = []
+    rows = []
+    for f in sf:
+        if not isinstance(f, dict): continue
+        a = str(f.get('адрес', ''))
+        cd = _codes(f.get('коды'))
+        err = sum(v for k, v in cd.items() if 400 <= k and k != 499)
+        rows.append({'Файл': a, 'Группа': next((nm for nm, rx in SERVICE_GROUPS if re.search(rx, a, re.I)), 'Прочие'), 'Запросов': int(f.get('запросов') or 0),
+                     'Ошибок': int(err), 'Коды ответа': fmt_codes(f.get('коды')), 'Кто забирает': _who(f.get('кто_забирает', '')),
+                     'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Первый день': pd.to_datetime(f.get('первый_день')).strftime('%d.%m.%Y') if f.get('первый_день') else '',
+                     'Последний день': pd.to_datetime(f.get('последний_день')).strftime('%d.%m.%Y') if f.get('последний_день') else ''})
+    d = pd.DataFrame(rows)
+    if not len(d): return None
+    d = d.sort_values('Запросов', ascending=False)
+    if name not in wb.sheetnames: wb.create_sheet(name)
+    kpi = [('Файлов', len(d)), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['Ошибок'] > 0).sum()))]
+    widths = {'Файл': 52, 'Группа': 18, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 30, 'Кто забирает': 50, 'Размер, КБ': 10, 'Первый день': 12, 'Последний день': 12}
+    data_sheet(wb, name, d, 'Файлы', 'Служебные файлы сайта: кто их забирает и что получает', widths, wrap=('Файл', 'Кто забирает'),
+               kpi=kpi, kpi_col='Ошибок', row_rule=lambda r: F_NOTE if r.get('Ошибок') else None,
+               links=[('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')])
+    return wb[name]

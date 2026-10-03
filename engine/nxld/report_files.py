@@ -18,7 +18,7 @@ def shown(name):
     return name
 
 
-def build_files(wb, res, title='Файлы'):
+def build_files(wb, res, title='Логи'):
     inv = res['inventory']
     F = pd.DataFrame(inv.get('files', []))
     if not len(F): return None
@@ -30,7 +30,7 @@ def build_files(wb, res, title='Файлы'):
     ws.row_dimensions[1].height = 12
     S.r = 2
     ws.merge_cells('B2:F2')
-    S.cell('B', 'ФАЙЛЫ ЛОГОВ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
+    S.cell('B', 'ЛОГИ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     S.r = 3
     dup = {d['source']: int(d.get('lines_duplicate', 0)) for d in inv.get('duplicates', []) if d.get('lines_duplicate')}
     # копии: тот же тип, период и число строк

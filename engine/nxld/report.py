@@ -308,10 +308,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             for k in [k for k in list(names) if k.startswith('Анатомия —')][::-1]:   # приложения — сразу за «Анатомией»
                 if pos and names[k] in wb.sheetnames:
                     wb.move_sheet(names[k], offset=pos - wb.sheetnames.index(names[k]))
-            if report_files.build_files(wb, res) is not None:
-                if '_snapshot' in wb.sheetnames:   # в конец, перед снимком
-                    wb.move_sheet('Файлы', offset=wb.sheetnames.index('_snapshot') - wb.sheetnames.index('Файлы'))
-                names['Файлы'] = 'Файлы'
+            if report_tables.service_files(wb, res) is not None: names['Файлы'] = 'Файлы'
+            if report_files.build_files(wb, res) is not None: names['Логи'] = 'Логи'
+            tail_ = [n_ for n_ in ('Файлы', 'Логи', '_snapshot') if n_ in wb.sheetnames]   # в конце: «Файлы», «Логи», затем снимок
+            wb._sheets = [w for w in wb._sheets if w.title not in tail_] + [wb[n_] for n_ in tail_]
             report_index.build_index(wb, res, names)
         wb.save(path)
         written.append(path)

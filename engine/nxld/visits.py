@@ -200,3 +200,58 @@ def mark_form_spam(V, R):
     V.loc[m, 'group'] = 'Боты'
     V.loc[m, 'subgroup'] = cls[m]
     return V
+
+
+
+SUCCESS_MARK = r'(?:^|&)(success|formresult|result|sent|ok|status)=(?!$|0|false|error)|thank|spasibo|blagodar'
+
+
+def confirm_form_success(R, V, window=10):
+    """Успех заявки = переадресация 302/303 И подтверждение следующим запросом того же IP (≤ window с):
+    адрес с меткой успеха (success=, formresult=addok, «спасибо») или возврат на страницу, с которой отправляли.
+    Неподтверждённые переадресации не считаются заявками. Возвращает (R, V, улики по формам)."""
+    import re
+    import pandas as pd
+    if 'goal' not in R or 'goal_success' not in R: return R, V, {}
+    g = R['goal'].astype(str).values
+    post = (g != '') & (g != 'nan') & (R['method'].values == 'POST')
+    idx = np.flatnonzero(post)
+    if not len(idx): return R, V, {}
+    ipc = R['ip'].cat.codes.values.astype(np.int64)
+    ts = R['ts'].values.astype(np.int64)
+    ips = np.unique(ipc[idx])
+    near = np.flatnonzero(np.isin(ipc, ips) & ~R['is_static'].values)
+    near = near[np.argsort(ipc[near] * 10 ** 11 + ts[near], kind='stable')]
+    key = ipc[near].astype(np.int64) * 10 ** 11 + ts[near]
+    qcat = R['query'].cat.categories.to_series().str.contains(SUCCESS_MARK, regex=True, case=False).values
+    bcat = R['base'].cat.categories.to_series().str.contains(SUCCESS_MARK, regex=True, case=False).values
+    ok_mark = qcat[R['query'].cat.codes.values] | bcat[R['base'].cat.codes.values]
+    st = R['status'].values
+    ref = R['ref_path'].astype(str).values if 'ref_path' in R else np.array([''] * len(R))
+    base = R['base'].astype(str).values
+    conf = {}
+    ev = {}
+    for i in idx:
+        k0 = ipc[i] * 10 ** 11 + ts[i]
+        lo, hi = np.searchsorted(key, k0), np.searchsorted(key, k0 + window, side='right')
+        how = ''
+        for j in near[lo:hi]:
+            if j == i or (R['method'].values[j] == 'POST'): continue
+            if ok_mark[j]: how = 'страница с меткой успеха'; break
+            if ref[i] and base[j] == ref[i]: how = 'возврат на страницу формы'; break
+        conf[i] = how
+        e = ev.setdefault(g[i], dict(отправок=0, редиректов=0, подтверждено=0, как={}))
+        e['отправок'] += 1
+        if st[i] in (302, 303):
+            e['редиректов'] += 1
+            if how:
+                e['подтверждено'] += 1; e['как'][how] = e['как'].get(how, 0) + 1
+    gs = R['goal_success'].values.copy()
+    demote = np.array([i for i in idx if st[i] in (302, 303) and gs[i] and not conf[i]], dtype=np.int64)
+    if len(demote):
+        gs[demote] = False
+        R = R.assign(goal_success=gs)
+        if 'vid' in R and 'n_conv' in V:
+            dv = pd.Series(R['vid'].values[demote]).value_counts()
+            V = V.copy(); V.loc[dv.index, 'n_conv'] = (V.loc[dv.index, 'n_conv'] - dv.values).clip(lower=0)
+    return R, V, ev

@@ -55,9 +55,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     m = json.load(open(os.path.join(workdir, 'site_map.json')))
     inv = json.load(open(os.path.join(workdir, 'inventory.json')))
     V = visits.mark_form_spam(V, R)
+    R, V, form_ev = visits.confirm_form_success(R, V)
     c = blocks.Ctx(R, V, E, T, m, inv, G)
     F = Findings()
-    res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V),
+    res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
            'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None}
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),

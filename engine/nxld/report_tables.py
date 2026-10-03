@@ -105,7 +105,7 @@ def conversions(wb, C, name='Конверсии'):
 
 
 # ---- точки приёма данных и POST-отправки ----
-SITE_KINDS = ('Заявка', 'Вход', 'Обмен с 1С', 'API', 'Вебхук', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка', 'Служебный скрипт', 'Админка', 'Загрузка файлов', 'Проверить')
+SITE_KINDS = ('Заявка', 'Заявка?', 'Вход', 'Обмен с 1С', 'API', 'Вебхук', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка', 'Служебный скрипт', 'Админка', 'Загрузка файлов', 'Проверить')
 
 
 def _codes(s):
@@ -113,7 +113,7 @@ def _codes(s):
     return {int(k): int(v) for k, v in re.findall(r'(\d{3}):\s*(\d+)', str(s))}
 
 
-def classify_post(r, login_roots, engine):
+def classify_post(r, login_roots, engine, ev=None):
     """Что это за адрес и почему — человеческим языком."""
     import re
     a, out = str(r['адрес']), str(r.get('вывод', ''))
@@ -121,7 +121,15 @@ def classify_post(r, login_roots, engine):
     tot = max(1, sum(cd.values()))
     ok = sum(v for k, v in cd.items() if 200 <= k < 400 and k not in (301,)) / tot
     if out.startswith('цель'):
-        return 'Заявка', ('успех — переадресация после отправки (3xx)' if '3xx' in out else 'успех по коду ответа не виден (всегда 200)')
+        e = (ev or {}).get(a)
+        if e and e['редиректов']:
+            how = ', '.join(f"{k} — {v}" for k, v in sorted(e['как'].items(), key=lambda x: -x[1]))
+            if e['подтверждено'] == e['редиректов']:
+                return 'Заявка', f"после отправки — переадресация (302), затем {how}: подтверждено {e['подтверждено']} из {e['редиректов']}"
+            if e['подтверждено']:
+                return 'Заявка', f"переадресация (302) подтверждена {e['подтверждено']} из {e['редиректов']} ({how}); остальные не засчитаны"
+            return 'Заявка?', f"переадресация (302) есть, но подтверждения нет ни в одном из {e['редиректов']} случаев — не засчитано"
+        return 'Заявка', ('переадресация после отправки (3xx)' if '3xx' in out else 'успех по коду ответа не виден (всегда 200) — не подтверждено')
     if any(a == root or a.startswith(root) and a.rstrip('/') == root.rstrip('/') for root in login_roots) or (a in login_roots):
         return 'Вход', 'форма входа: неудачный вход возвращает ту же страницу, удачный — другую'
     if re.search(r'/bitrix/admin/|/wp-admin/|/administrator/', a):
@@ -158,8 +166,8 @@ def _post_rows(res):
     rows = []
     for f in F:
         if not isinstance(f, dict): continue
-        kind, why = classify_post(f, roots, engine)
-        rows.append({'Адрес': f['адрес'], 'Метод': 'POST', 'Что это': kind, 'Почему так': why, 'Отправок': int(f.get('отправок') or 0), 'IP': int(f.get('IP') or 0),
+        kind, why = classify_post(f, roots, engine, res.get('form_evidence'))
+        rows.append({'Адрес': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Отправок': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
                      'Коды ответа': str(f.get('коды', '')), '_t0': pd.to_datetime(f.get('первый')), '_t1': pd.to_datetime(f.get('последний'))})
     return rows
 
@@ -168,33 +176,31 @@ def _finish(rows):
     d = pd.DataFrame(rows)
     if not len(d): return d
     d['Первая'] = d['_t0'].dt.strftime('%d.%m.%Y %H:%M'); d['Последняя'] = d['_t1'].dt.strftime('%d.%m.%Y %H:%M')
-    order = {k: i for i, k in enumerate(SITE_KINDS + ('Сканер',))}
-    d['_k'] = d['Что это'].map(order).fillna(99)
-    d = d.sort_values(['_k', 'Отправок'], ascending=[True, False]).drop(columns=['_k', '_t0', '_t1'])
+    d = d.sort_values('Отправок', ascending=False).drop(columns=['_t0', '_t1'])   # по числу отправок; группы — фильтром
     return d
 
 
-WIDTHS = {'Адрес': 50, 'Метод': 8, 'Что это': 20, 'Почему так': 44, 'Отправок': 10, 'IP': 8, 'Коды ответа': 22, 'Первая': 16, 'Последняя': 16}
+WIDTHS = {'Адрес': 46, 'Метод': 8, 'Опознано как': 18, 'Отправок': 10, 'Уникальных IP': 11, 'Улики': 50, 'Коды ответа': 22, 'Первая': 16, 'Последняя': 16}
 
 
 def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
     """Overview: только то, что сайт реально принимает — заявки, вход, фильтры и поиск, свои скрипты, админка."""
-    rows = [r for r in _post_rows(res) if r['Что это'] != 'Сканер']
+    rows = [r for r in _post_rows(res) if r['Опознано как'] != 'Сканер']
     for g in (res.get('anatomy') or {}).get('api', []) + (res.get('anatomy') or {}).get('get_приём', []):
-        rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Что это': g['что'], 'Почему так': g['почему'], 'Отправок': g['отправок'], 'IP': g['IP'],
+        rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Отправок': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
                      'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
     d = _finish(rows)
     if not len(d): return
     if name not in wb.sheetnames: wb.create_sheet(name, wb.sheetnames.index(before) if before in wb.sheetnames else len(wb.sheetnames))
-    cnt = d['Что это'].value_counts()
-    kpi = [('Точек приёма', len(d)), ('Заявки', int(cnt.get('Заявка', 0))), ('Вход', int(cnt.get('Вход', 0))),
+    cnt = d['Опознано как'].value_counts()
+    kpi = [('Точек приёма', len(d)), ('Заявки', int(cnt.get('Заявка', 0) + cnt.get('Заявка?', 0))), ('Вход', int(cnt.get('Вход', 0))),
            ('API и обмен', int(sum(cnt.get(k, 0) for k in ('Обмен с 1С', 'API', 'Вебхук')))),
            ('Каталог: фильтры, поиск, навигация', int(sum(cnt.get(k, 0) for k in ('Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка')))),
            ('Служебные', int(sum(cnt.get(k, 0) for k in ('Служебный скрипт', 'Админка', 'Загрузка файлов'))))]
-    row_rule = lambda r: 'EFEFEF' if r.get('Что это') in ('Служебный скрипт', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Что это') == 'Проверить' else None)
-    bold = lambda col, v: col == 'Что это' and v in ('Заявка', 'Вход')
+    row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Опознано как') == 'Проверить' else None)
+    bold = lambda col, v: col == 'Опознано как' and v in ('Заявка', 'Вход')
     data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные: формы, вход, API, фильтры, поиск и навигация', WIDTHS,
-               wrap=('Почему так',), bold_rule=bold, center=('Метод', 'IP'), kpi=kpi, kpi_col='Отправок', row_rule=row_rule,
+               wrap=('Улики',), bold_rule=bold, center=('Метод', 'Уникальных IP'), kpi=kpi, kpi_col='Отправок', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
     ws = wb[name]   # чего нет — тоже результат
     absent = [lab for lab, keys in (('Поиск по сайту', ('Поиск по сайту',)), ('API и обмен с 1С, CRM, вебхуки', ('Обмен с 1С', 'API', 'Вебхук'))) if not any(cnt.get(k, 0) for k in keys)]
@@ -212,11 +218,11 @@ def post_all(wb, res, name='POST-отправки', after='GET-отправки'
     if name not in wb.sheetnames:
         pos = wb.sheetnames.index(after) + 1 if after in wb.sheetnames else len(wb.sheetnames)
         wb.create_sheet(name, pos)
-    sc = d[d['Что это'] == 'Сканер']
+    sc = d[d['Опознано как'] == 'Сканер']
     kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Отправок сканеров', int(sc['Отправок'].sum()))]
-    row_rule = lambda r: F_NOTE if r.get('Что это') == 'Сканер' else None
+    row_rule = lambda r: F_NOTE if r.get('Опознано как') == 'Сканер' else None
     data_sheet(wb, name, d, 'POST-отправки', 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
-               wrap=('Почему так',), center=('IP',), kpi=kpi, kpi_col='Отправок', row_rule=row_rule)
+               wrap=('Улики',), center=('Уникальных IP',), kpi=kpi, kpi_col='Отправок', row_rule=row_rule)
     ws = wb[name]   # ссылка на другой файл
     r_ = ws.max_row + 2
     c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')

@@ -243,7 +243,7 @@ def facets(R, c):
                 v1 = v1.strip()
                 v1 = {'y': 'да', 'n': 'нет'}.get(v1.lower(), v1)
                 if name == 'Комнат' and v1 == '0': v1 = '0 (студия)'
-                rows.append((sec, name, v1, ip, 'адрес фасетной страницы'))
+                rows.append((sec, name, v1, ip, 'адрес фасетной страницы', f'{k}-{op}'))
     pq = D[D['q'].str.contains(r'(?:^|&)(itemsFilter|arrFilter)', regex=True, case=False)]
     for b, q, ip in zip(pq['b'], pq['q'], pq['ip']):
         sec = '/' + (b.strip('/').split('/')[0] or '') + '/'
@@ -255,11 +255,11 @@ def facets(R, c):
             name = f'поле {field}' + (' от' if tail.upper() == 'MIN' else ' до' if tail.upper() == 'MAX' else '')
             val = f'код {tail}' if (tail.isdigit() and v.upper() == 'Y') else unquote(v)
             if re.fullmatch(r'\d{7,}', val): val = f'код {val}'      # внутренний код значения Битрикса
-            rows.append((sec, name, val, ip, 'параметры фильтра (код Битрикса)'))
+            rows.append((sec, name, val, ip, 'параметры фильтра (код Битрикса)', re.sub(r'_(\d{6,})$', '_…', k)))
     if not rows: return pd.DataFrame()
-    F = pd.DataFrame(rows, columns=['раздел', 'условие', 'значение', 'ip', 'откуда'])
-    out = F.groupby(['раздел', 'условие', 'значение', 'откуда']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
-    return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'условие', 'значение', 'запросов', 'людей', 'откуда']]
+    F = pd.DataFrame(rows, columns=['раздел', 'условие', 'значение', 'ip', 'откуда', 'ключ'])
+    out = F.groupby(['раздел', 'условие', 'значение', 'откуда', 'ключ']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
+    return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'условие', 'значение', 'запросов', 'людей', 'ключ', 'откуда']]
 
 
 def lead_status(P, R, m):

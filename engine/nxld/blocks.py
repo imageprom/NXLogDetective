@@ -44,7 +44,7 @@ TOP_CHANNELS = [('Реклама', 'Реклама'), ('Поиск', 'Поиск
 
 
 def top_pages(c, n=500):
-    """500 страниц по визитам людей: просмотры, визиты, IP, отправленные с них заявки, ошибки, динамика (вторая половина периода против первой), каналы визитов."""
+    """500 страниц по визитам людей: просмотры, визиты, IP, отправленные с них заявки, ошибки, каналы визитов."""
     R, V = c.R, c.V
     m = c.human & R['is_page'].values
     P = pd.DataFrame({'base': R['base'].values[m].astype(str), 'vid': R['vid'].values[m], 'ip': R['ip'].values[m].astype(str),
@@ -52,7 +52,6 @@ def top_pages(c, n=500):
     if not len(P): return pd.DataFrame()
     alive = set(P.loc[(P['st'] >= 200) & (P['st'] < 300), 'base'])
     P = P[P['base'].isin(alive)]
-    mid = (int(R['ts'].min()) + int(R['ts'].max())) / 2
     ch = V['channel'].astype(str)
     P['ch'] = P['vid'].map(ch)
     g = P.groupby('base')
@@ -60,8 +59,6 @@ def top_pages(c, n=500):
     D = D.sort_values('визитов', ascending=False).head(n)
     T = P[P['base'].isin(D.index)]
     D['ошибки'] = T[(T['st'] >= 400) & (T['st'] != 499)].groupby('base')['st'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().sort_index().items()))
-    a_ = T[T['ts'] < mid].groupby('base')['vid'].nunique(); b_ = T[T['ts'] >= mid].groupby('base')['vid'].nunique()
-    D['первая'] = a_; D['вторая'] = b_
     # заявки, отправленные со страницы: отправки форм людьми, у которых страница — источник
     goal = R['goal'].astype(str).values if 'goal' in R else np.array([''] * len(R))
     gm = c.human & ~np.isin(goal, ['', 'nan']) & (R['method'].values == 'POST')
@@ -70,7 +67,7 @@ def top_pages(c, n=500):
     known = [k for k, _ in TOP_CHANNELS]
     for k, lab in TOP_CHANNELS: D[lab] = U[U['ch'] == k].groupby('base').size()
     D['Прочие'] = U[~U['ch'].isin(known)].groupby('base').size()
-    D = D.fillna({'заявок': 0, 'первая': 0, 'вторая': 0, 'ошибки': '', **{lab: 0 for _, lab in TOP_CHANNELS}, 'Прочие': 0})
+    D = D.fillna({'заявок': 0, 'ошибки': '', **{lab: 0 for _, lab in TOP_CHANNELS}, 'Прочие': 0})
     return D.reset_index().rename(columns={'base': 'страница'})
 
 

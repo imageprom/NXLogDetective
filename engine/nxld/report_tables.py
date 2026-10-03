@@ -168,7 +168,7 @@ def _post_rows(res):
     for f in F:
         if not isinstance(f, dict): continue
         kind, why = classify_post(f, roots, engine, res.get('form_evidence'))
-        rows.append({'Адрес': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Отправок': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
+        rows.append({'Адрес': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Запросов': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
                      'Коды ответа': str(f.get('коды', '')), '_t0': pd.to_datetime(f.get('первый')), '_t1': pd.to_datetime(f.get('последний'))})
     return rows
 
@@ -177,18 +177,20 @@ def _finish(rows):
     d = pd.DataFrame(rows)
     if not len(d): return d
     d['Первая'] = d['_t0'].dt.strftime('%d.%m.%Y %H:%M'); d['Последняя'] = d['_t1'].dt.strftime('%d.%m.%Y %H:%M')
-    d = d.sort_values('Отправок', ascending=False).drop(columns=['_t0', '_t1'])   # по числу отправок; группы — фильтром
+    d = d.sort_values('Запросов', ascending=False).drop(columns=['_t0', '_t1'])   # по числу запросов; группы — фильтром
+    order = ['Адрес', 'Запросов', 'Уникальных IP', 'Метод', 'Опознано как', 'Улики', 'Коды ответа', 'Первая', 'Последняя']
+    d = d[[c_ for c_ in order if c_ in d.columns]]
     return d
 
 
-WIDTHS = {'Адрес': 46, 'Метод': 8, 'Опознано как': 18, 'Отправок': 10, 'Уникальных IP': 11, 'Улики': 50, 'Коды ответа': 22, 'Первая': 16, 'Последняя': 16}
+WIDTHS = {'Адрес': 46, 'Метод': 8, 'Опознано как': 18, 'Запросов': 10, 'Уникальных IP': 11, 'Улики': 50, 'Коды ответа': 22, 'Первая': 16, 'Последняя': 16}
 
 
 def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
     """Overview: только то, что сайт реально принимает — заявки, вход, фильтры и поиск, свои скрипты, админка."""
     rows = [r for r in _post_rows(res) if r['Опознано как'] != 'Сканер']
     for g in (res.get('anatomy') or {}).get('api', []) + (res.get('anatomy') or {}).get('get_приём', []):
-        rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Отправок': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
+        rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Запросов': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
                      'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
     d = _finish(rows)
     if not len(d): return
@@ -201,7 +203,7 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Опознано как') == 'Проверить' else None)
     bold = lambda col, v: col == 'Опознано как' and v in ('Заявка', 'Вход')
     data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные: формы, вход, API, фильтры, поиск и навигация', WIDTHS,
-               wrap=('Улики',), bold_rule=bold, center=('Метод', 'Уникальных IP'), kpi=kpi, kpi_col='Отправок', row_rule=row_rule,
+               wrap=('Улики',), bold_rule=bold, center=('Метод', 'Уникальных IP'), kpi=kpi, kpi_col='Метод', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
     ws = wb[name]   # сноска и чего нет — тоже результат
     if d['Адрес'].astype(str).str.contains('фасетн').any():
@@ -224,10 +226,10 @@ def post_all(wb, res, name='POST-отправки', after='GET-отправки'
         pos = wb.sheetnames.index(after) + 1 if after in wb.sheetnames else len(wb.sheetnames)
         wb.create_sheet(name, pos)
     sc = d[d['Опознано как'] == 'Сканер']
-    kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Отправок сканеров', int(sc['Отправок'].sum()))]
+    kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Запросов сканеров', int(sc['Запросов'].sum()))]
     row_rule = lambda r: F_NOTE if r.get('Опознано как') == 'Сканер' else None
     data_sheet(wb, name, d, 'POST-отправки', 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
-               wrap=('Улики',), center=('Уникальных IP',), kpi=kpi, kpi_col='Отправок', row_rule=row_rule)
+               wrap=('Улики',), center=('Уникальных IP',), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
     ws = wb[name]   # ссылка на другой файл
     r_ = ws.max_row + 2
     c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')

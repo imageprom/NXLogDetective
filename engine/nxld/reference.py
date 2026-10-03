@@ -176,6 +176,22 @@ class Reference:
         self.log = []
 
 
+def foreign_paths(ref_all, ref_site):
+    """Папки, зоны и признаки движков, которых на сайте нет: [(префикс или regex, название движка)]."""
+    mine = {f['название'] for f in ref_site.files if f['вид'] == 'движок'}
+    own = set(ref_site.folders())
+    out = []
+    for f in ref_all.files:
+        if f['вид'] != 'движок' or f['название'] in mine: continue
+        for x in f['data'].get('папки', []) + f['data'].get('зоны', []):
+            p_ = x['путь']
+            if p_.startswith('/') and len(p_) > 4 and p_ not in own and p_ not in ('/admin/', '/images/', '/static/', '/media/', '/templates/', '/modules/', '/catalog/', '/core/', '/system/', '/sites/', '/themes/', '/assets/', '/uploads/', '/engine/'):
+                out.append((p_, f['название']))
+        for sg in f['data'].get('признаки', []):
+            if sg.startswith('^/'): out.append((sg, f['название']))
+    return out
+
+
 def all_engine_names():
     return [(_read(p) or {}).get('название', '') for p in glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))]
 

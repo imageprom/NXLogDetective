@@ -380,6 +380,11 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
     cnt_emb = bc(has & emb)   # подгрузки внутри открытой страницы
     cnt_staff = bc(has & (np.asarray(staff) if staff is not None else np.zeros(len(R), bool)))
     R_zone_paths = list(zone_prefixes)
+    # разделы, куда за весь лог ходили люди или сотрудники: зонд стучится туда, где никого не бывает
+    sec_all = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
+    ok_ = (R['status'].values >= 200) & (R['status'].values < 300)   # переадресация — не ответ: сайт может слать 301 на любой адрес
+    lived = set(pd.unique(sec_all[(np.asarray(human) | (np.asarray(staff) if staff is not None else np.zeros(len(R), bool))) & ok_]))   # живой раздел — людям там отвечают
+    foreign_paths = list(getattr(ref, 'foreign_paths', ()) or ())   # папки и признаки движков, которых на сайте нет
     zone_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in R_zone_paths)).values if R_zone_paths else np.zeros(len(bstr), bool)
     cnt_zone = bc(has & zone_b[R['base'].cat.codes.values])
     cnt_err = bc(has & (R['status'].values >= 400))
@@ -491,11 +496,19 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         few_people = people <= max(1, 0.02 * n_)
         foreign = other.match(k) if other is not None and entry is None and few_people else None
         foreign = foreign if foreign and str(foreign.get('файл', '')).startswith('engines/') else None
+        s_top = SQ[SQ['q'].isin(qs)].groupby('sec')['m'].sum()
+        main_secs = [x for x, v_ in s_top.items() if v_ >= 0.2 * n_]
+        dead_secs = [x for x in main_secs if x not in lived and not any(str(x).startswith(z) for z in R_zone_paths)]   # свои разделы, где бывают люди и сотрудники, — не зонд
+        f_path = next(((x, fp[1]) for fp in foreign_paths for x in dead_secs if str(x).startswith(fp[0]) or (fp[0].startswith('^') and re.match(fp[0], str(x)))), None) if few_people and entry is None else None
+        nowhere = entry is None and bool(main_secs) and len(dead_secs) == len(main_secs) and cnt_sys[qs].sum() < 0.5 * n_   # раздела для людей нет: им там ни разу не ответили успешно
         dead = few_people and n_ >= 20 and cnt_err[qs].sum() >= 0.9 * n_ and cnt_named[qs].sum() < 0.5 * n_   # обход старых ссылок роботами — не зонд
-        if att >= 0.5 * vc.sum() or (cnt_scan[qs].sum() >= 0.5 * n_ and people == 0) or foreign or (dead and entry is None):
+        if att >= 0.5 * vc.sum() or (cnt_scan[qs].sum() >= 0.5 * n_ and people == 0) or foreign or f_path or (dead and entry is None) or nowhere:
             grp_, src = 'Атаки и зонды', 'дедукция'
             why = ('значения похожи на атаку или подставной адрес' if att >= 0.5 * vc.sum() else 'запрашивают сканеры безопасности' if cnt_scan[qs].sum() >= 0.5 * n_
-                   else f"параметр {foreign['название_файла']}, а сайт на другом движке" if foreign else 'людей нет, почти все ответы — ошибки, отправляют не известные роботы')
+                   else f"параметр {foreign['название_файла']}, а сайт на другом движке" if foreign
+                   else f"обращения к {f_path[0]} — это адрес {f_path[1]}, а сайт на другом движке" if f_path
+                   else 'людей нет, почти все ответы — ошибки, отправляют не известные роботы' if dead
+                   else f"обращения к {', '.join(main_secs[:2])}: такого раздела для людей нет — за весь период ни одного успешного ответа людям")
             what = f'зонд: {why}'
         elif entry is not None and not (entry.get('файл') == 'learned/params.json' and _strong(d_grp, entry['группа'], cnt_sys[qs].sum(), n_)):
             from .reference import level

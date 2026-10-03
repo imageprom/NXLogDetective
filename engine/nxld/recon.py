@@ -282,7 +282,7 @@ def _others(src, n=5, skip=('со страниц сайта', 'без перех
     return out + (f', и ещё {len(vc) - n}' if len(vc) > n else '')
 
 
-def files_inventory(R, min_req=3):
+def files_inventory(R, min_req=3, T=None):
     """Все файлы, которые не страницы: для роботов, фиды, иконки, документы, данные виджетов, картинки, шрифты,
     стили и скрипты, карты кода, видео, прочее. Однотипные файлы одной папки сворачиваются в одну строку.
     Зонды сканеров отбрасываются: файл, ни разу не отданный (2xx/304), остаётся, только если его просят сами
@@ -305,7 +305,8 @@ def files_inventory(R, min_req=3):
     ips_in = bad[bad['ref_internal'].values].groupby('base')['ip'].nunique()
     bgrp = bad.drop_duplicates('base').set_index('base')['grp']
     for a_, n in ips.items():
-        if n >= 100 or (n >= 10 and re.search(AUTO_ASKED, a_, re.I)) or (bgrp.get(a_) in PAGE_ASSETS and ips_in.get(a_, 0) >= 10):
+        t_any, t_auto = (T('файл_просят_сами'), T('файл_просят_сами_известный')) if T else (100, 10)
+        if n >= t_any or (n >= t_auto and re.search(AUTO_ASKED, a_, re.I)) or (bgrp.get(a_) in PAGE_ASSETS and ips_in.get(a_, 0) >= t_auto):
             good.add(a_)
     S = S[S['base'].isin(good)]
     cnt = S['base'].value_counts()
@@ -357,7 +358,7 @@ def _family(k, ref=None):
     return m.group(1) + '_*' if m else k
 
 
-def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300, staff=None, zone_prefixes=()):
+def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300, staff=None, zone_prefixes=(), T=None):
     """Ключ (или семейство ключей) параметра → группа, что это, откуда знаем, запросы, люди, значения, где встречается.
     Порядок решения: кто спрашивает (атаки, сканеры) → справочник → поведение (навигация на страницах, системные папки, пачка) → имя.
     Семейство (itemsFilter_*) решается целиком по суммарному поведению и показывается одной строкой."""
@@ -393,6 +394,10 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
     named = (R['fam'].astype(str).values != '') & ~scan & ~np.asarray(human)   # известные роботы (поисковики, SEO, ИИ…), не сканеры
     cnt_named = bc(has & named)
     other = getattr(ref, 'other', None)   # справочник всех движков: ключ чужого движка без людей — зонд под этот движок
+    if T is None:
+        from .thresholds import Sizes
+        T = Sizes(визиты=int(pd.unique(R['vid'].values[np.asarray(human)]).size), запросы=len(R), ip=int(R['ip'].nunique()))
+    t_people, t_int, t_nav, t_pack, t_frag = T('ключ_вызывают_люди'), T('ключ_со_страниц_сайта'), T('навигация_люди_на_страницах'), T('пачка_ключей'), T('обрывок_ключа')
     pairs = []   # (код запроса, ключ, значение)
     for i, q in enumerate(qc.values):
         if not cnt[i] or not q or q == 'nan': continue
@@ -445,7 +450,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         n_sys, n_zone, n_staff, n_err, n_emb = cnt_sys[qs].sum(), cnt_zone[qs].sum(), cnt_staff[qs].sum(), cnt_err[qs].sum(), cnt_emb[qs].sum()
         clues = []
         # кто вызывает
-        by_people = people >= 20 and n_int_h >= 50
+        by_people = people >= t_people and n_int_h >= t_int
         if by_people: clues.append(f'вызывают люди со страниц сайта ({_visits(people)})')
         elif n_staff >= 0.5 * n_: clues.append('работают сотрудники')
         elif people == 0: clues.append('людей нет')
@@ -456,11 +461,11 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         elif n_pg >= 0.5 * n_: clues.append(('переходы на страницы' if by_people else 'обращения к адресам') + (f' {sec}' if sh >= 0.5 else ''))
         elif sec and sh >= 0.5: clues.append(f'запросы в {sec}')
         if n_err >= 0.5 * n_: clues.append(f'ответы с ошибкой ({n_err / n_:.0%})')
-        comp = companions(k, qs) if n_ >= 20 else []
+        comp = companions(k, qs) if n_ >= t_pack else []
         with_ = ', '.join(comp[:6]) + (' …' if len(comp) > 6 else '') if len(comp) >= 4 else ''
         # гипотезы по имени — только если поведение совпадает с ожидаемым
         nav_hyp = any(re.fullmatch(NAV_KEYS, m_, re.I) or m_.lower() in navk for m_ in members)
-        nav_ok = nav_hyp and n_pg >= 0.5 * n_ and n_pg_h >= 10 and n_emb < 0.5 * n_       # навигация — это переходы по страницам-спискам
+        nav_ok = nav_hyp and n_pg >= 0.5 * n_ and n_pg_h >= t_nav and n_emb < 0.5 * n_       # навигация — это переходы по страницам-спискам
         txt = sum(int(w) for v_, w in vc.items() if re.search(r'[^\d\s.,:;-]', str(v_)) and len(str(v_)) >= 3)
         form_ok = bool(re.search(form_rx, k, re.I)) and by_people and n_pg < 0.5 * n_ and txt >= 0.5 * vc.sum()   # поле формы — люди отправляют текст в обработчик
         if nav_ok: return 'Поиск и навигация', 'меняет список на странице', clues + ['поведение соответствует имени: навигация'], with_
@@ -501,7 +506,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         dead_secs = [x for x in main_secs if x not in lived and not any(str(x).startswith(z) for z in R_zone_paths)]   # свои разделы, где бывают люди и сотрудники, — не зонд
         f_path = next(((x, fp[1]) for fp in foreign_paths for x in dead_secs if str(x).startswith(fp[0]) or (fp[0].startswith('^') and re.match(fp[0], str(x)))), None) if few_people and entry is None else None
         nowhere = entry is None and bool(main_secs) and len(dead_secs) == len(main_secs) and cnt_sys[qs].sum() < 0.5 * n_   # раздела для людей нет: им там ни разу не ответили успешно
-        dead = few_people and n_ >= 20 and cnt_err[qs].sum() >= 0.9 * n_ and cnt_named[qs].sum() < 0.5 * n_   # обход старых ссылок роботами — не зонд
+        dead = few_people and cnt_err[qs].sum() >= 0.9 * n_ and cnt_named[qs].sum() < 0.5 * n_   # обход старых ссылок роботами — не зонд
         if att >= 0.5 * vc.sum() or (cnt_scan[qs].sum() >= 0.5 * n_ and people == 0) or foreign or f_path or (dead and entry is None) or nowhere:
             grp_, src = 'Атаки и зонды', 'дедукция'
             why = ('значения похожи на атаку или подставной адрес' if att >= 0.5 * vc.sum() else 'запрашивают сканеры безопасности' if cnt_scan[qs].sum() >= 0.5 * n_
@@ -529,7 +534,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
                          значения=[v_[:60] for v_ in vals], вместе_с=with_, где=', '.join(f'{a}:{int(b)}' for a, b in s_.head(3).items()),
                          роботы=', '.join(f'{a or "без имени"}:{int(b)}' for a, b in f_.head(3).items())))
     D = pd.DataFrame(rows).sort_values('запросов', ascending=False)
-    D = D[~((D['группа'] == 'Неизвестные') & (D['ключ'].str.len() < 4) & (D['запросов'] < 1000))]   # короткие редкие — обрывки
+    D = D[~((D['группа'] == 'Неизвестные') & (D['ключ'].str.len() < 4) & (D['запросов'] < t_frag))]   # короткие редкие — обрывки
     D.loc[D['ключ'] == '(число без имени)', 'частое_значение'] = ''
     return D.head(top_n)
 
@@ -544,46 +549,52 @@ def _strong(b_grp, ref_grp, n_sys, n_):
     return b_grp != ref_grp and (b_grp != 'Служебные движка' or n_sys >= 0.95 * n_)
 
 
-# --- Динамические блоки: что браузер подгружает сам сразу после страницы -------------------------
-def embedded_inventory(R, human, emb_templates, admin_paths=(), zone_paths=()):
-    """Блоки, которые грузятся автоматически за страницей (формы и окна, встроенные HTML, подгрузка фильтра…):
-    вид по сочетанию улик, кто вызывает, коды, размер, даты. Однотипные блоки одной папки сворачиваются."""
+# --- Динамические блоки: что браузер подгружает сам или по действию человека ----------------------
+def _block_kind(a, admin_paths=(), zone_paths=()):
+    if any(a.startswith(p) for p in admin_paths): return 'Админка движка'
+    if any(a.startswith(p) for p in zone_paths): return 'Служебный раздел сайта'
+    if '/filter/' in a and '/apply/' in a: return 'Подгрузка фильтра каталога'
+    if re.search(r'galer|gallery|photo|foto|slider|lightbox', a, re.I): return 'Галерея'
+    if re.search(r'form|modal|popup|callback|getprice|consult|feedback', a, re.I): return 'Формы и окна'
+    if re.search(r'\.html?$', a): return 'Встроенные страницы (виджеты, туры)'
+    if re.search(r'ajax|component', a, re.I): return 'AJAX-блоки'
+    return 'Неопознанные'
+
+
+def embedded_inventory(R, human, emb_templates, admin_paths=(), zone_paths=(), T=None):
+    """Блоки внутри страницы — каждый отдельной строкой:
+    «авто» — браузер грузит сам сразу после страницы (формы и окна, встроенные страницы…);
+    «по действию» — человек вызывает кликом со страницы сайта (галерея, «показать ещё», фильтр), не переход и не отправка формы.
+    Перезагрузки списков по фильтру — одной строкой: их сочетания подробно на «Фасетах»."""
     E = pd.DataFrame(emb_templates or [])
-    if not len(E): return pd.DataFrame()
-    share = dict(zip(E['шаблон'].astype(str), E['доля_сразу_после_страницы'].astype(float)))
-    tpl = R['tpl'].astype(str)
-    m = tpl.isin(list(share)).values
-    S = pd.DataFrame({'tpl': tpl.values[m], 'vid': R['vid'].values[m], 'h': np.asarray(human)[m], 'st': R['status'].values[m],
-                      'b': R['bytes'].values[m], 'day': R['day'].astype(str).values[m], 'ref': R['ref_path'].astype(str).values[m]})
-    def kind(a):
-        if any(a.startswith(p) for p in admin_paths): return 'Админка движка'
-        if any(a.startswith(p) for p in zone_paths): return 'Служебный раздел сайта'
-        if '/filter/' in a and '/apply/' in a: return 'Подгрузка фильтра каталога'
-        if re.search(r'form|modal|popup|callback|getprice|consult|feedback', a, re.I): return 'Формы и окна'
-        if re.search(r'\.html?$', a): return 'Встроенные страницы (виджеты, туры)'
-        if re.search(r'ajax|component', a, re.I): return 'AJAX-блоки'
-        return 'Неопознанные'
-    # свёртка: одинаковое имя файла в одной папке второго уровня, если таких >= 3
-    U = pd.DataFrame({'tpl': list(share)})
-    U['seg'] = U['tpl'].str.extract(r'^(/[^/]+/[^/]+/)')[0]
-    U['leaf'] = U['tpl'].str.extract(r'([^/]+/?)$')[0]
-    U['key'] = U['tpl']
-    fl = U['tpl'].str.contains('/filter/') & U['tpl'].str.contains('/apply/')
-    U.loc[fl, 'key'] = U.loc[fl, 'tpl'].str.replace(r'/filter/.*/apply/$', '/filter/…/apply/', regex=True).str.replace(r'^(/[^/]+/)[^/]+/', r'\1…/', regex=True)
-    n = U[~fl].groupby(['seg', 'leaf'])['tpl'].transform('size')
-    f = U[~fl][(n >= 3) & U[~fl]['seg'].notna()]
-    U.loc[f.index, 'key'] = f['seg'] + '…/' + f['leaf']
-    S['key'] = S['tpl'].map(dict(zip(U['tpl'], U['key'])))
+    share = dict(zip(E['шаблон'].astype(str), E['доля_сразу_после_страницы'].astype(float))) if len(E) else {}
+    tpl = R['tpl'].astype(str).values
+    hum = np.asarray(human)
+    emb = R['is_embedded'].values if 'is_embedded' in R else np.zeros(len(R), bool)
+    goal = R['goal'].astype(str).values if 'goal' in R else np.array([''] * len(R))
+    page_tpls = set(pd.unique(tpl[R['is_page'].values & hum]))
+    act = hum & R['ref_internal'].values & ~R['is_static'].values & ~emb & (np.isin(goal, ['', 'nan'])) & (~R['is_page'].values | (R['method'].values == 'POST'))
+    act &= ~np.isin(tpl, list(share))
+    cols = lambda m: pd.DataFrame({'tpl': tpl[m], 'meth': R['method'].astype(str).values[m], 'vid': R['vid'].values[m], 'h': hum[m], 'st': R['status'].values[m], 'b': R['bytes'].values[m],
+                                   'day': R['day'].astype(str).values[m], 'ref': R['ref_path'].astype(str).values[m]})
+    def row(k, g, load, auto, n_blocks=1):
+        return dict(блок=k, вид=('Подгрузка списка (фильтр, «показать ещё»)' if load == 'список' else _block_kind(k, admin_paths, zone_paths)),
+                    загрузка='по действию' if load in ('действие', 'список') else 'авто', блоков=n_blocks, запросов=len(g),
+                    визитов_людей=int(g.loc[g['h'], 'vid'].nunique()), автозагрузка=auto,
+                    охват_страниц=int(g['ref'].replace('', np.nan).nunique()),
+                    коды=', '.join(f'{c}:{v}' for c, v in g['st'].value_counts().sort_index().items()),
+                    средний_размер_КБ=round(float(g['b'].mean()) / 1024, 1), первый_день=min(g['day']), последний_день=max(g['day']))
     rows = []
-    for k, g in S.groupby('key'):
-        tp = g['tpl'].unique()
-        hv = g.loc[g['h'], 'vid'].nunique()
-        pre = k.split('…')[0]
-        sub = sorted({t[len(pre):].split('/')[0] for t in tp if '…' in k and '/' in t[len(pre):]})
-        rows.append(dict(блок=k, внутри=(f"папок {len(sub)}: " + ', '.join(sub[:6]) + (' …' if len(sub) > 6 else '')) if len(sub) >= 2 else '',
-                         вид=kind(str(tp[0])), блоков=len(tp), запросов=len(g), визитов_людей=int(hv),
-                         сразу_после_страницы=round(100 * float(np.mean([share[t] for t in tp])), 1),
-                         страниц_источников=int(g['ref'].replace('', np.nan).nunique()),
-                         коды=', '.join(f'{c}:{v}' for c, v in g['st'].value_counts().sort_index().items()),
-                         средний_размер_КБ=round(float(g['b'].mean()) / 1024, 1), первый_день=min(g['day']), последний_день=max(g['day'])))
-    return pd.DataFrame(rows).sort_values('запросов', ascending=False)
+    if share:
+        A = cols(np.isin(tpl, list(share)))
+        for k, g in A.groupby('tpl'): rows.append(row(k, g, 'авто', round(100 * share.get(k, 0), 1)))
+    B = cols(act)
+    if len(B):
+        lst = B['tpl'].map(lambda t: ('/filter/' in t and '/apply/' in t) or t in page_tpls) & (B['meth'] == 'GET')   # POST в обработчик — блок, а не список
+        L = B[lst]
+        if len(L): rows.append(row('перезагрузка списка без перехода (фильтр, «показать ещё»)', L, 'список', None, int(L['tpl'].nunique())))
+        t_min = T('блок_по_действию') if T else 50
+        for k, g in B[~lst].groupby('tpl'):
+            redir = g['st'].between(300, 399).mean() >= 0.9   # только переадресации — не блок
+            if g['vid'].nunique() >= t_min and not redir: rows.append(row(k, g, 'действие', None))
+    return pd.DataFrame(rows).sort_values('запросов', ascending=False) if rows else pd.DataFrame()

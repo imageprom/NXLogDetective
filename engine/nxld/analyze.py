@@ -126,8 +126,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     res['findings'] = F.items
     res['coverage'], res['loose_signals'] = coverage.check(res, F.items)
     res['query_params'] = getattr(c, 'query_params', None)
+    from .thresholds import Sizes
+    T_ = Sizes(визиты=int((V['group'] == 'Люди').sum()), запросы=len(R), ip=int(R['ip'].nunique()))   # пороги — доли от размера лога
     try:
-        res['files'] = recon.files_inventory(R).to_dict('records')
+        res['files'] = recon.files_inventory(R, T=T_).to_dict('records')
     except Exception as e:
         log(f'files_inventory: {e}'); res['files'] = None
     if res['files']:
@@ -154,14 +156,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         if not sysp: sysp = [x['папка'] for x in A_.get('папки') or [] if not re.search(r'загруж|шаблон', str(x.get('что', '')))]
         zones_ = [x['адрес'] for x in A_.get('зоны') or [] if str(x.get('адрес', '')).startswith('/') and not any(x['адрес'].startswith(p_) for p_ in sysp)]
         FC = res['sheets'].get('Общий анализ', {}).get('Фасеты')
-        navk = set(FC.groupby('ключ')['запросов'].sum().loc[lambda x: x >= 10].index.astype(str)) if FC is not None and len(FC) else set()   # мусор из битых адресов — не фасет
+        navk = set(FC.groupby('ключ')['запросов'].sum().loc[lambda x: x >= T_('ключ_фасета')].index.astype(str)) if FC is not None and len(FC) else set()   # мусор из битых адресов — не фасет
         allref = reference.Reference([n_ for n_ in reference.all_engine_names()], (), site_)
         ref.other = allref
         ref.foreign_paths = reference.foreign_paths(allref, ref)
-        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(c.rg == 'Свои'), zone_prefixes=zones_)
+        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(c.rg == 'Свои'), zone_prefixes=zones_, T=T_)
         res['params'] = Pr.to_dict('records')
         # незнакомые: нет в справочнике (или запись из поиска устарела) и заметное число запросов — Детектив ищет их в сети
-        unk = Pr[(Pr['источник'] == 'дедукция') & ~Pr['группа'].isin(['Атаки и зонды', 'Логика сайта']) & (Pr['запросов'] >= 20)]   # логику сайта в сети не найти
+        unk = Pr[(Pr['источник'] == 'дедукция') & ~Pr['группа'].isin(['Атаки и зонды', 'Логика сайта']) & (Pr['запросов'] >= T_('незнакомый_ключ'))]   # логику сайта в сети не найти
         stale = [r_ for r_ in res['params'] if r_['источник'].startswith('поиск') and ref.stale(ref.match(r_['ключ']))]
         res['unknown_params'] = [dict(ключ=r_['ключ'], ключи=r_['ключи'][:8], сейчас=r_['группа'], по=r_['источник'] or 'нет', запросов=r_['запросов'],
                                       людей=r_['людей'], значения=r_['значения'], где=r_['где'], роботы=r_['роботы'], вместе_с=r_['вместе_с'])
@@ -172,7 +174,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             if h_ and h_.get('файл', '').startswith('engines/'): u['есть_у_другого_движка'] = f"{h_['название_файла']}: {h_['группа']} — {h_.get('что', '')}"
         res['reference_files'] = [f['файл'] for f in ref.files]
         adm_ = [p_ for p_ in ref.folders(('админка',)) if p_.startswith('/')]
-        res['embedded'] = recon.embedded_inventory(R, c.human, m.get('embedded_templates'), adm_, zones_).to_dict('records')
+        res['embedded'] = recon.embedded_inventory(R, c.human, m.get('embedded_templates'), adm_, zones_, T=T_).to_dict('records')
         ref.save()
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:

@@ -105,7 +105,7 @@ def conversions(wb, C, name='Конверсии'):
 
 
 # ---- точки приёма данных и POST-отправки ----
-SITE_KINDS = ('Заявка', 'Вход', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Служебный скрипт сайта', 'Админка', 'Загрузка файлов', 'Проверить')
+SITE_KINDS = ('Заявка', 'Вход', 'Обмен с 1С', 'API', 'Вебхук', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка', 'Служебный скрипт', 'Админка', 'Загрузка файлов', 'Проверить')
 
 
 def _codes(s):
@@ -138,9 +138,9 @@ def classify_post(r, login_roots, engine):
     if 'upload' in a:
         return 'Загрузка файлов', 'загрузка файлов на сервер'
     if any(a.startswith(root) for root in login_roots):
-        return 'Служебный скрипт сайта', 'скрипт внутри закрытого раздела'
+        return 'Служебный скрипт', 'скрипт внутри закрытого раздела'
     if re.search(r'ajax|/tools/|/services/|autosave|\.php$', a) and a not in ('/index.php',) and ok >= 0.5:
-        return 'Служебный скрипт сайта', 'скрипт сайта: подгружает данные, не заявка'
+        return 'Служебный скрипт', 'скрипт сайта: подгружает данные, не заявка'
     if ok >= 0.5:
         return 'Проверить', 'обычная страница отвечает на POST — AJAX-подгрузка или боты'
     return 'Сканер', 'обычная страница, форму не принимает — отправляют боты и сканеры'
@@ -180,7 +180,7 @@ WIDTHS = {'Адрес': 50, 'Метод': 8, 'Что это': 20, 'Почему 
 def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
     """Overview: только то, что сайт реально принимает — заявки, вход, фильтры и поиск, свои скрипты, админка."""
     rows = [r for r in _post_rows(res) if r['Что это'] != 'Сканер']
-    for g in (res.get('anatomy') or {}).get('get_приём', []):
+    for g in (res.get('anatomy') or {}).get('api', []) + (res.get('anatomy') or {}).get('get_приём', []):
         rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Что это': g['что'], 'Почему так': g['почему'], 'Отправок': g['отправок'], 'IP': g['IP'],
                      'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
     d = _finish(rows)
@@ -188,13 +188,20 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     if name not in wb.sheetnames: wb.create_sheet(name, wb.sheetnames.index(before) if before in wb.sheetnames else len(wb.sheetnames))
     cnt = d['Что это'].value_counts()
     kpi = [('Точек приёма', len(d)), ('Заявки', int(cnt.get('Заявка', 0))), ('Вход', int(cnt.get('Вход', 0))),
-           ('Фильтры и поиск', int(sum(cnt.get(k, 0) for k in ('Фильтр каталога', 'Поиск по сайту', 'Форма (GET)')))),
-           ('Служебные', int(sum(cnt.get(k, 0) for k in ('Служебный скрипт сайта', 'Админка', 'Загрузка файлов'))))]
-    row_rule = lambda r: 'EFEFEF' if r.get('Что это') in ('Служебный скрипт сайта', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Что это') == 'Проверить' else None)
+           ('API и обмен', int(sum(cnt.get(k, 0) for k in ('Обмен с 1С', 'API', 'Вебхук')))),
+           ('Каталог: фильтры, поиск, навигация', int(sum(cnt.get(k, 0) for k in ('Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка')))),
+           ('Служебные', int(sum(cnt.get(k, 0) for k in ('Служебный скрипт', 'Админка', 'Загрузка файлов'))))]
+    row_rule = lambda r: 'EFEFEF' if r.get('Что это') in ('Служебный скрипт', 'Админка', 'Загрузка файлов') else (F_NOTE if r.get('Что это') == 'Проверить' else None)
     bold = lambda col, v: col == 'Что это' and v in ('Заявка', 'Вход')
-    data_sheet(wb, name, d, 'Точки приёма данных', 'Куда сайт принимает данные посетителей: формы, вход, фильтры и поиск', WIDTHS,
+    data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные: формы, вход, API, фильтры, поиск и навигация', WIDTHS,
                wrap=('Почему так',), bold_rule=bold, center=('Метод', 'IP'), kpi=kpi, kpi_col='Отправок', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
+    ws = wb[name]   # чего нет — тоже результат
+    absent = [lab for lab, keys in (('Поиск по сайту', ('Поиск по сайту',)), ('API и обмен с 1С, CRM, вебхуки', ('Обмен с 1С', 'API', 'Вебхук'))) if not any(cnt.get(k, 0) for k in keys)]
+    if absent:
+        r_ = ws.max_row + 2
+        c = ws.cell(r_, 2, 'Обращений не найдено: ' + '; '.join(absent) + '.')
+        c.font = Font(name='Arial', size=10, italic=True, color=INK)
 
 
 def post_all(wb, res, name='POST-отправки', after='GET-отправки'):

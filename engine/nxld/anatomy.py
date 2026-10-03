@@ -193,6 +193,7 @@ def build(c, res):
     A['параметры'] = param_groups(m, res)
     A['подсказки'] = hints(pages, res, m)
     A['get_приём'] = get_receivers(R, c, st)
+    A['api'] = api_points(R, c, st)
     return A
 
 
@@ -500,26 +501,61 @@ def appendix(res):
     return out
 
 
-GET_SUBMIT = r'(?:^|&)(set_filter|submit|send|web_form_submit|web_form_apply|q|search|query|s|find|poisk)='
+GET_KINDS = [   # параметр в адресе → что это (только люди, только страницы сайта)
+    ('Фильтр каталога', r'(?:^|&)(set_filter|del_filter|arrfilter\w*)='),
+    ('Поиск по сайту', r'(?:^|&)(q|search|query|find|poisk)='),
+    ('Форма (GET)', r'(?:^|&)(submit|send|web_form_submit|web_form_apply)='),
+    ('Пагинация', r'(?:^|&)(pagen_\d+|page|p)='),
+    ('Тип отображения', r'(?:^|&)(view|display|show|mode)='),
+    ('Сортировка', r'(?:^|&)(sort\w*|order\w*|by)='),
+]
+API_KINDS = [
+    ('Обмен с 1С', r'1c_exchange|commerceml|/1c[_/-]'),
+    ('Вебхук', r'webhook|/hooks?/'),
+    ('API', r'^/(api|rest)/|/bitrix/services/rest/|/rest/\d+/'),
+]
 
 
 def get_receivers(R, c, st):
-    """GET-формы: фильтры и поиск — по параметру кнопки или ключу поиска в адресе (не обычные просмотры)."""
+    """GET: фильтры, поиск, пагинация, вид и сортировка — по параметру в адресе, только у людей и на страницах (не во вставках)."""
     qc = R['query'].cat.categories.to_series()
-    hit = qc.str.contains(GET_SUBMIT, regex=True, case=False).values[R['query'].cat.codes.values]
-    m = hit & (R['method'].values == 'GET') & c.human
-    if not m.any(): return []
-    Q = pd.DataFrame({'tpl': R['tpl'].values[m], 'q': R['query'].values[m].astype(str), 'ip': R['ip'].values[m].astype(str),
-                      'st': st[m], 'ts': R['ts'].values[m]})
-    Q['кнопка'] = Q['q'].str.extract(GET_SUBMIT, flags=re.I)[0].str.lower()
+    base_ok = ~R['is_embedded'].values if 'is_embedded' in R else np.ones(len(R), bool)
     out = []
-    Q['раздел'] = Q['tpl'].astype(str).map(first_seg)
-    for (sec, k), g in Q.groupby(['раздел', 'кнопка']):   # одна строка на раздел: фильтр работает на многих страницах
-        if len(g) < 5: continue
-        kind = 'Фильтр каталога' if k in ('set_filter',) else 'Поиск по сайту' if k in ('q', 'search', 'query', 's', 'find', 'poisk') else 'Форма (GET)'
-        codes = Counter(g['st'])
-        np_ = g['tpl'].nunique()
-        why = {'Фильтр каталога': f'кнопка фильтра в адресе (set_filter)', 'Поиск по сайту': f'поисковый запрос в адресе ({k})'}.get(kind, f'параметр отправки в адресе ({k})')
-        out.append(dict(адрес=f"{sec} — на {np_} {'странице' if np_ == 1 else 'страницах'}", метод='GET', что=kind, почему=why, отправок=len(g), IP=g['ip'].nunique(),
-                        коды=', '.join(f'{a}:{b}' for a, b in codes.most_common(4)), первый=pd.to_datetime(g['ts'].min(), unit='s'), последний=pd.to_datetime(g['ts'].max(), unit='s')))
-    return sorted(out, key=lambda x: -x['отправок'])
+    for kind, rx in GET_KINDS:
+        hit = qc.str.contains(rx, regex=True, case=False).values[R['query'].cat.codes.values]
+        m = hit & (R['method'].values == 'GET') & c.human & base_ok & ~R['is_static'].values
+        if not m.any(): continue
+        Q = pd.DataFrame({'tpl': R['tpl'].values[m].astype(str), 'q': R['query'].values[m].astype(str), 'ip': R['ip'].values[m].astype(str), 'st': st[m], 'ts': R['ts'].values[m]})
+        Q['ключ'] = Q['q'].str.extract(rx, flags=re.I)[0].str.lower().str.replace(r'_\d+$', '_*', regex=True)
+        Q['раздел'] = Q['tpl'].map(first_seg)
+        Q = Q[~Q['раздел'].str.match(r'^/(bitrix|local|upload|wp-\w+)/$')]
+        for sec, g in Q.groupby('раздел'):   # одна строка на раздел и вид, параметры перечислены
+            if len(g) < 10: continue
+            np_ = g['tpl'].nunique()
+            codes = Counter(g['st'])
+            ks = [k for k, _ in Counter(g['ключ']).most_common(3)]
+            out.append(dict(адрес=f"{sec} — на {np_} {'странице' if np_ == 1 else 'страницах'}", метод='GET', что=kind,
+                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks),
+                            отправок=len(g), IP=g['ip'].nunique(), коды=', '.join(f'{a}:{b}' for a, b in codes.most_common(4)),
+                            первый=pd.to_datetime(g['ts'].min(), unit='s'), последний=pd.to_datetime(g['ts'].max(), unit='s')))
+    return sorted(out, key=lambda x: (x['что'], -x['отправок']))
+
+
+def api_points(R, c, st):
+    """Точки входа API и обмена (1С, CRM, вебхуки): успешные обращения не от сканеров и не от роботов-поисковиков."""
+    bc = R['base'].cat.categories.to_series()
+    out = []
+    scan = R['fam_cat'].astype(str).isin(['Сканеры безопасности']).values if 'fam_cat' in R else np.zeros(len(R), bool)
+    for kind, rx in API_KINDS:
+        hit = bc.str.contains(rx, regex=True, case=False).values[R['base'].cat.codes.values]
+        m = hit & (st >= 200) & (st < 300) & ~scan & ~R['is_static'].values
+        if not m.any(): continue
+        Q = pd.DataFrame({'b': R['base'].values[m].astype(str), 'meth': R['method'].values[m].astype(str), 'ip': R['ip'].values[m].astype(str),
+                          'fam': R['fam'].values[m].astype(str), 'st': st[m], 'ts': R['ts'].values[m]})
+        Q = Q[~Q['b'].str.contains(r'\.(js|css|map|png|svg)$|/\.env|/\.git', regex=True)]
+        for b, g in Q.groupby('b'):
+            if len(g) < 3: continue
+            out.append(dict(адрес=b, метод='/'.join(sorted(set(g['meth']))), что=kind, почему='успешные обращения (2xx) не от сканеров', отправок=len(g), IP=g['ip'].nunique(),
+                            коды=', '.join(f'{a}:{n}' for a, n in Counter(g['st']).most_common(3)), первый=pd.to_datetime(g['ts'].min(), unit='s'),
+                            последний=pd.to_datetime(g['ts'].max(), unit='s'), кто=', '.join(f"{k or 'без подписи'}: {n}" for k, n in Counter(g['fam']).most_common(2))))
+    return out

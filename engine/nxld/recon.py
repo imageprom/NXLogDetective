@@ -341,3 +341,58 @@ def files_inventory(R, min_req=3):
                          средний_размер_КБ=round(float(s['bytes'].mean()) / 1024, 1),
                          первый_день=str(min(s['day'].astype(str))), последний_день=str(max(s['day'].astype(str)))))
     return pd.DataFrame(rows).sort_values('запросов', ascending=False)
+
+
+# --- Параметры запросов: каждый ключ после «?» -----------------------------------------------------
+ATTACK_VALUE = re.compile(r'\.\./|169\.254\.|file://|/etc/passwd|/proc/self|call_user_func|<script|union[\s+]+select|phpinfo|\$\{jndi|/bin/(ba)?sh|cmd\.exe|wget\s|curl\s|base64_decode|eval\(', re.I)
+
+
+def query_params_inventory(R, human, groups, top_n=300):
+    """Ключ параметра → запросов, визитов людей, разных значений, частое значение, где встречается.
+    Обрывки из битых адресов (префикс более частого ключа) и разное написание одного ключа сводятся."""
+    from urllib.parse import unquote
+    qc = R['query'].cat.categories.to_series().astype(str)
+    codes = R['query'].cat.codes.values
+    has = codes >= 0
+    cnt = np.bincount(codes[has], minlength=len(qc))
+    pairs = []   # (код запроса, ключ, значение)
+    for i, q in enumerate(qc.values):
+        if not cnt[i] or not q or q == 'nan': continue
+        for kv in q.split('&'):
+            k, _, v = kv.partition('=')
+            k = unquote(k).strip()
+            if re.fullmatch(r'\d+|[0-9a-f]{16,}', k) and not v: k = '(число без имени)'   # ?1778857049245644 — метка от кэша
+            if 1 <= len(k) <= 40 and re.fullmatch(r'[\w\[\]\-.()а-я ]+', k): pairs.append((i, k, v))
+    if not pairs: return pd.DataFrame()
+    P = pd.DataFrame(pairs, columns=['q', 'ключ', 'значение'])
+    P['n'] = cnt[P['q'].values]
+    # визиты людей: уникальные пары (запрос, визит) у людей
+    hm = has & np.asarray(human)
+    HV = pd.DataFrame({'q': codes[hm], 'vid': R['vid'].values[hm]}).drop_duplicates()
+    sec = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
+    SQ = pd.DataFrame({'q': codes[has], 'sec': sec[has]}).groupby(['q', 'sec']).size().rename('m').reset_index()
+    # сведение написаний: один ключ без учёта регистра → самое частое написание
+    tot = P.groupby('ключ')['n'].sum()
+    low = tot.groupby(tot.index.str.lower()).idxmax()
+    P['ключ'] = P['ключ'].str.lower().map(low)
+    tot = P.groupby('ключ')['n'].sum().sort_values(ascending=False)
+    # обрывки: ключ — начало более частого ключа и встречается только вместе с битыми адресами
+    keys = list(tot.index)
+    frag = {k for k in keys if not k.startswith('(') and any(K != k and K.lower().startswith(k.lower()) and tot[K] >= tot[k] for K in keys)}
+    P = P[~P['ключ'].isin(frag)]
+    rows = []
+    for k, g in P.groupby('ключ'):
+        qs = g['q'].unique()
+        vc = g.groupby('значение')['n'].sum().sort_values(ascending=False)
+        top_v = unquote(str(vc.index[0]).replace('+', ' '), errors='replace') if len(vc) else ''
+        s_ = SQ[SQ['q'].isin(qs)].groupby('sec')['m'].sum().sort_values(ascending=False)
+        att = vc[pd.Series(vc.index.astype(str), index=vc.index).map(lambda v_: bool(ATTACK_VALUE.search(unquote(v_, errors='replace'))))].sum()
+        grp_ = 'Атаки и зонды' if att >= 0.5 * vc.sum() else next((nm for nm, rx in groups if re.search(rx, k, re.I)), 'Прочие')
+        rows.append(dict(параметр=k, группа=grp_,
+                         запросов=int(g['n'].sum()), людей=int(HV[HV['q'].isin(qs)]['vid'].nunique()),
+                         значений=int(vc.index.nunique()), частое_значение=top_v[:60] if top_v else '(пусто)',
+                         где=', '.join(f'{a}:{int(b)}' for a, b in s_.head(3).items())))
+    D = pd.DataFrame(rows).sort_values('запросов', ascending=False)
+    D = D[~((D['группа'] == 'Прочие') & (D['параметр'].str.len() < 4) & (D['запросов'] < 1000))]   # короткие редкие — обрывки
+    D.loc[D['параметр'] == '(число без имени)', 'частое_значение'] = ''
+    return D.head(top_n)

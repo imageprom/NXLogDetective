@@ -130,6 +130,11 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['files'] = recon.files_inventory(R).to_dict('records')
     except Exception as e:
         log(f'files_inventory: {e}'); res['files'] = None
+    try:
+        from .anatomy import PARAM_GROUPS
+        res['params'] = recon.query_params_inventory(R, c.human, PARAM_GROUPS).to_dict('records')
+    except Exception as e:
+        log(f'query_params_inventory: {e}'); res['params'] = None
     if res['files']:
         for x in res['findings']:
             if x['key'].split(':')[1] in ('missing_static', 'no_service', 'service_err', 'hotlink', 'ai_index', 'heavy_images'):

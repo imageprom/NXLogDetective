@@ -326,3 +326,22 @@ def service_files(wb, res, name='Файлы'):
         ws.cell(r, 2, 'Не найдено: ' + ', '.join(missing).lower() + '. Обращения сканеров к несуществующим файлам сюда не попадают.')
         ws.cell(r, 2).font = Font(name='Arial', size=9, italic=True, color=GREY)
     return wb[name]
+
+
+def params_sheet(wb, res, name='Параметры запросов'):
+    """Каждый ключ параметра после «?»: группа, запросы, люди, значения, где встречается."""
+    P = res.get('params')
+    if not P: return None
+    from .anatomy import PARAM_GROUPS
+    d = pd.DataFrame([{'Параметр': p['параметр'], 'Группа': p['группа'], 'Запросов': int(p['запросов']), 'Людей': int(p['людей']),
+                       'Значений': int(p['значений']), 'Частое значение': p['частое_значение'], 'Где': _who(p['где'])} for p in P])
+    order = [g for g, _ in PARAM_GROUPS] + ['Атаки и зонды', 'Прочие']
+    cnt = d['Группа'].value_counts()
+    kpi = [('Параметров', len(d))] + [(g.split(',')[0], int(cnt[g])) for g in order if cnt.get(g)]
+    kpi = [k for k in kpi if k[1]] + [k for k in kpi if not k[1]]
+    if name not in wb.sheetnames: wb.create_sheet(name)
+    widths = {'Параметр': 30, 'Группа': 31, 'Запросов': 11, 'Людей': 10, 'Значений': 10, 'Частое значение': 40, 'Где': 44}
+    data_sheet(wb, name, d, 'Параметры запросов', 'Что передают в адресе после «?»', widths, wrap=('Параметр', 'Частое значение', 'Где'),
+               kpi=kpi, kpi_col='Запросов', row_rule=lambda r: F_NOTE if r.get('Группа') == 'Атаки и зонды' else 'F7F7F7' if r.get('Группа') in ('Сброс кэша', 'Прочие') else None,
+               links=[('Сводка по группам', 'Анатомия сайта'), ('Фильтры каталога по значениям', 'Фасеты')])
+    return wb[name]

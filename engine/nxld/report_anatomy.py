@@ -177,9 +177,9 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
     # 9. параметры
     if A.get('параметры'):
         S.section('Параметры в адресах')
-        S.table(['Группа', 'Параметров', 'Применений', 'Например'], [[x['группа'], int(x['параметров']), int(x['применений']), x['примеры']] for x in A['параметры']],
+        S.table(['Группа', 'Параметров', 'Запросов', 'Например'], [[x['группа'], int(x['параметров']), int(x['применений']), x['примеры']] for x in A['параметры']],
                 ['B', 'C', 'D', 'EF'], num=(1, 2), wrap=0.8)
-        link_row(S, 'Каждый параметр', names.get('Анатомия — параметры', 'Анатомия — параметры'), set(names.values()))
+        link_row(S, 'Каждый параметр', names.get('Параметры запросов', 'Параметры запросов'), set(names.values()))
         link_row(S, 'Что выбирают в фильтре', 'Фасеты', names)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True

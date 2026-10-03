@@ -50,7 +50,9 @@ FORM_NAME = [(r'callback|call_?back|zvonok|perezvon', 'обратный звон
 PARAM_GROUPS = [
     ('Реклама и аналитика', r'^(utm_\w+|yclid|gclid|fbclid|wbraid|gbraid|erid|calltouch\w*|roistat\w*|_openstat|from|ref|cm_id|ad_?id|campaign_?id|_ga|_gl|ymclid|vkclid|mc_\w+)$'),
     ('Служебные поисковиков и Яндекса', r'^(etext|ybaip|ysclid|y_ref|yabizcmpgn|yabizcmpgn\w*|lr|text|_ym\w*|utm_referer|utm_ya_campaign|utm_candidate|turbo\w*|amp)$'),
+    ('Данные форм', r'(^form|form_|submit|^btn_|mail|phone|^tel$|email|comment|message|question|^name$|_name$|^fio$|theme|captcha|sessid)'),
     ('Фильтры, сортировка и страницы', r'(filter|sort|order|page|pagen|limit|view|show|ajax|type|price|min|max|rooms|floor|sq|area|set_|arr|items|objects)'),
+    ('Сброс кэша', r'^(v|ver|version|_|t|ts|timestamp|rnd|rand|nocache|nc|cb|\(число без имени\))$'),
 ]
 SERVICE_GROUPS = [
     ('Для роботов', r'^/(robots\.txt|sitemap[\w.-]*\.xml(\.gz)?|sitemap/.*)$'),
@@ -443,6 +445,12 @@ def embedded_groups(m):
 
 
 def param_groups(m, res):
+    if res.get('params'):   # полный перечень по логу (recon.query_params_inventory)
+        out = []
+        for nm in [g for g, _ in PARAM_GROUPS] + ['Атаки и зонды', 'Прочие']:
+            xs = [p for p in res['params'] if p['группа'] == nm]
+            if xs: out.append(dict(группа=nm, параметров=len(xs), примеры=', '.join(p['параметр'] for p in xs[:8]), применений=sum(p['запросов'] for p in xs)))
+        return out
     cnt = Counter()
     for k in ('ad_params', 'other_entry_params'):
         v = m.get(k) or {}
@@ -501,7 +509,7 @@ def appendix(res):
     Fl = res.get('query_params') if res.get('query_params') is not None else pd.DataFrame()
     if len(Fl):
         for p_, n_ in Fl.groupby('ключ')['применений'].sum().items(): cnt[p_] = max(cnt[p_], int(n_))
-    if cnt:
+    if cnt and not res.get('params'):
         rows = [dict(параметр=p_, группа=next((nm for nm, rx in PARAM_GROUPS if _re.search(rx, p_, _re.I)), 'Прочие'), применений=n_) for p_, n_ in cnt.most_common() if len(str(p_)) >= 2]
         out['Анатомия — параметры'] = pd.DataFrame(rows)
     return out

@@ -304,6 +304,11 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             report_tables.facets_sheet(wb, S.get('Фасеты'))
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
+            if report_tables.params_sheet(wb, res) is not None: names['Параметры запросов'] = 'Параметры запросов'
+            if 'Фасеты' in wb.sheetnames:   # перед «Фасетами»: «Точки приёма данных», «Параметры запросов»
+                mv = [wb[n_] for n_ in ('Точки приёма данных', 'Параметры запросов') if n_ in wb.sheetnames]
+                rest = [w for w in wb._sheets if w not in mv]
+                i_ = rest.index(wb['Фасеты']); wb._sheets = rest[:i_] + mv + rest[i_:]
             pos = wb.sheetnames.index('Анатомия сайта') + 1 if 'Анатомия сайта' in wb.sheetnames else None
             for k in [k for k in list(names) if k.startswith('Анатомия —')][::-1]:   # приложения — сразу за «Анатомией»
                 if pos and names[k] in wb.sheetnames:

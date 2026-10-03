@@ -168,7 +168,7 @@ def _post_rows(res):
     for f in F:
         if not isinstance(f, dict): continue
         kind, why = classify_post(f, roots, engine, res.get('form_evidence'))
-        rows.append({'Адрес': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Запросов': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
+        rows.append({'Адрес точки': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Запросов': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
                      'Коды ответа': str(f.get('коды', '')), '_t0': pd.to_datetime(f.get('первый')), '_t1': pd.to_datetime(f.get('последний'))})
     return rows
 
@@ -176,21 +176,22 @@ def _post_rows(res):
 def _finish(rows):
     d = pd.DataFrame(rows)
     if not len(d): return d
-    d['Первая'] = d['_t0'].dt.strftime('%d.%m.%Y %H:%M'); d['Последняя'] = d['_t1'].dt.strftime('%d.%m.%Y %H:%M')
+    d['Первый'] = d['_t0'].dt.strftime('%d.%m.%Y %H:%M'); d['Последний'] = d['_t1'].dt.strftime('%d.%m.%Y %H:%M')
+    d['Коды ответа'] = d['Коды ответа'].map(fmt_codes)
     d = d.sort_values('Запросов', ascending=False).drop(columns=['_t0', '_t1'])   # по числу запросов; группы — фильтром
-    order = ['Адрес', 'Запросов', 'Уникальных IP', 'Метод', 'Опознано как', 'Улики', 'Коды ответа', 'Первая', 'Последняя']
+    order = ['Адрес точки', 'Запросов', 'Уникальных IP', 'Метод', 'Опознано как', 'Улики', 'Коды ответа', 'Первый', 'Последний']
     d = d[[c_ for c_ in order if c_ in d.columns]]
     return d
 
 
-WIDTHS = {'Адрес': 46, 'Метод': 8, 'Опознано как': 18, 'Запросов': 10, 'Уникальных IP': 11, 'Улики': 50, 'Коды ответа': 22, 'Первая': 16, 'Последняя': 16}
+WIDTHS = {'Адрес точки': 46, 'Метод': 8, 'Опознано как': 18, 'Запросов': 10, 'Уникальных IP': 11, 'Улики': 50, 'Коды ответа': 22, 'Первый': 16, 'Последний': 16}
 
 
 def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
     """Overview: только то, что сайт реально принимает — заявки, вход, фильтры и поиск, свои скрипты, админка."""
     rows = [r for r in _post_rows(res) if r['Опознано как'] != 'Сканер']
     for g in (res.get('anatomy') or {}).get('api', []) + (res.get('anatomy') or {}).get('get_приём', []):
-        rows.append({'Адрес': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Запросов': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
+        rows.append({'Адрес точки': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Запросов': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
                      'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
     d = _finish(rows)
     if not len(d): return
@@ -206,7 +207,7 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
                wrap=('Улики',), bold_rule=bold, center=('Метод', 'Уникальных IP'), kpi=kpi, kpi_col='Метод', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
     ws = wb[name]   # сноска и чего нет — тоже результат
-    if d['Адрес'].astype(str).str.contains('фасетн').any():
+    if d['Адрес точки'].astype(str).str.contains('фасетн').any():
         r0 = ws.max_row + 2
         c = ws.cell(r0, 2, 'Основные страницы — адреса структуры сайта. Фасетные страницы — адреса, которые генерирует фильтр каталога из комбинаций условий (…/filter/…/apply/); в структуре сайта их нет.')
         c.font = Font(name='Arial', size=10, italic=True, color=INK)
@@ -234,3 +235,11 @@ def post_all(wb, res, name='POST-отправки', after='GET-отправки'
     r_ = ws.max_row + 2
     c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')
     c.hyperlink = "NXLD_01_Overview.xlsx#'Точки приёма данных'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
+
+
+def fmt_codes(s):
+    """«200:65634, 499:632» → «200 (65 634), 499 (632)» — чтобы не читалось как порт."""
+    out = []
+    for k, v in _codes(s).items():
+        out.append(f"{k} ({int(v):,})".replace(',', '\u00a0'))
+    return ', '.join(out) or str(s)

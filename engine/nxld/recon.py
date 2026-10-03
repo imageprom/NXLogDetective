@@ -265,8 +265,8 @@ def _top(s, n=4):
     return ', '.join(f'{k}:{v}' for k, v in vc.head(n).items())
 
 
-def _others(src, n=5):
-    vc = src[~src.isin(['со страниц сайта', 'без перехода'])].value_counts()
+def _others(src, n=5, skip=('со страниц сайта', 'без перехода')):
+    vc = src[~src.isin(list(skip))].value_counts()
     vc = vc[vc > 0]
     out = ', '.join(f'{k}:{v}' for k, v in vc.head(n).items())
     return out + (f', и ещё {len(vc) - n}' if len(vc) > n else '')
@@ -321,7 +321,8 @@ def files_inventory(R, min_req=3):
             if named.nunique() >= 2 and len(named) >= len(ch) * 0.5: sub = f"папок {ch.nunique()}: " + ', '.join(ch.value_counts().index[:6]) + (' …' if ch.nunique() > 6 else '')
         rows.append(dict(адрес=k, группа=s['grp'].iloc[0], файлов=int(len(files)), внутри=sub, запросов=int(len(s)),
                          коды=', '.join(f'{c}:{v}' for c, v in s['status'].value_counts().sort_index().items()),
-                         кто_забирает=_top(s['fam']), со_страниц=int((s['src'] == 'со страниц сайта').sum()),
+                         кто_забирает=_top(s['fam']), браузеры=int((s['fam'] == 'браузеры/прочие').sum()),
+                         роботы=_others(s['fam'], skip=('браузеры/прочие',)), со_страниц=int((s['src'] == 'со страниц сайта').sum()),
                          напрямую=int((s['src'] == 'без перехода').sum()), другие_сайты=_others(s['src']),
                          средний_размер_КБ=round(float(s['bytes'].mean()) / 1024, 1),
                          первый_день=str(min(s['day'].astype(str))), последний_день=str(max(s['day'].astype(str)))))

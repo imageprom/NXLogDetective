@@ -16,7 +16,7 @@ from .findings_text import GRADE
 STATUS_STYLE = {'стала хуже': (ORANGE, True, None), 'новая': (ORANGE, False, None), 'исправлена частично': (DARK, False, F_NOTE), 'сохраняется': (DARK, False, None)}
 
 
-PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('666666', 'FFFFFF')}   # самый тёмный серый фирменного образца, белый текст
+PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('666666', 'FFFFFF'), 'Замечание': ('EFEFEF', '404040')}   # самый тёмный серый фирменного образца, белый текст
 OLINE = Side(style='thin', color=ORANGE)
 F_LIGHT = 'F7F7F7'   # блок «Расследование и улики» — светлее основных строк карточки
 
@@ -58,9 +58,9 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     ws.merge_cells('B2:F2')
     S.cell('B', 'ПРОБЛЕМЫ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     act = [x for x in items if x.get('статус_вид') != 'исправлена' and x.get('статус') != 'отмечено как норма']
-    cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
+    cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению', 'Замечание')}
     ws.merge_cells('B3:F3')
-    sub = f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}"
+    sub = f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}" + (f" · Замечания — {cnt['Замечание']}" if cnt['Замечание'] else '')
     if not with_block: sub = f"Блок «{items[0]['блок'] if items else ''}» · " + sub
     S.cell('B', sub, Font(name='Comfortaa', size=11, bold=True, color=GREY), row=3)   # подзаголовок — как на обзоре
     ws.row_dimensions[3].height = 20
@@ -75,12 +75,13 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
         for x in xs:
             n += 1
             card(S, x, n, sev, here_file, with_block)
-    xs = sorted([x for x in act if x['важность'] == 'К сведению'], key=key)
-    if xs:
-        plaque(S, 'К сведению', len(xs), xs)
+    for sev in ('К сведению', 'Замечание'):   # короткие карточки
+        xs = sorted([x for x in act if x['важность'] == sev], key=key)
+        if not xs: continue
+        plaque(S, sev, len(xs), xs)
         for x in xs:
             n += 1
-            card(S, x, n, 'К сведению', here_file, with_block, short=True)
+            card(S, x, n, sev, here_file, with_block, short=True)
     fixed = [x for x in items if x.get('статус_вид') == 'исправлена']
     if fixed:
         S.section(f'Исправлено с прошлой проверки — {len(fixed)}')
@@ -130,6 +131,14 @@ def card(S, x, n, sev, here_file, with_block, short=False):
         ws.merge_cells(f'B{S.r}:F{S.r}')
         c = S.cell('B', f'Подробно: {text} →', align=Alignment(vertical='center', indent=1))
         c.hyperlink = target; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
+        ws.row_dimensions[S.r].height = 20
+        S.r += 1
+    for sh_ in x.get('ещё_листы') or []:   # тот же факт с другой стороны — на листе обзора
+        f_ = BLOCK_FILES['Общий анализ']
+        t_ = f'лист «{sh_}»' + ('' if f_ == here_file else f' в {f_}')
+        ws.merge_cells(f'B{S.r}:F{S.r}')
+        c = S.cell('B', f"{'Также' if text else 'Подробно'}: {t_} →", align=Alignment(vertical='center', indent=1))
+        c.hyperlink = f"#'{sh_}'!A1" if f_ == here_file else f"{f_}#'{sh_}'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
         ws.row_dimensions[S.r].height = 20
         S.r += 1
     ws.row_dimensions[S.r].height = 14

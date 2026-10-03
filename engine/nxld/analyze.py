@@ -130,6 +130,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['files'] = recon.files_inventory(R).to_dict('records')
     except Exception as e:
         log(f'files_inventory: {e}'); res['files'] = None
+    if res['files']:
+        for x in res['findings']:
+            if x['key'].split(':')[1] in ('missing_static', 'no_service', 'service_err', 'hotlink', 'ai_index', 'heavy_images'):
+                x['ещё_листы'] = ['Файлы']
     try:
         res['anatomy'] = anatomy.build(c, res)
         sp_, np_ = res.get('site_profile') or {}, res['anatomy'].get('всего_страниц')

@@ -96,6 +96,7 @@ REGISTRY = [
     ('broken_links', 'Битые ссылки внутри сайта', 'Ошибки', None, None),
     ('missing_static', 'Отсутствующие файлы оформления', 'Ошибки', None, None),
     ('no_service', 'Нет robots.txt или sitemap.xml', 'Ошибки', None, None),
+    ('ai_index', 'Нет файлов для ИИ-поиска (llms.txt)', 'Ошибки', None, None),
     ('service_err', 'Фид или служебный файл отдаёт ошибку', 'Ошибки', None, None),
     ('search_errors', 'Поисковые роботы получают ошибки', 'Ошибки', None, sig_search),
     ('blocked_people', 'Защита отказывает людям', 'Ошибки', None, None),

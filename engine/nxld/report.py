@@ -9,7 +9,7 @@ from .findings import SEV_ORDER
 from . import report_index, report_problems, report_anatomy, report_files, report_tables
 
 FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
-SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'отмечено как норма': 'EDEDED'}
+SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'Замечание': 'F3F3F3', 'отмечено как норма': 'EDEDED'}
 HDR = PatternFill('solid', fgColor='1F3864')
 FONT = 'Arial'
 
@@ -173,7 +173,7 @@ def main_sheet(res, file_names):
     urgent = [x for x in res['findings'] if x['важность'] == 'Срочно' and x.get('статус') != 'отмечено как норма' and x['блок'] in res['selected']]
     for x in sorted(urgent, key=lambda x: list(FILES).index(x['блок'])):
         rows.append({'Блок': x['блок'], 'Что происходит': x['что_происходит'], 'Главная цифра': x['главная_цифра'], 'Где подробно': f"{file_names[x['блок']]} → лист «{x['лист']}»"})
-    return pd.DataFrame(rows, columns=['Блок', 'Срочно', 'Важно', 'К сведению', 'Что происходит', 'Главная цифра', 'Где подробно'])
+    return pd.DataFrame(rows, columns=['Блок', 'Срочно', 'Важно', 'К сведению', 'Замечание', 'Что происходит', 'Главная цифра', 'Где подробно'])
 
 
 def snapshot(res, site):

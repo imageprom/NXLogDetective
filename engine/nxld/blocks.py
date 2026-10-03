@@ -438,13 +438,14 @@ def errors(c, F):
             F.add('Ошибки', 'Важно', 'broken_links', 'site', f"Битые ссылки на сайте: {int(bt['визитов'].sum())} визитов людей упёрлись в 404",
                   f"Главные: {', '.join(bt.head(5).index.astype(str))}", 'содержимое/шаблоны сайта', 'Исправить ссылки; начать со страниц-источников', int(bt['визитов'].sum()), 'Битые ссылки')
     # отсутствующие ресурсы
-    mr = c.human & (st == 404) & R['is_static'].values & ~vuln_b
+    mr = c.human & (st == 404) & R['is_static'].values & ~vuln_b & (R['ext'].astype(str).values != 'map')   # .map просит инструмент разработчика, не страница
     MR = R.loc[mr, ['base', 'ref_path', 'vid']]
     if len(MR):
         from .findings import load_rules
         invis = re.compile(load_rules().get('невидимые_файлы', 'placeholder|lazy|blank|spacer'), re.I)
         mt = MR.groupby('base', observed=True).agg(запросов=('vid', 'size'), визитов=('vid', 'nunique'), страниц=('ref_path', 'nunique')).sort_values('визитов', ascending=False)
-        mt['группа'] = [b if invis.search(b) else re.sub(r'[^/]+$', '*', b) for b in mt.index.astype(str)]   # заглушки — отдельной проблемой
+        mt['группа'] = [b if invis.search(b) else '/apple-touch-icon*.png' if re.search(r'/apple-touch-icon[\w-]*\.png$', b) else re.sub(r'[^/]+$', '*', b)
+                        for b in mt.index.astype(str)]   # заглушки — отдельной проблемой; иконки айфонов — отдельным пунктом
         S['Отсутствующие ресурсы'] = mt.head(500).reset_index().rename(columns={'base': 'файл'})
         mg = mt.groupby('группа').agg(файлов=('запросов', 'size'), запросов=('запросов', 'sum'), визитов=('визитов', 'max')).sort_values('запросов', ascending=False)
         for gname, r in mg.head(5).iterrows():
@@ -454,6 +455,15 @@ def errors(c, F):
                 for x in F.items:
                     if x['key'] == f'Ошибки:missing_static:{gname}':
                         x['файлы'] = mt[mt['группа'] == gname].index.astype(str).tolist()[:20]
+    # индексы для ИИ-поиска: спрашивают, а файла нет — замечание, не проблема
+    ai = R['base'].cat.categories.to_series().str.fullmatch(r'/(llms(-full)?\.txt|ai\.txt)').fillna(False).values[R['base'].cat.codes.values]
+    AI = R.loc[ai, ['base', 'status', 'fam']]
+    if len(AI) and not (AI['status'].between(200, 299)).any():
+        per = AI.groupby('base', observed=True).size().sort_values(ascending=False)
+        per = per[per > 0]
+        F.add('Ошибки', 'Замечание', 'ai_index', 'site', 'Нет файлов для ИИ-поиска: ' + ', '.join(per.index.astype(str)),
+              '; '.join(f'{b} — {int(k)} запросов' for b, k in per.items()) + f"; запрашивают: {topn(AI['fam'].astype(str).replace('', 'браузеры'), 3)}",
+              'сайт', 'Решить, нужен ли сайту llms.txt; если нужен — создать', int(len(AI)), '')
     # служебные файлы по дням
     sv = R['base'].cat.categories.to_series().str.contains(r'^/robots\.txt$|sitemap[\w-]*\.xml|\.yml$|/export/|feed|\.xml$', regex=True, case=False).values[R['base'].cat.codes.values]
     SV = R.loc[sv, ['base', 'day', 'status', 'bytes', 'fam']]

@@ -305,6 +305,8 @@ def decode_opaque(F):
     F['_stem'] = [st for _, st in keys]
     cond_of = {}
     for _, r in path.iterrows(): cond_of.setdefault(str(r['значение']).lower(), Counter())[re.sub(r' (от|до)$', '', r['условие'])] += 1
+    for i in F.index:   # условие у галочек — ключ без кода значения
+        if F.at[i, 'условие'] == F.at[i, 'ключ'] and F.at[i, '_stem'] != F.at[i, 'ключ']: F.at[i, 'условие'] = F.at[i, '_stem']
     for stem, g in F[F['откуда'].str.startswith('параметры')].groupby('_stem'):
         vote = Counter()
         for t in g['_txt'].dropna():

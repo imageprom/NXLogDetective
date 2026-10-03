@@ -149,17 +149,18 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         site_ = (m.get('site_hosts') or ['site'])[0]
         ref = reference.load(m, R['base'].cat.categories.astype(str), site_)
         # системное — ядро, админка, API и закрытые зоны; шаблоны и доработки сайта (/local/ и т. п.) — это код самого сайта, не движок
-        sysp = list(ref.folders(('система', 'админка', 'api', 'служебное', 'обмен', 'вход')))
+        # системное — только папки движка по справочнику (ядро, админка, API); закрытые разделы сайта — отдельно: их сделал программист
+        sysp = [p_ for p_ in ref.folders(('система', 'админка', 'api', 'служебное', 'обмен')) if p_.startswith('/')]
         if not sysp: sysp = [x['папка'] for x in A_.get('папки') or [] if not re.search(r'загруж|шаблон', str(x.get('что', '')))]
-        sysp += [x['адрес'] for x in A_.get('зоны') or [] if str(x.get('адрес', '')).startswith('/') and x['адрес'] not in sysp]
+        zones_ = [x['адрес'] for x in A_.get('зоны') or [] if str(x.get('адрес', '')).startswith('/') and not any(x['адрес'].startswith(p_) for p_ in sysp)]
         FC = res['sheets'].get('Общий анализ', {}).get('Фасеты')
         navk = set(FC.groupby('ключ')['запросов'].sum().loc[lambda x: x >= 10].index.astype(str)) if FC is not None and len(FC) else set()   # мусор из битых адресов — не фасет
         allref = reference.Reference([n_ for n_ in reference.all_engine_names()], (), site_)
         ref.other = allref
-        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref)
+        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(c.rg == 'Свои'), zone_prefixes=zones_)
         res['params'] = Pr.to_dict('records')
         # незнакомые: нет в справочнике (или запись из поиска устарела) и заметное число запросов — Детектив ищет их в сети
-        unk = Pr[(Pr['источник'].isin(['', 'поведение', 'имя']) & (Pr['группа'] != 'Атаки и зонды') & (Pr['запросов'] >= 20))]
+        unk = Pr[(Pr['источник'] == 'дедукция') & ~Pr['группа'].isin(['Атаки и зонды', 'Логика сайта']) & (Pr['запросов'] >= 20)]   # логику сайта в сети не найти
         stale = [r_ for r_ in res['params'] if r_['источник'].startswith('поиск') and ref.stale(ref.match(r_['ключ']))]
         res['unknown_params'] = [dict(ключ=r_['ключ'], ключи=r_['ключи'][:8], сейчас=r_['группа'], по=r_['источник'] or 'нет', запросов=r_['запросов'],
                                       людей=r_['людей'], значения=r_['значения'], где=r_['где'], роботы=r_['роботы'], вместе_с=r_['вместе_с'])

@@ -357,7 +357,7 @@ def _family(k, ref=None):
     return m.group(1) + '_*' if m else k
 
 
-def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300):
+def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300, staff=None, zone_prefixes=()):
     """Ключ (или семейство ключей) параметра → группа, что это, откуда знаем, запросы, люди, значения, где встречается.
     Порядок решения: кто спрашивает (атаки, сканеры) → справочник → поведение (навигация на страницах, системные папки, пачка) → имя.
     Семейство (itemsFilter_*) решается целиком по суммарному поведению и показывается одной строкой."""
@@ -376,6 +376,11 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
     cnt_sys = bc(has & sys_b[R['base'].cat.codes.values])
     scan = R['fam_cat'].astype(str).values == 'Сканеры безопасности' if 'fam_cat' in R else np.zeros(len(R), bool)
     cnt_scan = bc(has & scan)
+    cnt_int_h = bc(has & np.asarray(human) & R['ref_internal'].values)   # люди, пришедшие со страниц сайта
+    cnt_staff = bc(has & (np.asarray(staff) if staff is not None else np.zeros(len(R), bool)))
+    R_zone_paths = list(zone_prefixes)
+    zone_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in R_zone_paths)).values if R_zone_paths else np.zeros(len(bstr), bool)
+    cnt_zone = bc(has & zone_b[R['base'].cat.codes.values])
     cnt_err = bc(has & (R['status'].values >= 400))
     srch = R['fam_cat'].astype(str).values == 'Поисковик' if 'fam_cat' in R else np.zeros(len(R), bool)
     cnt_srch = bc(has & srch)
@@ -420,14 +425,44 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
             for kk in qkeys[q_]: c_[kk] = c_.get(kk, 0) + w_
         return sorted([kk for kk, v in c_.items() if kk != k and v >= 0.9 * tot_], key=lambda kk: -c_[kk])
 
-    def behavior(k, members, qs, n_):
-        """Группа по поведению — без справочника и имени."""
-        if any(re.fullmatch(NAV_KEYS, m_, re.I) or m_.lower() in navk for m_ in members) and cnt_nav[qs].sum() >= 0.5 * n_ and cnt_nav_h[qs].sum() >= 10:
-            return 'Поиск и навигация', ''
-        if sys_prefixes and cnt_sys[qs].sum() >= 0.8 * n_: return 'Служебные движка', ''
+    form_rx = next((rx for nm, rx in groups if nm == 'Данные форм'), r'^form')
+
+    def top_sec(qs):
+        s_ = SQ[SQ['q'].isin(qs)].groupby('sec')['m'].sum().sort_values(ascending=False)
+        return (s_.index[0], s_.iloc[0] / max(1, s_.sum())) if len(s_) else ('', 0)
+
+    def deduce(k, members, qs, n_, people):
+        """Дедукция: группа по сочетанию улик (имя + куда идут запросы + кто отправляет + какие ответы) и сами улики."""
+        nav_name = any(re.fullmatch(NAV_KEYS, m_, re.I) for m_ in members)
+        facet = any(m_.lower() in navk for m_ in members)
+        form_name = bool(re.search(form_rx, k, re.I))
+        sec, sh = top_sec(qs)
+        n_pg, n_pg_h, n_int_h = cnt_nav[qs].sum(), cnt_nav_h[qs].sum(), cnt_int_h[qs].sum()
+        n_sys, n_zone, n_staff, n_err = cnt_sys[qs].sum(), cnt_zone[qs].sum(), cnt_staff[qs].sum(), cnt_err[qs].sum()
+        clues = []
+        if facet: clues.append('ключ фильтра (есть на «Фасетах»)')
+        elif nav_name: clues.append('имя похоже на навигацию')
+        elif form_name: clues.append('имя похоже на поле формы')
+        if n_sys >= 0.8 * n_: clues.append(f'запросы идут в системные папки движка ({sec})')
+        elif n_zone >= 0.8 * n_: clues.append(f'запросы идут в закрытый раздел {zone_of(qs)}')
+        elif n_pg >= 0.5 * n_: clues.append('запросы идут на обычные страницы сайта' + (f' ({sec})' if sh >= 0.5 else ''))
+        elif sec and sh >= 0.5: clues.append(f'запросы идут в {sec}')
+        if people >= 20 and n_int_h >= 50: clues.append(f'отправляют люди со страниц сайта ({_visits(people)})')
+        elif n_staff >= 0.5 * n_: clues.append('работают сотрудники')
+        elif people == 0: clues.append('людей нет')
+        if n_err >= 0.5 * n_: clues.append(f'ответы с ошибкой ({n_err / n_:.0%})')
         comp = companions(k, qs) if n_ >= 20 else []
-        if len(comp) >= 4: return 'Метки сервисов', ', '.join(comp[:6]) + (' …' if len(comp) > 6 else '')
-        return None, ''
+        with_ = ', '.join(comp[:6]) + (' …' if len(comp) > 6 else '') if len(comp) >= 4 else ''
+        if (nav_name or facet) and n_pg >= 0.5 * n_ and n_pg_h >= 10: return 'Поиск и навигация', 'меняет список на странице', clues, with_
+        if n_sys >= 0.8 * n_: return 'Служебные движка', 'служебный запрос движка', clues, with_
+        if n_zone >= 0.8 * n_ and n_staff >= 0.5 * n_: return 'Логика сайта', f'служебный раздел {zone_of(qs)}', clues, with_
+        if people >= 20 and n_int_h >= 50: return 'Логика сайта', 'поле формы' if form_name else 'параметр сайта, которым пользуются люди', clues, with_
+        if with_: return 'Метки сервисов', 'приходит пачкой с другими ключами', clues + ['приходит пачкой'], with_
+        return 'Неизвестные', '', clues, with_
+
+    def zone_of(qs):
+        bs = R_zone_paths
+        return next((z for z in bs if any(str(s_).startswith(z.rstrip('/')) for s_ in [top_sec(qs)[0]])), bs[0] if bs else '')
 
     rows = []
     for k, g in P.groupby('группа_ключей'):
@@ -442,32 +477,28 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         people = int(HV[HV['q'].isin(qs)]['vid'].nunique())
         entry = ref.match(k) if ref is not None else None
         if entry is None and ref is not None and len(members) > 1:
-            es = [ref.match(m_) for m_ in members[:5]]
-            entry = next((e for e in es if e), None)
-        b_grp, with_ = behavior(k, members, qs, n_)
+            entry = next((e for e in (ref.match(m_) for m_ in members[:5]) if e), None)
+        d_grp, d_what, clues, with_ = deduce(k, members, qs, n_, people)
         what, src, link = '', '', ''
         few_people = people <= max(1, 0.02 * n_)
         foreign = other.match(k) if other is not None and entry is None and few_people else None
         foreign = foreign if foreign and str(foreign.get('файл', '')).startswith('engines/') else None
         dead = few_people and n_ >= 20 and cnt_err[qs].sum() >= 0.9 * n_ and cnt_named[qs].sum() < 0.5 * n_   # обход старых ссылок роботами — не зонд
         if att >= 0.5 * vc.sum() or (cnt_scan[qs].sum() >= 0.5 * n_ and people == 0) or foreign or (dead and entry is None):
-            grp_, src = 'Атаки и зонды', 'поведение'
-            what = ('значения похожи на атаку или подставной адрес' if att >= 0.5 * vc.sum() else 'запрашивают сканеры безопасности' if cnt_scan[qs].sum() >= 0.5 * n_
-                    else f"параметр {foreign['название_файла']}, а сайт на другом движке — зонд" if foreign else 'людей нет, почти все ответы — ошибки: зонд')
-        elif entry is not None and not (b_grp and entry.get('файл') == 'learned/params.json' and _strong(b_grp, entry['группа'], cnt_sys[qs].sum(), n_)):
+            grp_, src = 'Атаки и зонды', 'дедукция'
+            why = ('значения похожи на атаку или подставной адрес' if att >= 0.5 * vc.sum() else 'запрашивают сканеры безопасности' if cnt_scan[qs].sum() >= 0.5 * n_
+                   else f"параметр {foreign['название_файла']}, а сайт на другом движке" if foreign else 'людей нет, почти все ответы — ошибки, отправляют не известные роботы')
+            what = f'зонд: {why}'
+        elif entry is not None and not (entry.get('файл') == 'learned/params.json' and _strong(d_grp, entry['группа'], cnt_sys[qs].sum(), n_)):
             from .reference import level
             grp_, what, src = entry['группа'], entry.get('что', ''), entry.get('источник', 'документация')
             if level(entry) >= 3 and src == 'поиск': src = 'поиск, подтверждено'
             link = entry.get('ссылка', '')
-            if ref is not None and b_grp: ref.observe(k, entry, b_grp)
-        elif b_grp:
-            grp_, src = b_grp, 'поведение'
-            what = {'Поиск и навигация': 'меняет список на странице', 'Служебные движка': 'запросы идут в системные папки и закрытые зоны',
-                    'Метки сервисов': 'приходит пачкой с другими ключами'}.get(b_grp, '')
-            if entry is not None and ref is not None: ref.observe(k, entry, b_grp)
+            if ref is not None and d_grp not in ('Неизвестные', 'Логика сайта'): ref.observe(k, entry, d_grp)
         else:
-            named = next((nm for nm, rx in groups if re.search(rx, k, re.I)), None)
-            grp_, src = (named, 'имя') if named else ('Прочие', '')
+            grp_, src = d_grp, 'дедукция'
+            what = (d_what + ': ' if d_what else '') + '; '.join(clues)
+            if entry is not None and ref is not None and d_grp not in ('Неизвестные', 'Логика сайта'): ref.observe(k, entry, d_grp)
         s_ = SQ[SQ['q'].isin(qs)].groupby('sec')['m'].sum().sort_values(ascending=False)
         f_ = FQ[FQ['q'].isin(qs)].groupby('fam')['m'].sum().sort_values(ascending=False)
         n_m = len(members)
@@ -477,9 +508,14 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
                          значения=[v_[:60] for v_ in vals], вместе_с=with_, где=', '.join(f'{a}:{int(b)}' for a, b in s_.head(3).items()),
                          роботы=', '.join(f'{a or "без имени"}:{int(b)}' for a, b in f_.head(3).items())))
     D = pd.DataFrame(rows).sort_values('запросов', ascending=False)
-    D = D[~((D['группа'] == 'Прочие') & (D['ключ'].str.len() < 4) & (D['запросов'] < 1000))]   # короткие редкие — обрывки
+    D = D[~((D['группа'] == 'Неизвестные') & (D['ключ'].str.len() < 4) & (D['запросов'] < 1000))]   # короткие редкие — обрывки
     D.loc[D['ключ'] == '(число без имени)', 'частое_значение'] = ''
     return D.head(top_n)
+
+
+def _visits(n):
+    w = 'визит' if n % 10 == 1 and n % 100 != 11 else 'визита' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'визитов'
+    return f'{n:,}'.replace(',', '\u00a0') + ' ' + w
 
 
 def _strong(b_grp, ref_grp, n_sys, n_):

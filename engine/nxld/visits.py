@@ -246,6 +246,9 @@ def confirm_form_success(R, V, window=10):
             e['редиректов'] += 1
             if how:
                 e['подтверждено'] += 1; e['как'][how] = e['как'].get(how, 0) + 1
+    chk = np.array([''] * len(R), dtype=object)
+    for i, h in conf.items(): chk[i] = h
+    R = R.assign(goal_check=chk)   # чем подтверждён успех отправки (пусто — не подтверждён)
     gs = R['goal_success'].values.copy()
     demote = np.array([i for i in idx if st[i] in (302, 303) and gs[i] and not conf[i]], dtype=np.int64)
     if len(demote):

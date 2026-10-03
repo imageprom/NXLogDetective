@@ -90,7 +90,8 @@ def overview(c, F):
     P['сеть'] = V['nettype'].values[P['vid'].values]
     P['время'] = dt(P['ts'])
     P['принята'] = np.where(P['goal_success'], 'да', 'нет')
-    S['Конверсии'] = P[['время', 'ip', 'goal', 'status', 'принята', 'группа', 'подгруппа', 'канал', 'страниц_до', 'ресурсов_грузил', 'сек_от_входа', 'вход', 'вход_реферер', 'сеть']].rename(columns={'goal': 'цель', 'status': 'код'})
+    P['статус'] = lead_status(P, R, c.m)
+    S['Конверсии'] = P[['время', 'ip', 'goal', 'status', 'принята', 'статус', 'группа', 'подгруппа', 'канал', 'страниц_до', 'ресурсов_грузил', 'сек_от_входа', 'вход', 'вход_реферер', 'сеть']].rename(columns={'goal': 'цель', 'status': 'код'})
     # GET-отправки персональных данных
     G_ = c.G[c.G['query'].astype(str).map(recon.has_pd)] if c.G is not None and len(c.G) else None
     if G_ is not None and len(G_):
@@ -212,6 +213,31 @@ def outage_windows(R, st, E, gap=3):
                          статика_в_норме=round(static_ok, 2), вероятная_причина='; '.join(cause) or 'не определена'))
     W = pd.DataFrame(rows)
     return W, rows
+
+
+def lead_status(P, R, m):
+    """Статус каждой заявки: принята / не принята и почему / что было дальше (повторил и отправил или ушёл)."""
+    rules = m.get('form_success_rules') or {}
+    if isinstance(rules, str):
+        try: rules = eval(rules)
+        except Exception: rules = {}
+    chk = R['goal_check'].values[P.index] if 'goal_check' in R else np.array([''] * len(P), dtype=object)
+    out = []
+    ok_times = P[P['goal_success']].groupby('ip', observed=True)['ts'].apply(list).to_dict()
+    for (i, r), how in zip(P.iterrows(), chk):
+        st, rule = int(r['status']), str(rules.get(r['goal'], ''))
+        if r['goal_success']:
+            out.append('принята' + (' (подтверждена: ' + how + ')' if how else ' (успех по коду ответа не виден)' if 'не различим' in rule else '')); continue
+        if st == 499: s_ = 'не дошла: посетитель не дождался ответа (499)'
+        elif st >= 500: s_ = f'ошибка сервера ({st})'
+        elif st >= 400: s_ = f'отклонена сервером ({st})'
+        elif st in (302, 303): s_ = 'переадресация без подтверждения успеха'
+        elif '3xx' in rule: s_ = 'отклонена формой: ошибка заполнения или проверки'
+        else: s_ = 'успех не виден'
+        later = [t for t in ok_times.get(r['ip'], []) if r['ts'] < t <= r['ts'] + 1800]
+        s_ += ' → потом отправил успешно' if later else ' → больше не отправлял'
+        out.append('не принята: ' + s_)
+    return out
 
 
 def errors(c, F):

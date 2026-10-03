@@ -120,6 +120,8 @@ class Reference:
             if not k or g not in GROUPS or not re.match(r'https?://', url):
                 self.log.append(f"- отклонено: `{k}` — {'нет ссылки на источник' if not re.match(r'https?://', url) else 'неизвестная группа ' + str(g)}"); continue
             cur = self._find_learned(k)
+            if cur and cur['группа'] == g and (cur.get('сайт') == site or any(c.get('сайт') == site for c in cur.get('подтверждения', []))):
+                ok.append(dict(it, источник='поиск')); continue   # тот же сайт — повторная сборка, не подтверждение
             if cur and cur['группа'] == g:
                 cur.setdefault('подтверждения', []).append(dict(сайт=site, дата=self._today(), как='поиск'))
                 cur['проверено'] = self._today()

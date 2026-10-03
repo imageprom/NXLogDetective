@@ -6,7 +6,8 @@
   "заполнено": "полностью",
   "источники": [
     "https://developer.wordpress.org/",
-    "https://woocommerce.com/document/"
+    "https://woocommerce.com/document/",
+    "https://cashruflow.ru/blog/clean-param"
   ],
   "признаки": [
     "^/wp-content/",
@@ -297,6 +298,13 @@
       "ключ": "ver",
       "группа": "Сброс кэша",
       "что": "версия файла стилей или скрипта"
+    },
+    {
+      "ключ": "rsd",
+      "группа": "Служебные движка",
+      "что": "Really Simple Discovery (xmlrpc.php?rsd)",
+      "источник": "сборник",
+      "ссылка": "https://cashruflow.ru/blog/clean-param"
     }
   ]
 }

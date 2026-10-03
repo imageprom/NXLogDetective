@@ -6,7 +6,8 @@
   "заполнено": "полностью",
   "источники": [
     "https://dev.1c-bitrix.ru/api_help/",
-    "https://dev.1c-bitrix.ru/learning/"
+    "https://dev.1c-bitrix.ru/learning/",
+    "https://cashruflow.ru/blog/clean-param"
   ],
   "признаки": [
     "^/bitrix/",
@@ -400,6 +401,27 @@
       "ключ": "bx_sender_conversion_id",
       "группа": "Реклама и аналитика",
       "что": "метка рассылки модуля «Email-маркетинг»"
+    },
+    {
+      "ключ": "USER_CHECKWORD",
+      "группа": "Служебные движка",
+      "что": "код подтверждения (восстановление пароля, регистрация)",
+      "источник": "сборник",
+      "ссылка": "https://cashruflow.ru/blog/clean-param"
+    },
+    {
+      "ключ": "ORDER_ID",
+      "группа": "Служебные движка",
+      "что": "номер заказа",
+      "источник": "сборник",
+      "ссылка": "https://cashruflow.ru/blog/clean-param"
+    },
+    {
+      "ключ": "CANCEL",
+      "группа": "Служебные движка",
+      "что": "отмена заказа",
+      "источник": "сборник",
+      "ссылка": "https://cashruflow.ru/blog/clean-param"
     }
   ]
 }

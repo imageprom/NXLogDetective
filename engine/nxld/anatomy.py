@@ -534,8 +534,9 @@ def get_receivers(R, c, st):
             np_ = g['tpl'].nunique()
             codes = Counter(g['st'])
             ks = [k for k, _ in Counter(g['ключ']).most_common(3)]
-            out.append(dict(адрес=f"{sec} — на {np_} {'странице' if np_ == 1 else 'страницах'}", метод='GET', что=kind,
-                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks),
+            pg_ = 'странице' if np_ % 10 == 1 and np_ % 100 != 11 else 'страницах'
+            out.append(dict(адрес=f"{sec}*", метод='GET', что=kind,
+                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks) + f"; встречается на {np_} {pg_} раздела",
                             отправок=len(g), IP=g['ip'].nunique(), коды=', '.join(f'{a}:{b}' for a, b in codes.most_common(4)),
                             первый=pd.to_datetime(g['ts'].min(), unit='s'), последний=pd.to_datetime(g['ts'].max(), unit='s')))
     return sorted(out, key=lambda x: (x['что'], -x['отправок']))

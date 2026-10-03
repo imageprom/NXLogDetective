@@ -203,7 +203,11 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные: формы, вход, API, фильтры, поиск и навигация', WIDTHS,
                wrap=('Улики',), bold_rule=bold, center=('Метод', 'Уникальных IP'), kpi=kpi, kpi_col='Отправок', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
-    ws = wb[name]   # чего нет — тоже результат
+    ws = wb[name]   # сноска и чего нет — тоже результат
+    if d['Адрес'].astype(str).str.contains('фасетн').any():
+        r0 = ws.max_row + 2
+        c = ws.cell(r0, 2, 'Основные страницы — адреса структуры сайта. Фасетные страницы — адреса, которые генерирует фильтр каталога из комбинаций условий (…/filter/…/apply/); в структуре сайта их нет.')
+        c.font = Font(name='Arial', size=10, italic=True, color=INK)
     absent = [lab for lab, keys in (('Поиск по сайту', ('Поиск по сайту',)), ('API и обмен с 1С, CRM, вебхуки', ('Обмен с 1С', 'API', 'Вебхук'))) if not any(cnt.get(k, 0) for k in keys)]
     if absent:
         r_ = ws.max_row + 2

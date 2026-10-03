@@ -538,10 +538,13 @@ def get_receivers(R, c, st):
             n_main = g.loc[~sub, 'tpl'].nunique()
             n_sub = g.loc[sub, 'tpl'].nunique()
             word = lambda k: 'страница' if k % 10 == 1 and k % 100 != 11 else 'страницы' if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14 else 'страниц'
-            vyb = lambda k: 'выборка' if k % 10 == 1 and k % 100 != 11 else 'выборки' if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14 else 'выборок'
-            where = f"{sec}* — {n_main} {word(n_main)} раздела" + (f" + {n_sub} {vyb(n_sub)} фильтра" if n_sub else '')   # живые страницы раздела + адреса-выборки умного фильтра
+            form = lambda k, f: f[0] if k % 10 == 1 and k % 100 != 11 else f[1] if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14 else f[2]
+            ADJ_M, ADJ_F, NOUN = ('основная', 'основные', 'основных'), ('фасетная', 'фасетные', 'фасетных'), ('страница', 'страницы', 'страниц')
+            where = (f"{sec}* — {n_main} {form(n_main, ADJ_M)} + {n_sub} {form(n_sub, ADJ_F)} {form(n_sub, NOUN)}" if n_sub
+                     else f"{sec}* — {n_main} {form(n_main, ADJ_M)} {form(n_main, NOUN)}")   # основные — адреса структуры; фасетные — генерирует фильтр
             out.append(dict(адрес=where, метод='GET', что=kind,
-                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks),
+                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks)
+                                   + ('; параметрические дубли: тот же список в другом порядке или виде' if kind in ('Пагинация', 'Сортировка', 'Тип отображения') else ''),
                             отправок=len(g), IP=g['ip'].nunique(), коды=', '.join(f'{a}:{b}' for a, b in codes.most_common(4)),
                             первый=pd.to_datetime(g['ts'].min(), unit='s'), последний=pd.to_datetime(g['ts'].max(), unit='s')))
     return sorted(out, key=lambda x: (x['что'], -x['отправок']))

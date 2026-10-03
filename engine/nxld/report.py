@@ -293,7 +293,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             sheets = {'Сводка': summ, 'О данных': about}
             if b == 'Маркетинг':
                 O = res['sheets'].get('Общий анализ', {})
-                sheets.update({f'Общее: {k}': O[k] for k in ('По дням', 'Каналы', 'Разделы', 'Спрос', 'Конверсии') if k in O})
+                sheets.update({f'Общее: {k}': O[k] for k in ('По дням', 'Каналы', 'Разделы', 'TOP500', 'Конверсии') if k in O})
             sheets.update(S)
             if b == 'Боты': sheets['IP'] = res['ips']
             hidden = None
@@ -314,6 +314,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             own_people(wb, res['site_map'])
             report_tables.conversions(wb, S.get('Конверсии'))
             report_tables.facets_sheet(wb, S.get('Фасеты'))
+            report_tables.top500_sheet(wb, S.get('TOP500'))
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
             if report_tables.embedded_sheet(wb, res) is not None:   # сразу за «Анатомией сайта»

@@ -8,6 +8,8 @@ from . import operators
 
 KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 VULN = r'(^/\.env|/\.git/|/\.aws|/\.ssh|/\.svn|/\.DS_Store|phpinfo|/wp-login\.php|/wp-admin|/xmlrpc\.php|/wp-content/plugins|/phpmyadmin|/pma/|/adminer|/vendor/phpunit|/actuator|/cgi-bin/|/server-status|/config\.(json|yml|yaml|php)|/backup|\.(sql|bak|old|swp|tar|tar\.gz|tgz|zip|rar)$|/shell|/eval-stdin|/boaform|/HNAP1|/owa/|/autodiscover|/\.well-known/(?!acme)|/restore\.php|/bitrixsetup\.php|/install\.php|/setup\.php|/telescope|/_profiler|/debug|/console)'
+from .visits import probe_rx as _probe_rx
+VULN = '(?:' + VULN + ')|' + _probe_rx(('однозначный', 'неоднозначный'))   # плюс справочник зондов (data/reference/probes.json)
 
 
 def dt(x):
@@ -43,26 +45,34 @@ TOP_CHANNELS = [('Реклама', 'Реклама'), ('Поиск', 'Поиск
                 ('Ссылки с сайтов', 'Ссылки с сайтов'), ('Внутренний переход', 'Внутренние переходы')]
 
 
-def top_pages(c, n=500):
+def top_pages(c, n=500, by_section=False):
     """500 страниц по визитам людей: просмотры, визиты, IP, отправленные с них заявки, ошибки, каналы визитов."""
     R, V = c.R, c.V
     m = c.human & R['is_page'].values
     P = pd.DataFrame({'base': R['base'].values[m].astype(str), 'vid': R['vid'].values[m], 'ip': R['ip'].values[m].astype(str),
                       'st': R['status'].values[m], 'ts': R['ts'].values[m]})
     if not len(P): return pd.DataFrame()
+    if by_section:   # «Разделы»: первый уровень адреса; несуществующие остаются, но помечаются
+        P['addr'] = P['base']
+        P['base'] = P['base'].str.extract(r'^(/[^/]*/?)')[0]
     alive = set(P.loc[(P['st'] >= 200) & (P['st'] < 300), 'base'])
-    P = P[P['base'].isin(alive)]
+    if not by_section: P = P[P['base'].isin(alive)]
     ch = V['channel'].astype(str)
     P['ch'] = P['vid'].map(ch)
     g = P.groupby('base')
     D = pd.DataFrame({'просмотров': g.size(), 'визитов': g['vid'].nunique(), 'ip': g['ip'].nunique()})
+    if by_section:
+        D['страниц'] = g['addr'].nunique(); D['существует'] = D.index.isin(alive)
+        D['ответы'] = g['st'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().sort_index().items()))
     D = D.sort_values('визитов', ascending=False).head(n)
     T = P[P['base'].isin(D.index)]
     D['ошибки'] = T[(T['st'] >= 400) & (T['st'] != 499)].groupby('base')['st'].agg(lambda s: ', '.join(f'{k}:{v}' for k, v in s.value_counts().sort_index().items()))
     # заявки, отправленные со страницы: отправки форм людьми, у которых страница — источник
     goal = R['goal'].astype(str).values if 'goal' in R else np.array([''] * len(R))
     gm = c.human & ~np.isin(goal, ['', 'nan']) & (R['method'].values == 'POST')
-    D['заявок'] = pd.Series(R['ref_path'].values[gm].astype(str)).value_counts()
+    rp = pd.Series(R['ref_path'].values[gm].astype(str))
+    if by_section: rp = rp.str.extract(r'^(/[^/]*/?)')[0]
+    D['заявок'] = rp.value_counts()
     U = T.drop_duplicates(['base', 'vid'])
     known = [k for k, _ in TOP_CHANNELS]
     for k, lab in TOP_CHANNELS: D[lab] = U[U['ch'] == k].groupby('base').size()
@@ -89,8 +99,7 @@ def overview(c, F):
     ch['конверсия_%'] = (ch['конверсий'] / ch['визитов'] * 100).round(2)
     S['Каналы'] = ch.reset_index().rename(columns={'channel': 'канал'})
     hp = R.loc[c.human & R['is_page'].values, ['base', 'tpl', 'vid', 'ip']]
-    sec = hp.assign(раздел=hp['base'].astype(str).str.extract(r'^(/[^/]*/?)')[0]).groupby('раздел').agg(просмотров=('vid', 'size'), визитов=('vid', 'nunique'), IP=('ip', 'nunique')).sort_values('визитов', ascending=False)
-    S['Разделы'] = sec.head(100).reset_index()
+    S['Разделы'] = top_pages(c, n=100, by_section=True)
     tp = hp.groupby('tpl', observed=True).agg(просмотров=('vid', 'size'), визитов=('vid', 'nunique'), IP=('ip', 'nunique'), адресов=('base', 'nunique')).sort_values('визитов', ascending=False)
     S['Шаблоны страниц'] = tp.head(200).reset_index().rename(columns={'tpl': 'шаблон'})
     # TOP500: самые посещаемые существующие страницы (людям отвечали 2xx) — интерес, заявки, ошибки, динамика, каналы
@@ -589,7 +598,7 @@ def errors(c, F):
 
 # ======================= НАГРУЗКА И БЕЗОПАСНОСТЬ =======================
 ATTACK = r"(?i)(union(\s|%20|\+)+select|'(\s|%20|\+)*or(\s|%20|\+)*'?1'?=|sleep\(|benchmark\(|<script|%3Cscript|javascript:|\.\./|%2e%2e%2f|\$\{jndi:|/etc/passwd|cmd=|exec\(|base64_decode|wget(\s|%20)http|curl(\s|%20)http)"
-TARGETS = [('WordPress', r'wp-|xmlrpc'), ('Утечки конфигов (.env, .git, ключи)', r'\.env|\.git|\.aws|\.ssh|\.svn|config\.'), ('Бэкапы и архивы', r'backup|\.(sql|bak|old|tar|tgz|zip|rar)$'),
+TARGETS = [('WordPress', r'wp-|xmlrpc'), ('Утечки конфигов (.env, .git, ключи)', r'\.env|\.git|\.aws|\.ssh|\.svn|config\.|credentials'), ('Бэкапы и дампы', r'backup|\.(sql|sqlite|sqlitedb|db|dump|bak|old|tar|tgz|zip|rar|bz2|xz|lz)(\.|$)'),
            ('Панели БД и админки', r'phpmyadmin|pma|adminer|/admin'), ('Отладка и фреймворки', r'phpinfo|actuator|telescope|_profiler|debug|console|phpunit'),
            ('Установщики Битрикс', r'restore\.php|bitrixsetup|install\.php|setup\.php'), ('Роутеры/IoT/почта', r'boaform|HNAP|owa|autodiscover|cgi-bin'), ('Прочее', r'.')]
 

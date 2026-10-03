@@ -154,6 +154,74 @@ def aggregate(R, staff_ips=(), monitor_keys=()):
     return V
 
 
+def load_probes():
+    """Зонды и сигнатуры сканеров — data/reference/probes.json."""
+    import json, os
+    p = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'probes.json'))
+    try: return json.load(open(p, encoding='utf-8'))
+    except Exception: return {'зонды': [], 'сигнатуры': []}
+
+
+def probe_rx(strength=('однозначный',), engines=()):
+    """Одно регулярное выражение для зондов нужной силы; условие «сайт не на WordPress» учитывается."""
+    wp = any('wordpress' in str(e).lower() for e in engines)
+    parts = [z['шаблон'] for z in load_probes().get('зонды', []) if z.get('сила') in strength and not (wp and 'WordPress' in z.get('условие', ''))]
+    return '|'.join(f'(?:{x})' for x in parts) or r'^$'
+
+
+def mark_scanners(V, R, engines=()):
+    """Сканеры под браузер — по сигнатурам из probes.json, без порогов (один однозначный зонд — уже факт):
+    однозначный зонд; перебор неоднозначных зондов; перебор вариантов одного файла; веер 404 по разным страницам."""
+    V = V.copy()
+    sig = {x['id']: x for x in load_probes().get('сигнатуры', [])}
+    cats = R['base'].cat.categories.to_series().astype(str)
+    codes = R['base'].cat.codes.values
+    vid, st = R['vid'].values, R['status'].values
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)   # группы в шаблонах справочника — не для извлечения
+        strong = cats.str.contains(probe_rx(('однозначный',), engines), regex=True, case=False).values[codes]
+        weak = cats.str.contains(probe_rx(('неоднозначный',), engines), regex=True, case=False).values[codes]
+    why = pd.Series('', index=V.index, dtype=object)
+    why[V.index.isin(pd.unique(vid[strong]))] = sig.get('probe_hit', {}).get('название', 'Однозначный зонд')
+    W = pd.DataFrame({'vid': vid[weak], 'b': codes[weak], 'ok': (st[weak] >= 200) & (st[weak] < 300)})
+    if len(W):
+        g = W.groupby('vid').agg(n=('b', 'nunique'), ok=('ok', 'any'))
+        hit = g[(g['n'] >= sig.get('probe_series', {}).get('минимум_адресов', 3)) & ~g['ok']].index
+        why[V.index.isin(hit) & (why == '')] = sig.get('probe_series', {}).get('название', 'Перебор зондов')
+        W['ip'] = V['ip'].reindex(W['vid']).values; W['ua'] = V['ua'].reindex(W['vid']).values
+        gi = W.groupby(['ip', 'ua']).agg(n=('b', 'nunique'), ok=('ok', 'any'))
+        bad_ = gi[(gi['n'] >= sig.get('probe_series', {}).get('минимум_адресов', 3)) & ~gi['ok']].index
+        if len(bad_):
+            key = pd.MultiIndex.from_arrays([V['ip'], V['ua']])
+            why[key.isin(bad_) & (why == '').values] = sig.get('probe_series', {}).get('название', 'Перебор зондов')
+    e4 = (st >= 400) & (st < 500)
+    E = pd.DataFrame({'vid': vid[e4], 'b': cats.values[codes[e4]]})
+    if len(E):   # варианты одного имени: .env / .env.local / .env.bak; backup.zip / backup.tar.gz
+        E['stem'] = E['b'].str.extract(r'/(\.?[^/.]+)[^/]*$')[0]
+        E = E[E['stem'].notna() & (E['b'].str.count(r'\.') >= 1)]
+        g = E.groupby(['vid', 'stem'])['b'].nunique()
+        hit = g[g >= sig.get('variants', {}).get('минимум_вариантов', 3)].index.get_level_values(0).unique()
+        why[V.index.isin(hit) & (why == '')] = sig.get('variants', {}).get('название', 'Перебор вариантов одного файла')
+    pg = R['is_page'].values
+    Pg = pd.DataFrame({'vid': vid[pg], 'b': codes[pg], 'e': (st[pg] >= 400) & (st[pg] < 500), 'ok': (st[pg] >= 200) & (st[pg] < 300)})
+    if len(Pg):
+        g = Pg.groupby('vid').agg(n=('b', 'nunique'), ok=('ok', 'any'), e=('e', 'all'))
+        hit = g[(g['n'] >= sig.get('fan_404', {}).get('минимум_адресов', 5)) & g['e'] & ~g['ok']].index
+        why[V.index.isin(hit) & (why == '')] = sig.get('fan_404', {}).get('название', 'Веер 404')
+        # то же по IP и браузеру за весь период: перебор разбит на короткие визиты
+        Pg['ip'] = V['ip'].reindex(Pg['vid']).values; Pg['ua'] = V['ua'].reindex(Pg['vid']).values
+        gi = Pg.groupby(['ip', 'ua']).agg(n=('b', 'nunique'), ok=('ok', 'any'), e=('e', 'all'))
+        bad_ = gi[(gi['n'] >= sig.get('fan_404_ip', {}).get('минимум_адресов', 5)) & gi['e'] & ~gi['ok']].index
+        if len(bad_):
+            key = pd.MultiIndex.from_arrays([V['ip'], V['ua']])
+            why[key.isin(bad_) & (why == '').values] = sig.get('fan_404_ip', {}).get('название', 'Веер 404 с одного адреса')
+    m = (why != '') & (V['group'] == 'Люди')
+    V.loc[m, 'group'] = 'Боты'
+    V.loc[m, 'subgroup'] = 'сканер под браузер: ' + why[m].str.lower()
+    return V
+
+
 def mark_form_spam(V, R):
     """Поведенческие признаки спама форм (универсальные). Переводит такие визиты в группу «Боты»."""
     V = V.copy()

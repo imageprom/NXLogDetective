@@ -315,6 +315,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             report_tables.conversions(wb, S.get('Конверсии'))
             report_tables.facets_sheet(wb, S.get('Фасеты'))
             report_tables.top500_sheet(wb, S.get('TOP500'))
+            report_tables.sections_sheet(wb, S.get('Разделы'))
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
             if report_tables.embedded_sheet(wb, res) is not None:   # сразу за «Анатомией сайта»

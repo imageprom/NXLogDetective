@@ -54,6 +54,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
     m = json.load(open(os.path.join(workdir, 'site_map.json')))
     inv = json.load(open(os.path.join(workdir, 'inventory.json')))
+    V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
     c = blocks.Ctx(R, V, E, T, m, inv, G)

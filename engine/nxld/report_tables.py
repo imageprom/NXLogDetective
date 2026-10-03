@@ -403,6 +403,33 @@ def top500_sheet(wb, T, name='TOP500'):
     return ws
 
 
+def sections_sheet(wb, T, name='Разделы'):
+    """Запрашиваемые разделы сайта (первый уровень адреса): существует ли, интерес, заявки, ответы и ошибки, каналы визитов."""
+    if T is None or not len(T) or name not in wb.sheetnames: return None
+    from urllib.parse import unquote
+    from .blocks import TOP_CHANNELS
+    chans = [lab for _, lab in TOP_CHANNELS] + ['Прочие']
+    sp = T['ответы'].map(split_codes)
+    d = pd.DataFrame({'Раздел': T['страница'].map(lambda x: unquote(str(x), errors='replace')),
+                      'Статус': T['существует'].map(lambda x: 'существует' if x else 'не существует'),
+                      'Страниц': T['страниц'].astype(int), 'Просмотров': T['просмотров'].astype(int), 'Визиты (люди)': T['визитов'].astype(int),
+                      'IP (люди)': T['ip'].astype(int), 'Заявок отправлено': T['заявок'].astype(int), 'Ответы': sp.str[0], 'Ошибки': sp.str[1],
+                      **{c_: T[c_].astype(int) for c_ in chans}})
+    dead = list(~T['существует'].astype(bool))
+    kpi = [('Разделов', len(d)), ('Не существуют', int(sum(dead))), ('Визиты (люди)', int(d['Визиты (люди)'].sum())), ('Заявок', int(d['Заявок отправлено'].sum()))]
+    widths = {'Раздел': 30, 'Статус': 14, 'Страниц': 9, 'Просмотров': 11, 'Визиты (люди)': 12, 'IP (люди)': 11, 'Заявок отправлено': 11,
+              'Ответы': 30, 'Ошибки': 22, **{c_: 11 for c_ in chans}}
+    data_sheet(wb, name, d, 'Разделы', 'Запрашиваемые разделы сайта', widths, wrap=('Раздел', 'Ответы', 'Ошибки'), center=('Статус',),
+               kpi=kpi, kpi_col='Страниц', row_rule=lambda r, _it=iter(dead): F_NOTE if next(_it) else None,
+               links=[('Самые посещаемые страницы', 'TOP500'), ('Устройство разделов', 'Анатомия сайта')])
+    ws = wb[name]
+    r_ = ws.max_row + 2
+    for t_ in ('Раздел — первый уровень адреса. «Не существует» — людям там ни разу не ответили 2xx.',
+               'Каналы — с чего начался визит, в котором был раздел. Заявок отправлено — отправки форм со страниц раздела.'):
+        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+    return ws
+
+
 SRC_LABEL = {'документация': 'Документация', 'сообщество': 'Сообщество', 'сборник': 'Сообщество', 'наблюдение': 'Сообщество',
              'поиск': 'Оперативный поиск', 'поиск, подтверждено': 'Оперативный поиск, подтверждено', 'дедукция': 'Дедукция', 'поведение': 'Дедукция', 'имя': 'Дедукция', '': ''}
 

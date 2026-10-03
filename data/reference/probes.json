@@ -9,7 +9,7 @@
       "id": "secrets",
       "цель": "Утечки конфигов (.env, .git, ключи)",
       "сила": "однозначный",
-      "шаблон": "(^|/)\\.(env|git|aws|ssh|svn|hg|htpasswd|git-credentials|boto|s3cfg|docker|npmrc|pypirc|netrc|vscode|idea|DS_Store)(\\b|/|$)|/wp-config\\.php|/docker-compose\\.ya?ml$|/config\\.(json|ya?ml|env|php\\.bak)$|/credentials(\\.json)?$|/aws-credentials|/secrets?\\.(json|ya?ml)$|/(sendgrid|mailgun)\\.env$|/\\.?env\\.(json|js)$",
+      "шаблон": "(^|/)\\.(htaccess|gitignore|gitattributes|gitmodules|gitlab-ci\\.ya?ml|travis\\.ya?ml|user\\.ini|bash_history|mysql_history|env|git|aws|ssh|svn|hg|htpasswd|git-credentials|boto|s3cfg|docker|npmrc|pypirc|netrc|vscode|idea|DS_Store)(\\b|/|$)|/wp-config\\.php|/docker-compose\\.ya?ml$|/config\\.(json|ya?ml|env|php\\.bak)$|/credentials(\\.json)?$|/aws-credentials|/secrets?\\.(json|ya?ml)$|/(sendgrid|mailgun)\\.env$|/\\.?env\\.(json|js)$|/\\.settings(_extra)?\\.php$|/php_interface/dbconn\\.php$|\\.(tfstate|tfvars)(\\.|$)|/\\.terraform/",
       "что": "файлы с паролями и ключами: .env, .git, ключи облаков"
     },
     {
@@ -49,6 +49,13 @@
       "что": "адреса WordPress на сайте другого движка"
     },
     {
+      "id": "obfuscation",
+      "цель": "Обход фильтров",
+      "сила": "однозначный",
+      "шаблон": "%(3[0-9]|4[1-9a-f]|5[0-9a]|6[1-9a-f]|7[0-9a])",
+      "что": "буквы и цифры в адресе записаны %-кодами (/.%65%6e%76 вместо /.env): так прячут зонд от фильтров, обычным ссылкам это не нужно"
+    },
+    {
       "id": "installers",
       "цель": "Установщики и восстановление",
       "сила": "неоднозначный",
@@ -80,15 +87,15 @@
       "id": "contacts_guess",
       "цель": "Поиск контактов и рекламы",
       "сила": "неоднозначный",
-      "шаблон": "^/(contacts?|contact-us|kontakty|kontaktyi|kontakti|o-nas|o-kompanii|about|about-us|company|team|rekvizity|requisites|advertis(e|ing)|for-advertisers|ad-info|adv|reklama|media-?kit|sotrudnichestvo|partners|impressum|feedback|obratnaya-svyaz|privacy(-policy)?|politika)/?$",
+      "шаблон": "^/(contacts?|contato|contacto|contactos|contatti|kontakt|kontakte|kontakty?|kapcsolat|iletisim|lien-he|lienhe|yhteystiedot|联系我们|联系|連絡先|お問い合わせ|문의|연락처|контакты|связаться|о-нас|о-компании|contact-us|kontakty|kontaktyi|kontakti|o-nas|o-kompanii|about|about-us|company|team|rekvizity|requisites|advertis(e|ing)|for-advertisers|ad-info|adv|reklama|media-?kit|sotrudnichestvo|partners|impressum|feedback|obratnaya-svyaz|privacy(-policy)?|politika)/?$",
       "что": "угадывание страниц контактов, «о нас», рекламы — сборщики контактов и предложений; человек тоже может набрать один такой адрес"
     },
     {
       "id": "login_guess",
       "цель": "Поиск входа",
       "сила": "неоднозначный",
-      "шаблон": "^/(login|signin|sign-in|logon|auth|user/login|users/sign_in|account/login|admin/login|login\\.(action|rsp|jsp|asp|aspx|do|cgi|html?))/?$",
-      "что": "угадывание адреса входа: свои знают настоящий вход сайта"
+      "шаблон": "^/(login|my-account|account|cart|checkout|basket|wishlist|signin|sign-in|logon|auth|user/login|users/sign_in|account/login|admin/login|login\\.(action|rsp|jsp|asp|aspx|do|cgi|html?))/?$",
+      "что": "угадывание входа, кабинета и корзины: свои знают настоящие адреса сайта"
     }
   ],
   "сигнатуры": [
@@ -101,7 +108,7 @@
     {
       "id": "probe_series",
       "название": "Перебор зондов",
-      "признак": "в визите или с одного IP и браузера за период не меньше 3 разных адресов из неоднозначных зондов, и все они не ответили 2xx",
+      "признак": "в визите или с одного IP и браузера за период не меньше 3 разных неоднозначных зондов, которых на сайте нет (ответ 4xx); настоящие страницы сайта, открытые заодно, перебор не оправдывают",
       "минимум_адресов": 3,
       "вывод": "сканер под браузер"
     },

@@ -9,13 +9,15 @@ import json
 import os
 import re
 import warnings
+from urllib.parse import unquote
 
 import numpy as np
 import pandas as pd
 
 REF = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
-# адресом это не является: шаблон JavaScript, параметры без «?», пробелы и кавычки, двойные слэши
-CONSTRUCT = re.compile(r"\$\{|\{\{|%7B%7B|%24%7B|'\s*\+|\+\s*'|[\"<>\s]|%22|%27|%3C|%3E|%20|//|&|\\", re.I)
+# адресом это не является: шаблон JavaScript, склейка строк (' + href +), параметры без «?», кавычки и угловые скобки, двойные слэши.
+# Пробел (%20) в адресе законен: «дом 1» в фильтре, имя файла с пробелом
+CONSTRUCT = re.compile(r"\$\{|\{\{|%7B%7B|%24%7B|'\s*\+|\+\s*'|%27(%20|\s)*\+|\+(%20|\s)*%27|[\"<>]|%22|%3C|%3E|//|&|\\", re.I)
 
 
 def _read(p):
@@ -55,7 +57,9 @@ def form_of(path):
     """(форма, группа, расширение, расширение_незнакомое) по виду адреса."""
     global _EXT
     if _EXT is None: _EXT = load_extensions()
-    p = str(path)
+    p = re.sub(r'^https?://[^/]+', '', str(path)) or '/'   # абсолютная форма запроса (GET http://сайт/путь) — законна
+    if CONSTRUCT.search(p[1:] if p.startswith('/') else p): return 'конструкт', '', '', False
+    p = unquote(p)   # /.%65%6e%76 — это /.env: вид файла определяем по раскодированному адресу
     if CONSTRUCT.search(p[1:] if p.startswith('/') else p): return 'конструкт', '', '', False
     for g, rx in _EXT['by_addr']:
         if rx.search(p): return 'файл', g, ext_of(p), False
@@ -74,8 +78,11 @@ def build(R, human, staff=None, engines=()):
     F['адрес'] = cats.values
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        F['зонд'] = np.where(cats.str.contains(probe_rx(('однозначный',), engines), regex=True, case=False).values, 'однозначный',
-                     np.where(cats.str.contains(probe_rx(('неоднозначный',), engines), regex=True, case=False).values, 'неоднозначный', ''))
+        dec = cats.map(unquote)
+        def hit(strength):
+            rx_ = probe_rx(strength, engines)
+            return (cats.str.contains(rx_, regex=True, case=False) | dec.str.contains(rx_, regex=True, case=False)).values
+        F['зонд'] = np.where(hit(('однозначный',)), 'однозначный', np.where(hit(('неоднозначный',)), 'неоднозначный', ''))
     codes = R['base'].cat.codes.values
     st = R['status'].values
     who = np.asarray(human) | (np.asarray(staff) if staff is not None else np.zeros(len(R), bool))
@@ -86,13 +93,15 @@ def build(R, human, staff=None, engines=()):
     e5 = np.bincount(codes[st >= 500], minlength=L)
     ok_any = np.bincount(codes[(st >= 200) & (st < 300)], minlength=L)
     F['существование'] = np.select([ok > 0, ok_any > 0, r3 > 0, e5 > 0, e4 > 0], ['живой', 'живой', 'переадресация', 'сломан', 'не существует'], 'не существует')
+    F['людям'] = ok > 0   # полный ответ получали люди или свои — это адрес сайта, а не находка сканера
     F['раздел'] = cats.str.extract(r'^(/[^/]*/?)')[0].values
     return F
 
 
 def unknown_extensions(F, R, min_requests=3, top=30):
     """Незнакомые расширения с примерами — Детективу (brief «незнакомые_расширения»)."""
-    U = F[F['незнакомое']]
+    # зонды — это атаки, а не словарь; несуществующие файлы просят только роботы наугад
+    U = F[F['незнакомое'] & (F['зонд'] == '') & (F['существование'] != 'не существует')]
     if not len(U): return []
     n = np.bincount(R['base'].cat.codes.values, minlength=len(F))
     U = U.assign(запросов=n[U.index.values])

@@ -605,6 +605,14 @@ def errors(c, F):
             if t in ('База данных', 'Нет места на диске', 'PHP Fatal') and r['сообщений'] > 0:
                 F.add('Ошибки', 'Срочно' if t != 'PHP Fatal' else 'Важно', 'errlog', t, f'В error-логе: {t}', f"{r['сообщений']} сообщений, {r['первый']} — {r['последний']}; {str(r['пример'])[:200]}",
                       'сервер / код', 'Разобрать по error-логу', int(r['сообщений']), 'Error-лог')
+    # битый код страниц: скрипты сайта собирают адреса из шаблонов (${marker.image}, ' + href +) — люди получают 404
+    kg = constructs(c)
+    bad = kg[kg['со_страниц_сайта'] > 0] if len(kg) else kg
+    if len(bad):
+        S['Битые адреса из скриптов'] = bad[['адрес', 'со_страниц_сайта', 'IP', 'коды', 'страница']].rename(columns={'адрес': 'Адрес', 'со_страниц_сайта': 'Запросов со страниц сайта', 'коды': 'Коды', 'страница': 'Страница-источник'})
+        F.add('Ошибки', 'Важно', 'broken_js', 'constructs', f'Скрипты сайта собирают битые адреса ({len(bad)})',
+              '; '.join(f"{r['адрес']} — со страницы {r['страница'] or '?'}, {int(r['со_страниц_сайта'])} раз" for _, r in bad.head(5).iterrows()),
+              'шаблоны и скрипты сайта', 'Найти на этих страницах код, который подставляет переменную в адрес, и исправить', int(bad['со_страниц_сайта'].sum()), 'Битые адреса из скриптов')
     s = {'Доля ошибок у людей, %': round(((st >= 400) & c.human & page).sum() / max(1, (c.human & page).sum()) * 100, 2),
          '5xx у людей': int(((st >= 500) & c.human).sum()), 'Окон сбоев': int((S['Сбои']['пик_минут'] > 0).sum()) if len(S['Сбои']) else 0,
          'Визитов людей со входом на 404': int(len(e404)), 'Битых переходов внутри сайта': int(bl.sum())}
@@ -616,6 +624,31 @@ ATTACK = r"(?i)(union(\s|%20|\+)+select|'(\s|%20|\+)*or(\s|%20|\+)*'?1'?=|sleep\
 TARGETS = [('WordPress', r'wp-|xmlrpc'), ('Утечки конфигов (.env, .git, ключи)', r'\.env|\.git|\.aws|\.ssh|\.svn|config\.|credentials'), ('Бэкапы и дампы', r'backup|\.(sql|sqlite|sqlitedb|db|dump|bak|old|tar|tgz|zip|rar|bz2|xz|lz)(\.|$)'),
            ('Панели БД и админки', r'phpmyadmin|pma|adminer|/admin'), ('Отладка и фреймворки', r'phpinfo|actuator|telescope|_profiler|debug|console|phpunit'),
            ('Установщики Битрикс', r'restore\.php|bitrixsetup|install\.php|setup\.php'), ('Роутеры/IoT/почта', r'boaform|HNAP|owa|autodiscover|cgi-bin'), ('Прочее', r'.')]
+
+
+def constructs(c):
+    """Конструкты из реестра адресов: это не адрес — шаблон JavaScript, склейка строк, кавычки, параметры без «?».
+    Со страниц сайта у людей — битый код сайта (ошибка); у роботов — битая ссылка в сети; у посторонних — инъекции и зонды."""
+    if getattr(c, '_constructs', None) is not None: return c._constructs
+    R = c.R
+    kg = pd.DataFrame()
+    A_ = getattr(c, 'addr', None)
+    if A_ is not None and (A_['форма'] == 'конструкт').any():
+        cc_ = R['base'].cat.codes.values
+        km = (A_['форма'] == 'конструкт').reindex(range(len(R['base'].cat.categories))).fillna(False).values[cc_]
+        K = R.loc[km, ['base', 'status', 'ip', 'ref_internal', 'ref_path']].assign(люди=c.human[km] | np.asarray(c.rg == 'Свои')[km], роботы=np.asarray(c.rg == 'Роботы')[km])
+        if len(K):
+            self_ = K['ref_path'].astype(str).values == K['base'].astype(str).values   # реферер «сам на себя» — не страница-источник
+            K = K.assign(со_страниц=K['ref_internal'].astype(bool) & K['люди'] & ~self_, ref_path=K['ref_path'].astype(str).where(~self_, ''))
+            kg = K.groupby('base', observed=True).agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), люди=('люди', 'sum'), роботы=('роботы', 'sum'), со_страниц_сайта=('со_страниц', 'sum'),
+                                                       коды=('status', lambda s: topn(s, 4)),
+                                                       страница=('ref_path', lambda s: (s.astype(str)[s.astype(str).str.startswith('/')].mode().tolist() or [''])[0])).reset_index().rename(columns={'base': 'адрес'})
+            kg['вывод'] = np.select([kg['со_страниц_сайта'] > 0, kg['люди'] > 0, kg['роботы'] > 0],
+                                    ['битый код страницы: адрес собран скриптом сайта', 'у людей, без страницы сайта: битая ссылка снаружи', 'роботы: битая ссылка где-то в сети'],
+                                    'посторонние: инъекция или зонд')
+            kg = kg.sort_values(['со_страниц_сайта', 'запросов'], ascending=False)
+    c._constructs = kg
+    return kg
 
 
 def load_security(c, F):
@@ -741,6 +774,11 @@ def load_security(c, F):
         S['Сканеры: что искали'] = VQ.groupby('цель').agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), ответов_200=('status', lambda s: int((s == 200).sum())), коды=('status', lambda s: topn(s, 4))).sort_values('запросов', ascending=False).reset_index()
         got = VQ[(VQ['status'] == 200) & (VQ['bytes'] > 0)]
         if len(got):
+            # общий критерий реестра: неоднозначный зонд, который люди или свои получают как обычный адрес, — страница сайта, не утечка
+            A_ = getattr(c, 'addr', None)
+            if A_ is not None:
+                own_ = A_.loc[(A_['зонд'] != 'однозначный') & A_['людям'], 'адрес']
+                got = got[~got['base'].astype(str).isin(set(own_))]
             gg = got.groupby('base', observed=True).agg(ответов_200=('ip', 'size'), IP=('ip', 'nunique'), размер=('bytes', 'median'), первый=('day', 'min'), последний=('day', 'max')).sort_values('ответов_200', ascending=False).reset_index()
             S['Служебные файлы: что отдано'] = gg
             # кому отдано: свои (сотрудники) или чужие; у чужих размер сравнивается с частыми ответами соседних адресов
@@ -791,6 +829,21 @@ def load_security(c, F):
         S['Подозрительные файлы'] = SX.groupby('base', observed=True).agg(ответов_200=('ip', 'size'), IP=('ip', 'nunique'), POST=('method', lambda s: int((s == 'POST').sum())), первый=('day', 'min')).reset_index()
         F.add('Нагрузка и безопасность', 'Срочно', 'webshell', 'files', 'Исполняемые файлы в папке загрузок отвечают 200 — признак веб-шелла',
               ', '.join(SX['base'].astype(str).unique()[:5]), 'сервер / файлы сайта', 'Срочно проверить файлы на сервере', int(SX['base'].nunique()), 'Подозрительные файлы')
+    kg = constructs(c)   # конструкты — все, со всеми выводами (битый код сайта — ещё и в «Ошибках»)
+    if len(kg): S['Конструкты в адресах'] = kg.head(500).rename(columns={'адрес': 'Адрес', 'запросов': 'Запросов', 'люди': 'Люди', 'роботы': 'Роботы', 'со_страниц_сайта': 'Со страниц сайта',
+                                                                       'коды': 'Коды', 'страница': 'Страница-источник', 'вывод': 'Вывод'})
+    # живой человек, который систематически исследует сайт (actors.json): разовый — просто не человек-посетитель, регулярный — отдельное предупреждение
+    hv = c.V[c.V['subgroup'].astype(str).str.startswith('человек-исследователь, регулярно')]
+    if len(hv):
+        hr = hv.groupby(['ip', 'ua'], observed=True).agg(визитов=('n_req', 'size'), дней=('day', 'nunique'), первый=('day', 'min'), последний=('day', 'max'),
+                                                       сеть=('nettype', 'first'), страна=('cc', 'first'), признак=('subgroup', 'first')).reset_index()
+        hr['признак'] = hr['признак'].str.split(': ', n=1).str[1]
+        tried = R.loc[R['vid'].isin(hv.index) & vm, ['ip', 'base']].astype(str).groupby('ip')['base'].agg(lambda s: ', '.join(pd.unique(s)[:6]))
+        hr['что_пробовал'] = hr['ip'].astype(str).map(tried).fillna('')
+        S['Исследователи сайта'] = hr.drop(columns='ua').sort_values('дней', ascending=False)
+        F.add('Нагрузка и безопасность', 'Важно', 'human_prober', 'actors', f'Человек систематически исследует сайт ({hr["ip"].nunique()} адресов)',
+              '; '.join(f"{r['ip']} — {r['дней']} дн., {r['первый']}…{r['последний']}: {r['что_пробовал'] or r['признак']}" for _, r in hr.head(5).iterrows()),
+              'сервер / настройки защиты', 'Проверить, кто это (свой разработчик или посторонний); постороннего ограничить по IP', int(hr['ip'].nunique()), 'Исследователи сайта')
     tok = qc.str.contains(r'(?i)(?:^|&)(sessid|phpsessid|token|access_token|api_key|apikey|key|password|passwd)=', regex=True).values[R['query'].cat.codes.values]
     if tok.sum():
         S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(r'(?i)((?:sessid|phpsessid|token|access_token|api_key|apikey|key|password|passwd))=')[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')

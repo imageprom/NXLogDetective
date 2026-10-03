@@ -260,6 +260,15 @@ def apply_edits(res, edits):
             if x and r_.get('группа') != 'Атаки и зонды':
                 r_.update(группа=x['группа'], что=x.get('что', ''), источник='поиск', ссылка=x.get('ссылка', ''))
         if (res.get('anatomy') or {}).get('параметры') is not None: res['anatomy']['параметры'] = param_groups(res.get('site_map', {}), res)
+    if edits.get('расширения'):   # Детектив нашёл, что за незнакомые файлы, — в справочник (learned/extensions.json) и сразу на лист «Файлы»
+        from . import classify
+        site_ = (res.get('site_map', {}).get('site_hosts') or ['site'])[0]
+        ok = {str(x.get('расширение', '')).lower().lstrip('.'): x['группа'] for x in edits['расширения'] if x.get('группа')}
+        classify.learn_extensions(edits['расширения'], site_)
+        for r_ in res.get('files') or []:
+            e_ = classify.ext_of(r_.get('адрес', ''))
+            if r_.get('группа') == 'Неизвестный вид' and e_ in ok: r_['группа'] = ok[e_]
+        res['unknown_extensions'] = [u for u in res.get('unknown_extensions') or [] if u['расширение'] not in ok]
     if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
         res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res

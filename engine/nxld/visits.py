@@ -180,11 +180,19 @@ def mark_scanners(V, R, engines=()):
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)   # группы в шаблонах справочника — не для извлечения
-        strong = cats.str.contains(probe_rx(('однозначный',), engines), regex=True, case=False).values[codes]
-        weak = cats.str.contains(probe_rx(('неоднозначный',), engines), regex=True, case=False).values[codes]
+        from urllib.parse import unquote
+        dec = cats.map(unquote)   # /.%65%6e%76 и /%D0%BA%D0%BE%D0%BD%D1%82%D0%B0%D0%BA%D1%82%D1%8B — тоже зонды
+        def hit_(strength):
+            rx_ = probe_rx(strength, engines)
+            return (cats.str.contains(rx_, regex=True, case=False) | dec.str.contains(rx_, regex=True, case=False)).values[codes]
+        strong, weak = hit_(('однозначный',)), hit_(('неоднозначный',))
     why = pd.Series('', index=V.index, dtype=object)
     why[V.index.isin(pd.unique(vid[strong]))] = sig.get('probe_hit', {}).get('название', 'Однозначный зонд')
-    W = pd.DataFrame({'vid': vid[weak], 'b': codes[weak], 'ok': (st[weak] >= 200) & (st[weak] < 300)})
+    # общий критерий: в сигнатурах перебора считаются только адреса, которые обращающийся выбрал сам. Ресурсы и ссылки,
+    # которые браузер взял со страниц сайта (реферер — страница сайта), — ошибки сайта, а не перебор. Реферер «сам на себя» — подделка.
+    chosen = ~R['ref_internal'].values.astype(bool) | (R['ref_path'].astype(str).values == cats.values[codes])
+    miss = weak & chosen & (st >= 400) & (st < 500)   # неоднозначный зонд, которого на сайте нет
+    W = pd.DataFrame({'vid': vid[miss], 'b': codes[miss], 'ok': np.zeros(int(miss.sum()), bool)})
     if len(W):
         g = W.groupby('vid').agg(n=('b', 'nunique'), ok=('ok', 'any'))
         hit = g[(g['n'] >= sig.get('probe_series', {}).get('минимум_адресов', 3)) & ~g['ok']].index
@@ -195,7 +203,7 @@ def mark_scanners(V, R, engines=()):
         if len(bad_):
             key = pd.MultiIndex.from_arrays([V['ip'], V['ua']])
             why[key.isin(bad_) & (why == '').values] = sig.get('probe_series', {}).get('название', 'Перебор зондов')
-    e4 = (st >= 400) & (st < 500)
+    e4 = (st >= 400) & (st < 500) & chosen
     E = pd.DataFrame({'vid': vid[e4], 'b': cats.values[codes[e4]]})
     if len(E):   # варианты одного имени: .env / .env.local / .env.bak; backup.zip / backup.tar.gz
         E['stem'] = E['b'].str.extract(r'/(\.?[^/.]+)[^/]*$')[0]
@@ -203,7 +211,7 @@ def mark_scanners(V, R, engines=()):
         g = E.groupby(['vid', 'stem'])['b'].nunique()
         hit = g[g >= sig.get('variants', {}).get('минимум_вариантов', 3)].index.get_level_values(0).unique()
         why[V.index.isin(hit) & (why == '')] = sig.get('variants', {}).get('название', 'Перебор вариантов одного файла')
-    pg = R['is_page'].values
+    pg = R['is_page'].values & chosen
     Pg = pd.DataFrame({'vid': vid[pg], 'b': codes[pg], 'e': (st[pg] >= 400) & (st[pg] < 500), 'ok': (st[pg] >= 200) & (st[pg] < 300)})
     if len(Pg):
         g = Pg.groupby('vid').agg(n=('b', 'nunique'), ok=('ok', 'any'), e=('e', 'all'))
@@ -217,9 +225,60 @@ def mark_scanners(V, R, engines=()):
             key = pd.MultiIndex.from_arrays([V['ip'], V['ua']])
             why[key.isin(bad_) & (why == '').values] = sig.get('fan_404_ip', {}).get('название', 'Веер 404 с одного адреса')
     m = (why != '') & (V['group'] == 'Люди')
+    kind = actor_kind(V, R, m, strong | weak)
     V.loc[m, 'group'] = 'Боты'
-    V.loc[m, 'subgroup'] = 'сканер под браузер: ' + why[m].str.lower()
+    V.loc[m, 'subgroup'] = kind[m] + ': ' + why[m].str.lower()
     return V
+
+
+def actor_kind(V, R, m, probe):
+    """Кто стоит за подозрительными визитами (IP + браузер за весь период): автомат или живой человек.
+    Улики с весами — data/reference/actors.json. Подозрение уже доказано сигнатурами; здесь решается только «кто»."""
+    import json, os
+    A = json.load(open(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'actors.json')), encoding='utf-8'))
+    H, out = A['человечность'], A['выводы']
+    kind = pd.Series(out['сканер'], index=V.index, dtype=object)
+    if not m.any(): return kind
+    key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
+    sus = set(key[m])
+    Vs = V[key.isin(sus)].assign(k=key[key.isin(sus)])
+    days_ = Vs[m.reindex(Vs.index).values].groupby('k')['day'].nunique()   # регулярность — по дням с подозрительными визитами
+    g = Vs.groupby('k').agg(res=('n_static', lambda s: (s > 0).mean()), req=('n_req', 'sum'), dur=('dur', 'sum'),
+                            net=('nettype', 'first'), br=('ua_browser', 'first'), days=('day', 'nunique'))
+    rk = key.reindex(R['vid'].values).values
+    insus = pd.Series(rk).isin(sus).values
+    st = R['status'].values
+    pages_ok = pd.Series(rk[insus & R['is_page'].values & (st >= 200) & (st < 300) & ~probe]).value_counts()
+    probes_n = pd.Series(rk[insus & probe]).value_counts()
+    # темп зондов: человек набирает адреса руками — секунды между попытками; автомат сыплет их подряд
+    P_ = pd.DataFrame({'k': rk[insus & probe], 't': R['ts'].values[insus & probe]}).sort_values(['k', 't'])
+    gap = P_.groupby('k')['t'].diff().groupby(P_['k']).median()
+    fast_ = gap.reindex(g.index) < A.get('зонды_человека_не_чаще_сек', 3)
+    # общий список: те же зонды просят и другие подозрительные адреса — это словарь программы (и распределённый скан), а не догадки человека
+    P_['b'] = R['base'].cat.codes.values[insus & probe]
+    P_['ip'] = P_['k'].str.split('|').str[0]
+    others = P_.groupby('b')['ip'].nunique()
+    share_ = (P_.assign(o=P_['b'].map(others)).drop_duplicates(['k', 'b']).groupby('k')['o']
+              .apply(lambda o: (o > A.get('общий_список_адресов_от', 3)).mean()))
+    common_ = share_.reindex(g.index).fillna(0) >= 0.5
+    # ресурсы, которые браузер взял со страниц сайта (картинки, стили по рефереру-странице), — признак настоящей отрисовки;
+    # архивы и прочие «файлы» без реферера в счёт не идут
+    rend = pd.Series(rk[insus & R['is_static'].values & R['ref_internal'].values.astype(bool)]).value_counts()
+    # смена браузера на каждом запросе с одного IP — ротация User-Agent, так делают программы
+    nua = pd.Series(V.loc[m, 'ua'].astype(str).values, index=V.loc[m, 'ip'].astype(str).values).groupby(level=0).nunique()
+    rot_ = g.index.str.split('|').str[0].map(nua).fillna(1).values > A.get('браузеров_с_IP_не_больше', 3)
+    score = (H['грузит_ресурсы']['вес'] * (rend.reindex(g.index).fillna(0) >= 3)
+             + H['живой_темп']['вес'] * (g['req'] / g['dur'].clip(lower=1) < H['живой_темп']['порог_запросов_в_секунду'])
+             + H['домашняя_сеть']['вес'] * ~g['net'].isin(['хостинг/облако', 'VPN/прокси-релей'])
+             + H['браузер']['вес'] * g['br'].astype(bool)
+             + H['ходит_по_сайту']['вес'] * (pages_ok.reindex(g.index).fillna(0) > 0))
+    human = (score >= A['человек_если_баллов_от']) & ~g['net'].isin(A.get('автомат_если_сеть', [])) & ~fast_.fillna(False) & ~common_ & ~rot_ & (probes_n.reindex(g.index).fillna(0) <= A['человек_не_больше_зондов'])
+    regular = days_.reindex(g.index).fillna(0) >= A['регулярно_если_дней_от']
+    lab = pd.Series(out['сканер'], index=g.index, dtype=object)
+    lab[human & ~regular] = out['человек_разово']
+    lab[human & regular] = out['человек_регулярно']
+    kind[m] = key[m].map(lab).fillna(out['сканер'])
+    return kind
 
 
 def mark_form_spam(V, R):

@@ -230,6 +230,8 @@ def build(res, c, prev=None):
     B['сигналы_без_проблемы'] = res.get('loose_signals', [])   # признак на листе есть, карточки нет: завести проблему или объяснить, почему норма
     if res.get('unknown_params'):   # Детектив ищет в сети и пишет в edits.json → «справочник» (SKILL.md, шаг «Незнакомые параметры»)
         B['незнакомые_параметры'] = res['unknown_params']
+    if res.get('unknown_extensions'):   # Детектив ищет, что за файлы, и пишет в edits.json → «расширения» (SKILL.md, «Незнакомые расширения»)
+        B['незнакомые_расширения'] = res['unknown_extensions']
     cv = res.get('coverage')
     if cv is not None and len(cv):
         B['покрытие'] = {st_: cv.loc[cv['состояние'] == st_, 'проверка'].tolist() for st_ in ('проверено, не найдено', 'не применимо', 'детектора пока нет')}

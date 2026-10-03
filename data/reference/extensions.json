@@ -300,7 +300,10 @@
         "key",
         "crt",
         "p12",
-        "pfx"
+        "pfx",
+        "tfstate",
+        "tfvars",
+        "hcl"
       ]
     },
     {

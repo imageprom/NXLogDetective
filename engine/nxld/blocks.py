@@ -75,7 +75,8 @@ def overview(c, F):
         kv = kv[~kv['p'].str.match(r'(utm_|yclid|gclid|calltouch|etext|ybaip|y_ref|ysclid|erid|_openstat|from=|clear_cache|PAGEN)', na=False)]
         kv['ключ'] = kv['p'].str.split('=').str[0]
         fl = kv.groupby(['ключ', 'p']).agg(применений=('ip', 'size'), людей=('ip', 'nunique')).sort_values('людей', ascending=False).head(300).reset_index().rename(columns={'p': 'значение'})
-        S['Фильтры и поиск'] = fl
+        c.query_params = fl          # все пары «параметр=значение» у людей — для «Анатомии» (параметры), не отдельный лист
+        S['Фасеты'] = facets(R, c)
     # конверсии — каждая отправка
     gp = (R['goal'] != '').values
     P = R.loc[gp, ['ts', 'ip', 'goal', 'status', 'goal_success', 'vid', 'base']].copy()
@@ -213,6 +214,52 @@ def outage_windows(R, st, E, gap=3):
                          статика_в_норме=round(static_ok, 2), вероятная_причина='; '.join(cause) or 'не определена'))
     W = pd.DataFrame(rows)
     return W, rows
+
+
+FACET_NAMES = {'rooms': 'Комнат', 'room': 'Комнат', 'house_num': 'Дом', 'house': 'Дом', 'total_area': 'Площадь', 'area': 'Площадь',
+               'complete_date': 'Срок сдачи', 'deadline': 'Срок сдачи', 'project': 'Проект', 'district': 'Район', 'finishing': 'Отделка',
+               'price': 'Цена', 'floor': 'Этаж', 'section': 'Секция', 'type': 'Тип', 'status': 'Статус', 'brand': 'Бренд', 'color': 'Цвет', 'size': 'Размер'}
+
+
+def facets(R, c):
+    """Фасеты — что люди выбирают в фильтре каталога: из адресов фасетных страниц (…/filter/…/apply/) и из параметров фильтра."""
+    from urllib.parse import unquote
+    pg = c.human & R['is_page'].values & (R['status'].values == 200)
+    D = pd.DataFrame({'b': R['base'].values[pg].astype(str), 'q': R['query'].values[pg].astype(str), 'ip': R['ip'].values[pg].astype(str)})
+    rows = []
+    fp = D[D['b'].str.contains('/filter/')]
+    for b, ip in zip(fp['b'], fp['ip']):
+        segs = b.strip('/').split('/')
+        i = segs.index('filter')
+        sec = '/' + segs[0] + '/'
+        for sg in segs[i + 1:]:
+            if sg in ('apply', 'clear') or not sg: continue
+            m_ = re.match(r'(.+?)-(is|from|to)-(.+)$', unquote(sg))
+            if not m_: continue
+            k, op, v = m_.groups()
+            name = FACET_NAMES.get(k.lower(), k)
+            name += {'from': ' от', 'to': ' до'}.get(op, '')
+            for v1 in v.split('-or-'):
+                v1 = v1.strip()
+                v1 = {'y': 'да', 'n': 'нет'}.get(v1.lower(), v1)
+                if name == 'Комнат' and v1 == '0': v1 = '0 (студия)'
+                rows.append((sec, name, v1, ip, 'адрес фасетной страницы'))
+    pq = D[D['q'].str.contains(r'(?:^|&)(itemsFilter|arrFilter)', regex=True, case=False)]
+    for b, q, ip in zip(pq['b'], pq['q'], pq['ip']):
+        sec = '/' + (b.strip('/').split('/')[0] or '') + '/'
+        for part in q.split('&'):
+            k, _, v = part.partition('=')
+            mk = re.match(r'(?i)(itemsFilter|arrFilter\w*?)_(\d+)(?:_(MIN|MAX|\d+))?$', k)
+            if not mk or not v: continue
+            field, tail = mk.group(2), (mk.group(3) or '')
+            name = f'поле {field}' + (' от' if tail.upper() == 'MIN' else ' до' if tail.upper() == 'MAX' else '')
+            val = f'код {tail}' if (tail.isdigit() and v.upper() == 'Y') else unquote(v)
+            if re.fullmatch(r'\d{7,}', val): val = f'код {val}'      # внутренний код значения Битрикса
+            rows.append((sec, name, val, ip, 'параметры фильтра (код Битрикса)'))
+    if not rows: return pd.DataFrame()
+    F = pd.DataFrame(rows, columns=['раздел', 'условие', 'значение', 'ip', 'откуда'])
+    out = F.groupby(['раздел', 'условие', 'значение', 'откуда']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
+    return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'условие', 'значение', 'запросов', 'людей', 'откуда']]
 
 
 def lead_status(P, R, m):

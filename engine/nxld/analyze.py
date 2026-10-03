@@ -125,6 +125,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     findings_text.humanize(F.items, res['sheets'], res['summary'])
     res['findings'] = F.items
     res['coverage'], res['loose_signals'] = coverage.check(res, F.items)
+    res['query_params'] = getattr(c, 'query_params', None)
     try:
         res['anatomy'] = anatomy.build(c, res)
         sp_, np_ = res.get('site_profile') or {}, res['anatomy'].get('всего_страниц')

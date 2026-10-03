@@ -301,6 +301,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
             own_people(wb, res['site_map'])
             report_tables.conversions(wb, S.get('Конверсии'))
+            report_tables.facets_sheet(wb, S.get('Фасеты'))
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
             pos = wb.sheetnames.index('Анатомия сайта') + 1 if 'Анатомия сайта' in wb.sheetnames else None

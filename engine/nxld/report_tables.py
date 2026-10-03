@@ -251,3 +251,18 @@ def fmt_codes(s):
     for k, v in _codes(s).items():
         out.append(f"{k} ({int(v):,})".replace(',', '\u00a0'))
     return ', '.join(out) or str(s)
+
+
+
+def facets_sheet(wb, F, name='Фасеты'):
+    if F is None or not len(F) or name not in wb.sheetnames: return
+    d = pd.DataFrame({'Раздел': F['раздел'], 'Условие': F['условие'], 'Значение': F['значение'], 'Запросов': F['запросов'].astype(int),
+                      'Людей': F['людей'].astype(int), 'Откуда': F['откуда']})
+    kpi = [('Условий', int(d['Условие'].nunique())), ('Значений', len(d)), ('Запросов', int(d['Запросов'].sum()))]
+    widths = {'Раздел': 14, 'Условие': 18, 'Значение': 34, 'Запросов': 11, 'Людей': 10, 'Откуда': 30}
+    data_sheet(wb, name, d, 'Фасеты', 'Что люди выбирают в фильтре каталога', widths, kpi=kpi, kpi_col='Значение',
+               row_rule=lambda r: 'EFEFEF' if str(r.get('Откуда', '')).startswith('параметры') else None,
+               links=[('Где фильтр принимает запросы', 'Точки приёма данных'), ('Устройство каталога', 'Анатомия сайта')])
+    ws = wb[name]
+    c = ws.cell(ws.max_row + 2, 2, 'Только люди: роботы, боты и свои отсеяны. Серым — значения из параметров фильтра: это коды полей и значений в настройках фильтра Битрикса, без них не расшифровать.')
+    c.font = Font(name='Arial', size=10, italic=True, color=INK)

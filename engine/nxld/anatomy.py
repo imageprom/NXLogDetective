@@ -442,7 +442,7 @@ def param_groups(m, res):
             except Exception: v = {}
         for p, n in v.items():
             if len(str(p)) >= 2: cnt[p] += int(n)
-    F = res.get('sheets', {}).get('Общий анализ', {}).get('Фильтры и поиск', pd.DataFrame())
+    F = res.get('query_params') if res.get('query_params') is not None else pd.DataFrame()
     if len(F):
         for p, n in F.groupby('ключ')['применений'].sum().items():
             if len(str(p)) >= 2: cnt[p] = max(cnt[p], int(n))
@@ -493,7 +493,7 @@ def appendix(res):
     cnt = Counter()
     for k in ('ad_params', 'other_entry_params'):
         for p_, n_ in (ev(m.get(k)) or {}).items(): cnt[p_] += int(n_)
-    Fl = res.get('sheets', {}).get('Общий анализ', {}).get('Фильтры и поиск', pd.DataFrame())
+    Fl = res.get('query_params') if res.get('query_params') is not None else pd.DataFrame()
     if len(Fl):
         for p_, n_ in Fl.groupby('ключ')['применений'].sum().items(): cnt[p_] = max(cnt[p_], int(n_))
     if cnt:

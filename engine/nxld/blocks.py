@@ -240,10 +240,10 @@ def facets(R, c):
             name = FACET_NAMES.get(k.lower(), k)
             name += {'from': ' от', 'to': ' до'}.get(op, '')
             for v1 in v.split('-or-'):
-                v1 = v1.strip()
-                v1 = {'y': 'да', 'n': 'нет'}.get(v1.lower(), v1)
-                if name == 'Комнат' and v1 == '0': v1 = '0 (студия)'
-                rows.append((sec, name, v1, ip, 'адрес фасетной страницы', f'{k}-{op}'))
+                raw = v1.strip()
+                dec = {'y': 'да', 'n': 'нет'}.get(raw.lower(), raw)
+                if name == 'Комнат' and raw == '0': dec = 'студия'
+                rows.append((sec, f'{k}-{op}', raw, name, dec, ip, 'адрес фасетной страницы'))
     pq = D[D['q'].str.contains(r'(?:^|&)(itemsFilter|arrFilter)', regex=True, case=False)]
     for b, q, ip in zip(pq['b'], pq['q'], pq['ip']):
         sec = '/' + (b.strip('/').split('/')[0] or '') + '/'
@@ -253,13 +253,15 @@ def facets(R, c):
             if not mk or not v: continue
             field, tail = mk.group(2), (mk.group(3) or '')
             name = f'поле {field}' + (' от' if tail.upper() == 'MIN' else ' до' if tail.upper() == 'MAX' else '')
-            val = f'код {tail}' if (tail.isdigit() and v.upper() == 'Y') else unquote(v)
-            if re.fullmatch(r'\d{7,}', val): val = f'код {val}'      # внутренний код значения Битрикса
-            rows.append((sec, name, val, ip, 'параметры фильтра (код Битрикса)', re.sub(r'_(\d{6,})$', '_…', k)))
+            raw = unquote(v)
+            if tail.isdigit() and v.upper() == 'Y': dec = f'выбран вариант с кодом {tail}'
+            elif re.fullmatch(r'\d{7,}', raw): dec = 'код значения Битрикса'
+            else: dec = raw
+            rows.append((sec, k, raw, name, dec, ip, 'параметры фильтра (код Битрикса)'))
     if not rows: return pd.DataFrame()
-    F = pd.DataFrame(rows, columns=['раздел', 'условие', 'значение', 'ip', 'откуда', 'ключ'])
-    out = F.groupby(['раздел', 'условие', 'значение', 'откуда', 'ключ']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
-    return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'условие', 'значение', 'запросов', 'людей', 'ключ', 'откуда']]
+    F = pd.DataFrame(rows, columns=['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'ip', 'откуда'])
+    out = F.groupby(['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'откуда']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
+    return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'запросов', 'людей', 'откуда']]
 
 
 def lead_status(P, R, m):

@@ -211,8 +211,8 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     kpi = kpi[:1] + sorted(kpi[1:], key=lambda x: x[1] == 0)   # нули — в конец
     row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов') else None
     bold = lambda col, v: col == 'Опознано как' and v in ('Заявка', 'Вход')
-    data_sheet(wb, name, d, 'Точки приёма данных', 'Формы, вход, API, фильтры и навигация', WIDTHS,
-               wrap=('Улики', 'Адрес точки'), bold_rule=bold, center=('Метод',), kpi=kpi, kpi_col='Опознано как', row_rule=row_rule,
+    data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные', WIDTHS,
+               wrap=('Улики', 'Адрес точки'), bold_rule=bold, center=('Метод',), kpi=kpi, kpi_col='Метод', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
     ws = wb[name]   # сноска и чего нет — тоже результат
     if d['Адрес точки'].astype(str).str.contains('фасетн').any():
@@ -238,7 +238,7 @@ def post_all(wb, res, name='POST-отправки', after='GET-отправки'
     kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Запросов сканеров', int(sc['Запросов'].sum()))]
     row_rule = lambda r: F_NOTE if r.get('Опознано как') == 'Сканер' else None
     data_sheet(wb, name, d, 'POST-отправки', 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
-               wrap=('Улики', 'Адрес точки'), center=(), kpi=kpi, kpi_col='Опознано как', row_rule=row_rule)
+               wrap=('Улики', 'Адрес точки'), center=(), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
     ws = wb[name]   # ссылка на другой файл
     r_ = ws.max_row + 2
     c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')

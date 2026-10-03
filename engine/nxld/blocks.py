@@ -260,8 +260,53 @@ def facets(R, c):
             rows.append((sec, k, raw, name, dec, ip, 'параметры фильтра (код Битрикса)'))
     if not rows: return pd.DataFrame()
     F = pd.DataFrame(rows, columns=['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'ip', 'откуда'])
+    F = decode_bitrix(F)
     out = F.groupby(['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'откуда']).agg(запросов=('ip', 'size'), людей=('ip', 'nunique')).reset_index()
     return out.sort_values('людей', ascending=False).head(1000)[['раздел', 'ключ', 'значение', 'условие', 'расшифровка', 'запросов', 'людей', 'откуда']]
+
+
+def decode_bitrix(F):
+    """Умный фильтр Битрикса передаёт значение как crc32 от текста значения. Подбираем текст среди значений
+    фасетных страниц и чисел — так «itemsFilter_20=3946564469» превращается в «Дом 1», а поле 20 — в «Дом»."""
+    import zlib
+    path = F[F['откуда'].str.startswith('адрес')]
+    cands = set()
+    for v in path['значение'].astype(str):
+        cands |= {v, v.capitalize(), v.title(), v.upper(), v.lower()}
+    cands |= {str(i) for i in range(0, 2001)} | {'Y', 'N', 'Да', 'Нет'}
+    crc = {}
+    for c_ in cands:
+        for enc in ('utf-8', 'cp1251'):
+            try: crc.setdefault(zlib.crc32(c_.encode(enc)), c_)
+            except Exception: pass
+    val_to_cond = {}
+    for _, r in path.iterrows():
+        val_to_cond.setdefault(str(r['значение']).lower(), Counter())[r['условие']] += 1
+    def code_of(r):
+        k, v = str(r['ключ']), str(r['значение'])
+        t = k.split('_')[-1]
+        if t.isdigit() and len(t) >= 6 and v.upper() == 'Y': return int(t)
+        if v.isdigit() and len(v) >= 6: return int(v)
+        return None
+    F = F.copy()
+    F['_txt'] = [crc.get(code_of(r)) if code_of(r) is not None else None for _, r in F.iterrows()]
+    field = F['ключ'].astype(str).str.extract(r'(?i)(?:itemsFilter|arrFilter\w*?)_(\d+)')[0]
+    names = {}
+    for f_, g in F[F['_txt'].notna()].groupby(field[F['_txt'].notna()]):
+        vote = Counter()
+        vals = set(map(str, g['_txt']))
+        if all(v_.isdigit() for v_ in vals) and len(vals) < 2: continue   # одно число — слабая улика, поле не называем
+        for t in g['_txt']: vote.update(val_to_cond.get(str(t).lower(), Counter()))
+        if not vote and all(str(t).isdigit() for t in g['_txt']) and set(g['_txt']) <= {str(i) for i in range(0, 7)}: vote['Комнат'] = 1
+        if vote: names[f_] = vote.most_common(1)[0][0]
+    for i, r in F.iterrows():
+        f_ = field.get(i)
+        if r['откуда'].startswith('параметры') and isinstance(f_, str) and f_ in names:
+            tail = ' от' if str(r['ключ']).upper().endswith('_MIN') else ' до' if str(r['ключ']).upper().endswith('_MAX') else ''
+            F.at[i, 'условие'] = names[f_] + tail
+        if r['_txt'] is not None and not (isinstance(r['_txt'], float)):
+            F.at[i, 'расшифровка'] = ('студия' if F.at[i, 'условие'] == 'Комнат' and r['_txt'] == '0' else r['_txt'])
+    return F.drop(columns='_txt')
 
 
 def lead_status(P, R, m):

@@ -130,11 +130,6 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['files'] = recon.files_inventory(R).to_dict('records')
     except Exception as e:
         log(f'files_inventory: {e}'); res['files'] = None
-    try:
-        from .anatomy import PARAM_GROUPS
-        res['params'] = recon.query_params_inventory(R, c.human, PARAM_GROUPS).to_dict('records')
-    except Exception as e:
-        log(f'query_params_inventory: {e}'); res['params'] = None
     if res['files']:
         for x in res['findings']:
             if x['key'].split(':')[1] in ('missing_static', 'no_service', 'service_err', 'hotlink', 'ai_index', 'heavy_images'):
@@ -147,6 +142,16 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     except Exception as e:
         import traceback; traceback.print_exc()
         res['anatomy'] = {'ошибка': str(e)}
+    try:   # параметры — после «Анатомии»: нужны её системные папки и закрытые зоны
+        from .anatomy import PARAM_GROUPS, param_groups
+        A_ = res.get('anatomy') or {}
+        sysp = [x['папка'] for x in A_.get('папки') or [] if 'загруж' not in str(x.get('что', ''))] + [x['адрес'] for x in A_.get('зоны') or [] if str(x.get('адрес', '')).startswith('/')]
+        FC = res['sheets'].get('Общий анализ', {}).get('Фасеты')
+        navk = set(FC.groupby('ключ')['запросов'].sum().loc[lambda x: x >= 10].index.astype(str)) if FC is not None and len(FC) else set()   # мусор из битых адресов — не фасет
+        res['params'] = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp).to_dict('records')
+        if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
+    except Exception as e:
+        import traceback; traceback.print_exc(); res['params'] = None
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')

@@ -51,9 +51,10 @@ PARAM_GROUPS = [
     ('Реклама и аналитика', r'^(utm_\w+|yclid|gclid|fbclid|wbraid|gbraid|erid|calltouch\w*|roistat\w*|_openstat|from|ref|cm_id|ad_?id|campaign_?id|_ga|_gl|ymclid|vkclid|mc_\w+)$'),
     ('Служебные поисковиков и Яндекса', r'^(etext|ybaip|ysclid|y_ref|yabizcmpgn|yabizcmpgn\w*|lr|text|_ym\w*|utm_referer|utm_ya_campaign|utm_candidate|turbo\w*|amp)$'),
     ('Данные форм', r'(^form|form_|submit|^btn_|mail|phone|^tel$|email|comment|message|question|^name$|_name$|^fio$|theme|captcha|sessid)'),
-    ('Фильтры, сортировка и страницы', r'(filter|sort|order|page|pagen|limit|view|show|ajax|type|price|min|max|rooms|floor|sq|area|set_|arr|items|objects)'),
     ('Сброс кэша', r'^(v|ver|version|_|t|ts|timestamp|rnd|rand|nocache|nc|cb|\(число без имени\))$'),
 ]
+FILTER_WORDS = r'(filter|sort|order|page|pagen|limit|view|show|ajax|type|price|min|max|rooms|floor|sq|area|set_|arr|items|objects)'   # строка «Фильтры» у каталога
+PARAM_ORDER = ['Реклама и аналитика', 'Служебные поисковиков и Яндекса', 'Данные форм', 'Поиск и навигация', 'Служебные движка', 'Метки сервисов', 'Сброс кэша', 'Атаки и зонды', 'Прочие']
 SERVICE_GROUPS = [
     ('Для роботов', r'^/(robots\.txt|sitemap[\w.-]*\.xml(\.gz)?|sitemap/.*)$'),
     ('Фиды и выгрузки', r'(/export/|/feeds?(/|\.xml|$)|\.yml$|\.csv$|yandex[\w-]*\.xml$|google[\w-]*\.xml$|/rss)'),
@@ -308,7 +309,7 @@ def filters_of(R, pg, sec):
     if not mm.any(): return []
     qs = R['query'].cat.categories[qc[mm]].astype(str)
     keys = Counter(k.split('=')[0] for q in qs for k in q.split('&') if k)
-    keys = [(k, n) for k, n in keys.most_common(30) if re.search(PARAM_GROUPS[2][1], k, re.I) and not re.match(PARAM_GROUPS[0][1], k, re.I)]
+    keys = [(k, n) for k, n in keys.most_common(30) if re.search(FILTER_WORDS, k, re.I) and not re.match(PARAM_GROUPS[0][1], k, re.I)]
     out = []
     for k, n in keys:
         base = re.sub(r'(_\d+)+$|\d+$', '_*', k)
@@ -447,7 +448,7 @@ def embedded_groups(m):
 def param_groups(m, res):
     if res.get('params'):   # полный перечень по логу (recon.query_params_inventory)
         out = []
-        for nm in [g for g, _ in PARAM_GROUPS] + ['Атаки и зонды', 'Прочие']:
+        for nm in PARAM_ORDER:
             xs = [p for p in res['params'] if p['группа'] == nm]
             if xs: out.append(dict(группа=nm, параметров=len(xs), примеры=', '.join(p['параметр'] for p in xs[:8]), применений=sum(p['запросов'] for p in xs)))
         return out

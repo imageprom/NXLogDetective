@@ -316,7 +316,7 @@ def service_files(wb, res, name='Файлы'):
     if name not in wb.sheetnames: wb.create_sheet(name)
     kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['Ошибок'] > 0).sum()))]
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 44, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
-    missing = [nm for nm, _ in FILE_GROUPS if nm not in set(d['Группа'])] if res.get('files') is not None else []
+    missing = [nm for nm, _ in FILE_GROUPS if nm not in set(d['Группа']) and nm != 'Прочие файлы'] if res.get('files') is not None else []
     links = [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
     data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта как отдельный файл', widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты'),
                kpi=kpi, kpi_col='Ошибок', row_rule=lambda r: F_NOTE if r.get('Ошибок') else None, links=links)

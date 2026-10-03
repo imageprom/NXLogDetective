@@ -377,6 +377,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
     scan = R['fam_cat'].astype(str).values == 'Сканеры безопасности' if 'fam_cat' in R else np.zeros(len(R), bool)
     cnt_scan = bc(has & scan)
     cnt_int_h = bc(has & np.asarray(human) & R['ref_internal'].values)   # люди, пришедшие со страниц сайта
+    cnt_emb = bc(has & emb)   # подгрузки внутри открытой страницы
     cnt_staff = bc(has & (np.asarray(staff) if staff is not None else np.zeros(len(R), bool)))
     R_zone_paths = list(zone_prefixes)
     zone_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in R_zone_paths)).values if R_zone_paths else np.zeros(len(bstr), bool)
@@ -431,32 +432,39 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         s_ = SQ[SQ['q'].isin(qs)].groupby('sec')['m'].sum().sort_values(ascending=False)
         return (s_.index[0], s_.iloc[0] / max(1, s_.sum())) if len(s_) else ('', 0)
 
-    def deduce(k, members, qs, n_, people):
-        """Дедукция: группа по сочетанию улик (имя + куда идут запросы + кто отправляет + какие ответы) и сами улики."""
-        nav_name = any(re.fullmatch(NAV_KEYS, m_, re.I) for m_ in members)
-        facet = any(m_.lower() in navk for m_ in members)
-        form_name = bool(re.search(form_rx, k, re.I))
+    def deduce(k, members, qs, n_, people, vc):
+        """Дедукция: сначала поведение (кто вызывает, как, куда), имя — только гипотеза, которую поведение подтверждает.
+        Представиться ключ может чем угодно; что это на самом деле, видно по тому, как им пользуются."""
         sec, sh = top_sec(qs)
         n_pg, n_pg_h, n_int_h = cnt_nav[qs].sum(), cnt_nav_h[qs].sum(), cnt_int_h[qs].sum()
-        n_sys, n_zone, n_staff, n_err = cnt_sys[qs].sum(), cnt_zone[qs].sum(), cnt_staff[qs].sum(), cnt_err[qs].sum()
+        n_sys, n_zone, n_staff, n_err, n_emb = cnt_sys[qs].sum(), cnt_zone[qs].sum(), cnt_staff[qs].sum(), cnt_err[qs].sum(), cnt_emb[qs].sum()
         clues = []
-        if facet: clues.append('ключ фильтра (есть на «Фасетах»)')
-        elif nav_name: clues.append('имя похоже на навигацию')
-        elif form_name: clues.append('имя похоже на поле формы')
-        if n_sys >= 0.8 * n_: clues.append(f'запросы идут в системные папки движка ({sec})')
-        elif n_zone >= 0.8 * n_: clues.append(f'запросы идут в закрытый раздел {zone_of(qs)}')
-        elif n_pg >= 0.5 * n_: clues.append('запросы идут на обычные страницы сайта' + (f' ({sec})' if sh >= 0.5 else ''))
-        elif sec and sh >= 0.5: clues.append(f'запросы идут в {sec}')
-        if people >= 20 and n_int_h >= 50: clues.append(f'отправляют люди со страниц сайта ({_visits(people)})')
+        # кто вызывает
+        by_people = people >= 20 and n_int_h >= 50
+        if by_people: clues.append(f'вызывают люди со страниц сайта ({_visits(people)})')
         elif n_staff >= 0.5 * n_: clues.append('работают сотрудники')
         elif people == 0: clues.append('людей нет')
+        # как и куда
+        if n_emb >= 0.5 * n_: clues.append('подгрузка внутри открытой страницы' + (f', обработчик {sec}' if sh >= 0.5 else ''))
+        elif n_sys >= 0.8 * n_: clues.append(f'запросы в системные папки движка ({sec})')
+        elif n_zone >= 0.8 * n_: clues.append(f'запросы в закрытый раздел {zone_of(qs)}')
+        elif n_pg >= 0.5 * n_: clues.append(('переходы на страницы' if by_people else 'обращения к адресам') + (f' {sec}' if sh >= 0.5 else ''))
+        elif sec and sh >= 0.5: clues.append(f'запросы в {sec}')
         if n_err >= 0.5 * n_: clues.append(f'ответы с ошибкой ({n_err / n_:.0%})')
         comp = companions(k, qs) if n_ >= 20 else []
         with_ = ', '.join(comp[:6]) + (' …' if len(comp) > 6 else '') if len(comp) >= 4 else ''
-        if (nav_name or facet) and n_pg >= 0.5 * n_ and n_pg_h >= 10: return 'Поиск и навигация', 'меняет список на странице', clues, with_
+        # гипотезы по имени — только если поведение совпадает с ожидаемым
+        nav_hyp = any(re.fullmatch(NAV_KEYS, m_, re.I) or m_.lower() in navk for m_ in members)
+        nav_ok = nav_hyp and n_pg >= 0.5 * n_ and n_pg_h >= 10 and n_emb < 0.5 * n_       # навигация — это переходы по страницам-спискам
+        txt = sum(int(w) for v_, w in vc.items() if re.search(r'[^\d\s.,:;-]', str(v_)) and len(str(v_)) >= 3)
+        form_ok = bool(re.search(form_rx, k, re.I)) and by_people and n_pg < 0.5 * n_ and txt >= 0.5 * vc.sum()   # поле формы — люди отправляют текст в обработчик
+        if nav_ok: return 'Поиск и навигация', 'меняет список на странице', clues + ['поведение соответствует имени: навигация'], with_
         if n_sys >= 0.8 * n_: return 'Служебные движка', 'служебный запрос движка', clues, with_
         if n_zone >= 0.8 * n_ and n_staff >= 0.5 * n_: return 'Логика сайта', f'служебный раздел {zone_of(qs)}', clues, with_
-        if people >= 20 and n_int_h >= 50: return 'Логика сайта', 'поле формы' if form_name else 'параметр сайта, которым пользуются люди', clues, with_
+        if by_people:
+            if form_ok: return 'Логика сайта', 'поле формы', clues + ['поведение соответствует имени: форма'], with_
+            what = 'вызов внутри страницы (подгрузка, окно)' if n_emb >= 0.5 * n_ else 'параметр страниц сайта' if n_pg >= 0.5 * n_ else 'параметр сайта'
+            return 'Логика сайта', what, clues, with_
         if with_: return 'Метки сервисов', 'приходит пачкой с другими ключами', clues + ['приходит пачкой'], with_
         return 'Неизвестные', '', clues, with_
 
@@ -478,7 +486,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         entry = ref.match(k) if ref is not None else None
         if entry is None and ref is not None and len(members) > 1:
             entry = next((e for e in (ref.match(m_) for m_ in members[:5]) if e), None)
-        d_grp, d_what, clues, with_ = deduce(k, members, qs, n_, people)
+        d_grp, d_what, clues, with_ = deduce(k, members, qs, n_, people, vc)
         what, src, link = '', '', ''
         few_people = people <= max(1, 0.02 * n_)
         foreign = other.match(k) if other is not None and entry is None and few_people else None

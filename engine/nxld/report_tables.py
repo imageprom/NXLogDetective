@@ -341,7 +341,6 @@ def params_sheet(wb, res, name='Параметры запросов'):
                        'Опознание': p.get('что', ''), 'Основание': SRC_LABEL.get(p.get('источник', ''), p.get('источник', '')),
                        'Значений': int(p['значений']), 'Частое значение': p['частое_значение'],
                        'Точки обращения': _who(p['где']), 'Спутники': p.get('вместе_с', '')} for p in P])
-    links_ = [p.get('ссылка', '') for p in P]
     if not d['Спутники'].astype(bool).any(): d = d.drop(columns='Спутники')
     cnt = d['Группа'].value_counts()
     kpi = [('Параметров', len(d))] + [(g.split(',')[0], int(cnt[g])) for g in order if cnt.get(g)]
@@ -349,14 +348,7 @@ def params_sheet(wb, res, name='Параметры запросов'):
     if name not in wb.sheetnames: wb.create_sheet(name)
     widths = {'Параметр': 30, 'Группа': 24, 'Запросов': 11, 'Людей': 10, 'Опознание': 50, 'Основание': 18, 'Значений': 10, 'Частое значение': 36, 'Точки обращения': 40, 'Спутники': 40}
     data_sheet(wb, name, d, 'Параметры запросов', 'Что передают в адресе после «?»', widths, wrap=('Параметр', 'Группа', 'Опознание', 'Основание', 'Частое значение', 'Точки обращения', 'Спутники'),
-               kpi=kpi, kpi_col='Запросов', row_rule=lambda r: F_NOTE if r.get('Группа') == 'Атаки и зонды' else 'F7F7F7' if r.get('Группа') in ('Сброс кэша', 'Служебные движка', 'Метки сервисов', 'Неизвестные') else None,
+               kpi=kpi, kpi_col='Запросов', row_rule=lambda r: F_NOTE if r.get('Группа') == 'Атаки и зонды' else 'F7F7F7' if r.get('Группа') == 'Неизвестные' else None,
                links=[('Сводка по группам', 'Анатомия сайта'), ('Фильтры каталога по значениям', 'Фасеты')])
     ws = wb[name]
-    hdr = {ws.cell(4, c).value: c for c in range(1, ws.max_column + 1)}
-    c_ = hdr.get('Основание')
-    if c_:   # ссылка на источник — у записей из поиска и сборников
-        for i, u in enumerate(links_):
-            if u:
-                cell = ws.cell(5 + i, c_); cell.hyperlink = u
-                cell.font = Font(name=cell.font.name, size=cell.font.size, color=ORANGE2, underline='single')
     return ws

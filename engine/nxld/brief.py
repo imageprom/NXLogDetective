@@ -228,6 +228,8 @@ def build(res, c, prev=None):
     an = res.get('anatomy') or {}
     B['тематика_подсказки'] = an.get('подсказки')   # по ним Детектив называет тематику и уровни каталогов (edits.json → «anatomy_names», «site_profile.тематика»)
     B['сигналы_без_проблемы'] = res.get('loose_signals', [])   # признак на листе есть, карточки нет: завести проблему или объяснить, почему норма
+    if res.get('unknown_params'):   # Детектив ищет в сети и пишет в edits.json → «справочник» (SKILL.md, шаг «Незнакомые параметры»)
+        B['незнакомые_параметры'] = res['unknown_params']
     cv = res.get('coverage')
     if cv is not None and len(cv):
         B['покрытие'] = {st_: cv.loc[cv['состояние'] == st_, 'проверка'].tolist() for st_ in ('проверено, не найдено', 'не применимо', 'детектора пока нет')}

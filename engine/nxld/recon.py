@@ -345,30 +345,43 @@ def files_inventory(R, min_req=3):
 
 # --- Параметры запросов: каждый ключ после «?» -----------------------------------------------------
 ATTACK_VALUE = re.compile(r'\.\./|169\.254\.|file://|/etc/passwd|/proc/self|call_user_func|<script|union[\s+]+select|phpinfo|\$\{jndi|/bin/(ba)?sh|cmd\.exe|wget\s|curl\s|base64_decode|eval\(', re.I)
-
-
+PROBE_VALUE = re.compile(r'\.invalid\b|redirect-?check|\.oast\.|interact\.sh|burpcollaborator|canarytokens|dnslog|\.example\.(com|org|net)\b', re.I)   # подставные адреса сканеров
 NAV_KEYS = r'^(set_filter|del_filter|arrfilter\w*|q|search|query|find|poisk|pagen_\d+|page|p|view|display|show|mode|sort\w*|order\w*|by)$'   # как на «Точках приёма»
 
 
-def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), top_n=300):
-    """Ключ параметра → группа, запросов, визитов людей, разных значений, частое значение, где встречается.
-    Группа — по поведению, где можно: «Поиск и навигация» — как на «Точках приёма данных» (у людей, на страницах, не во вставках)
-    и ключи фасетов; «Служебные движка» — запросы идут в системные папки и закрытые зоны; «Метки сервисов» — пачка ключей одним запросом.
-    Обрывки из битых адресов и разное написание одного ключа сводятся."""
+def _family(k, ref=None):
+    """Семейство ключа: шаблон из справочника (PAGEN_*), иначе — имя до первой части с цифрами (itemsFilter_22_MIN → itemsFilter_*)."""
+    f = ref.family(k) if ref is not None else None
+    if f: return f
+    m = re.match(r'^(.*?[A-Za-z])_(?=[^_]*\d)', k)
+    return m.group(1) + '_*' if m else k
+
+
+def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300):
+    """Ключ (или семейство ключей) параметра → группа, что это, откуда знаем, запросы, люди, значения, где встречается.
+    Порядок решения: кто спрашивает (атаки, сканеры) → справочник → поведение (навигация на страницах, системные папки, пачка) → имя.
+    Семейство (itemsFilter_*) решается целиком по суммарному поведению и показывается одной строкой."""
     from urllib.parse import unquote
     qc = R['query'].cat.categories.to_series().astype(str)
     codes = R['query'].cat.codes.values
     has = codes >= 0
     L = len(qc)
-    cnt = np.bincount(codes[has], minlength=L)
+    bc = lambda m: np.bincount(codes[m], minlength=L)
+    cnt = bc(has)
     emb = R['is_embedded'].values if 'is_embedded' in R else np.zeros(len(R), bool)
     pg_ok = has & R['is_page'].values & ~emb & (R['method'].values == 'GET')   # обычные страницы, не вставки
-    cnt_nav = np.bincount(codes[pg_ok], minlength=L)
-    cnt_nav_h = np.bincount(codes[pg_ok & np.asarray(human)], minlength=L)
+    cnt_nav, cnt_nav_h = bc(pg_ok), bc(pg_ok & np.asarray(human))
     bstr = R['base'].cat.categories.to_series().astype(str)
     sys_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in sys_prefixes)).values if sys_prefixes else np.zeros(len(bstr), bool)
-    in_sys = has & sys_b[R['base'].cat.codes.values]
-    cnt_sys = np.bincount(codes[in_sys], minlength=L)
+    cnt_sys = bc(has & sys_b[R['base'].cat.codes.values])
+    scan = R['fam_cat'].astype(str).values == 'Сканеры безопасности' if 'fam_cat' in R else np.zeros(len(R), bool)
+    cnt_scan = bc(has & scan)
+    cnt_err = bc(has & (R['status'].values >= 400))
+    srch = R['fam_cat'].astype(str).values == 'Поисковик' if 'fam_cat' in R else np.zeros(len(R), bool)
+    cnt_srch = bc(has & srch)
+    named = (R['fam'].astype(str).values != '') & ~scan & ~np.asarray(human)   # известные роботы (поисковики, SEO, ИИ…), не сканеры
+    cnt_named = bc(has & named)
+    other = getattr(ref, 'other', None)   # справочник всех движков: ключ чужого движка без людей — зонд под этот движок
     pairs = []   # (код запроса, ключ, значение)
     for i, q in enumerate(qc.values):
         if not cnt[i] or not q or q == 'nan': continue
@@ -376,7 +389,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), top_n
             k, _, v = kv.partition('=')
             k = unquote(k).strip()
             if re.fullmatch(r'\d+|[0-9a-f]{16,}', k) and not v: k = '(число без имени)'   # ?1778857049245644 — метка от кэша
-            if 1 <= len(k) <= 40 and re.fullmatch(r'[\w\[\]\-.()а-я ]+', k): pairs.append((i, k, v))
+            if 1 <= len(k) <= 40 and re.fullmatch(r'[\w\[\]\-.()а-я ;]+', k): pairs.append((i, k, v))
     if not pairs: return pd.DataFrame()
     P = pd.DataFrame(pairs, columns=['q', 'ключ', 'значение'])
     P['n'] = cnt[P['q'].values]
@@ -384,47 +397,91 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), top_n
     HV = pd.DataFrame({'q': codes[hm], 'vid': R['vid'].values[hm]}).drop_duplicates()
     sec = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
     SQ = pd.DataFrame({'q': codes[has], 'sec': sec[has]}).groupby(['q', 'sec']).size().rename('m').reset_index()
+    fams_ = R['fam'].astype(str).values
+    FQ = pd.DataFrame({'q': codes[has & ~np.asarray(human)], 'fam': fams_[has & ~np.asarray(human)]}).groupby(['q', 'fam']).size().rename('m').reset_index()
+    # написания одного ключа → самое частое; обрывки из битых адресов (начало более частого ключа) — прочь
     tot = P.groupby('ключ')['n'].sum()
     low = tot.groupby(tot.index.str.lower()).idxmax()
     P['ключ'] = P['ключ'].str.lower().map(low)
     tot = P.groupby('ключ')['n'].sum().sort_values(ascending=False)
     keys = list(tot.index)
-    frag = {k for k in keys if not k.startswith('(') and any(K != k and K.lower().startswith(k.lower()) and tot[K] >= tot[k] for K in keys)}
+    frag = {k for k in keys if not k.startswith('(') and ref is not None and ref.match(k) is None
+            and any(K != k and K.lower().startswith(k.lower()) and tot[K] >= tot[k] for K in keys)}
     P = P[~P['ключ'].isin(frag)]
+    P['семья'] = P['ключ'].map(lambda k: _family(k, ref))
+    fam_size = P.groupby('семья')['ключ'].nunique()
+    P['группа_ключей'] = np.where(P['семья'].map(fam_size).values >= 2, P['семья'].values, P['ключ'].values)
     navk = {str(k).lower() for k in nav_keys}
-    by_key = {k: g for k, g in P.groupby('ключ')}
-    # пачки: ключи, которые почти всегда приходят одним запросом (>= 90 % запросов ключа)
-    qkeys = P.groupby('q')['ключ'].agg(frozenset)
-    def companions(k, g):
-        qs = g['q'].unique(); w = cnt[qs]; tot_ = w.sum()
-        c_ = Counter()
+    qkeys = P.groupby('q')['группа_ключей'].agg(frozenset)
+
+    def companions(k, qs):
+        w = cnt[qs]; tot_ = w.sum(); c_ = {}
         for q_, w_ in zip(qs, w):
-            for kk in qkeys[q_]: c_[kk] += w_
+            for kk in qkeys[q_]: c_[kk] = c_.get(kk, 0) + w_
         return sorted([kk for kk, v in c_.items() if kk != k and v >= 0.9 * tot_], key=lambda kk: -c_[kk])
+
+    def behavior(k, members, qs, n_):
+        """Группа по поведению — без справочника и имени."""
+        if any(re.fullmatch(NAV_KEYS, m_, re.I) or m_.lower() in navk for m_ in members) and cnt_nav[qs].sum() >= 0.5 * n_ and cnt_nav_h[qs].sum() >= 10:
+            return 'Поиск и навигация', ''
+        if sys_prefixes and cnt_sys[qs].sum() >= 0.8 * n_: return 'Служебные движка', ''
+        comp = companions(k, qs) if n_ >= 20 else []
+        if len(comp) >= 4: return 'Метки сервисов', ', '.join(comp[:6]) + (' …' if len(comp) > 6 else '')
+        return None, ''
+
     rows = []
-    for k, g in by_key.items():
+    for k, g in P.groupby('группа_ключей'):
         qs = g['q'].unique()
+        members = sorted(g['ключ'].unique(), key=lambda m_: -tot.get(m_, 0))
         n_ = int(cnt[qs].sum())
         vc = g.groupby('значение')['n'].sum().sort_values(ascending=False)
-        top_v = unquote(str(vc.index[0]).replace('+', ' '), errors='replace') if len(vc) else ''
-        att = vc[pd.Series(vc.index.astype(str), index=vc.index).map(lambda v_: bool(ATTACK_VALUE.search(unquote(v_, errors='replace'))))].sum()
-        named = next((nm for nm, rx in groups if re.search(rx, k, re.I)), None)
-        nav = (re.fullmatch(NAV_KEYS, k, re.I) or k.lower() in navk) and cnt_nav[qs].sum() >= 0.5 * n_ and cnt_nav_h[qs].sum() >= 10
-        with_ = ''
-        if att >= 0.5 * vc.sum(): grp_ = 'Атаки и зонды'
-        elif named and named != 'Сброс кэша': grp_ = named
-        elif nav: grp_ = 'Поиск и навигация'
-        elif named: grp_ = named
-        elif sys_prefixes and cnt_sys[qs].sum() >= 0.8 * n_: grp_ = 'Служебные движка'
+        vals = [unquote(str(v_).replace('+', ' '), errors='replace') for v_ in vc.index[:3]]
+        top_v = vals[0] if vals else ''
+        dec = lambda v_: unquote(unquote(str(v_), errors='replace'), errors='replace')   # бывает закодировано дважды (%252e)
+        att = sum(int(w) for v_, w in vc.items() if ATTACK_VALUE.search(dec(v_)) or PROBE_VALUE.search(dec(v_)))
+        people = int(HV[HV['q'].isin(qs)]['vid'].nunique())
+        entry = ref.match(k) if ref is not None else None
+        if entry is None and ref is not None and len(members) > 1:
+            es = [ref.match(m_) for m_ in members[:5]]
+            entry = next((e for e in es if e), None)
+        b_grp, with_ = behavior(k, members, qs, n_)
+        what, src, link = '', '', ''
+        few_people = people <= max(1, 0.02 * n_)
+        foreign = other.match(k) if other is not None and entry is None and few_people else None
+        foreign = foreign if foreign and str(foreign.get('файл', '')).startswith('engines/') else None
+        dead = few_people and n_ >= 20 and cnt_err[qs].sum() >= 0.9 * n_ and cnt_named[qs].sum() < 0.5 * n_   # обход старых ссылок роботами — не зонд
+        if att >= 0.5 * vc.sum() or (cnt_scan[qs].sum() >= 0.5 * n_ and people == 0) or foreign or (dead and entry is None):
+            grp_, src = 'Атаки и зонды', 'поведение'
+            what = ('значения похожи на атаку или подставной адрес' if att >= 0.5 * vc.sum() else 'запрашивают сканеры безопасности' if cnt_scan[qs].sum() >= 0.5 * n_
+                    else f"параметр {foreign['название_файла']}, а сайт на другом движке — зонд" if foreign else 'людей нет, почти все ответы — ошибки: зонд')
+        elif entry is not None and not (b_grp and entry.get('файл') == 'learned/params.json' and _strong(b_grp, entry['группа'], cnt_sys[qs].sum(), n_)):
+            from .reference import level
+            grp_, what, src = entry['группа'], entry.get('что', ''), entry.get('источник', 'документация')
+            if level(entry) >= 3 and src == 'поиск': src = 'поиск, подтверждено'
+            link = entry.get('ссылка', '')
+            if ref is not None and b_grp: ref.observe(k, entry, b_grp)
+        elif b_grp:
+            grp_, src = b_grp, 'поведение'
+            what = {'Поиск и навигация': 'меняет список на странице', 'Служебные движка': 'запросы идут в системные папки и закрытые зоны',
+                    'Метки сервисов': 'приходит пачкой с другими ключами'}.get(b_grp, '')
+            if entry is not None and ref is not None: ref.observe(k, entry, b_grp)
         else:
-            comp = companions(k, g) if n_ >= 20 else []
-            if len(comp) >= 4: grp_, with_ = 'Метки сервисов', ', '.join(comp[:6]) + (' …' if len(comp) > 6 else '')
-            else: grp_ = 'Прочие'
+            named = next((nm for nm, rx in groups if re.search(rx, k, re.I)), None)
+            grp_, src = (named, 'имя') if named else ('Прочие', '')
         s_ = SQ[SQ['q'].isin(qs)].groupby('sec')['m'].sum().sort_values(ascending=False)
-        rows.append(dict(параметр=k, группа=grp_, запросов=n_, людей=int(HV[HV['q'].isin(qs)]['vid'].nunique()),
-                         значений=int(vc.index.nunique()), частое_значение=top_v[:60] if top_v else '(пусто)', вместе_с=with_,
-                         где=', '.join(f'{a}:{int(b)}' for a, b in s_.head(3).items())))
+        f_ = FQ[FQ['q'].isin(qs)].groupby('fam')['m'].sum().sort_values(ascending=False)
+        n_m = len(members)
+        label = f"{k} — {n_m} {'ключ' if n_m % 10 == 1 and n_m % 100 != 11 else 'ключа' if 2 <= n_m % 10 <= 4 and not 12 <= n_m % 100 <= 14 else 'ключей'}" if n_m > 1 else k
+        rows.append(dict(параметр=label, ключ=k, ключи=members[:30], группа=grp_, что=what, источник=src, ссылка=link,
+                         запросов=n_, людей=people, значений=int(vc.index.nunique()), частое_значение=top_v[:60] if top_v else '(пусто)',
+                         значения=[v_[:60] for v_ in vals], вместе_с=with_, где=', '.join(f'{a}:{int(b)}' for a, b in s_.head(3).items()),
+                         роботы=', '.join(f'{a or "без имени"}:{int(b)}' for a, b in f_.head(3).items())))
     D = pd.DataFrame(rows).sort_values('запросов', ascending=False)
-    D = D[~((D['группа'] == 'Прочие') & (D['параметр'].str.len() < 4) & (D['запросов'] < 1000))]   # короткие редкие — обрывки
-    D.loc[D['параметр'] == '(число без имени)', 'частое_значение'] = ''
+    D = D[~((D['группа'] == 'Прочие') & (D['ключ'].str.len() < 4) & (D['запросов'] < 1000))]   # короткие редкие — обрывки
+    D.loc[D['ключ'] == '(число без имени)', 'частое_значение'] = ''
     return D.head(top_n)
+
+
+def _strong(b_grp, ref_grp, n_sys, n_):
+    """Поведение спорит со справочником настолько, что на листе побеждает поведение (только для записей из поиска)."""
+    return b_grp != ref_grp and (b_grp != 'Служебные движка' or n_sys >= 0.95 * n_)

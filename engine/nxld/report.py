@@ -248,6 +248,18 @@ def apply_edits(res, edits):
         for k in ('факты', 'где_править', 'что_сделать', 'лист', 'также_в', 'статус'): a.setdefault(k, '')
         a.setdefault('главная_цифра', None)
         res['findings'].append(a)
+    if edits.get('справочник'):   # Детектив нашёл поиском незнакомые параметры — в справочник (learned) и сразу на лист
+        from . import reference
+        from .anatomy import param_groups
+        site_ = (res.get('site_map', {}).get('site_hosts') or ['site'])[0]
+        ref = reference.Reference((), (), site_)
+        ok = {str(x['ключ']).lower(): x for x in ref.learn(edits['справочник'], site_)}
+        ref.save()
+        for r_ in res.get('params') or []:
+            x = ok.get(str(r_['ключ']).lower()) or next((ok[m_.lower()] for m_ in r_.get('ключи', []) if m_.lower() in ok), None)
+            if x and r_.get('группа') != 'Атаки и зонды':
+                r_.update(группа=x['группа'], что=x.get('что', ''), источник='поиск', ссылка=x.get('ссылка', ''))
+        if (res.get('anatomy') or {}).get('параметры') is not None: res['anatomy']['параметры'] = param_groups(res.get('site_map', {}), res)
     if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
         res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res

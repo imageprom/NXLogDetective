@@ -1,5 +1,5 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
-import json, os, pickle, warnings
+import json, os, pickle, re, warnings
 import numpy as np, pandas as pd
 from . import coverage, profile, anatomy, visits, blocks, brief, recon, findings_meta, findings_text
 from .findings import Findings, calibrate
@@ -142,13 +142,34 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     except Exception as e:
         import traceback; traceback.print_exc()
         res['anatomy'] = {'ошибка': str(e)}
-    try:   # параметры — после «Анатомии»: нужны её системные папки и закрытые зоны
+    try:   # параметры — после «Анатомии»: нужны её системные папки и закрытые зоны; справочник — по найденному движку
         from .anatomy import PARAM_GROUPS, param_groups
+        from . import reference
         A_ = res.get('anatomy') or {}
-        sysp = [x['папка'] for x in A_.get('папки') or [] if 'загруж' not in str(x.get('что', ''))] + [x['адрес'] for x in A_.get('зоны') or [] if str(x.get('адрес', '')).startswith('/')]
+        site_ = (m.get('site_hosts') or ['site'])[0]
+        ref = reference.load(m, R['base'].cat.categories.astype(str), site_)
+        # системное — ядро, админка, API и закрытые зоны; шаблоны и доработки сайта (/local/ и т. п.) — это код самого сайта, не движок
+        sysp = list(ref.folders(('система', 'админка', 'api', 'служебное', 'обмен', 'вход')))
+        if not sysp: sysp = [x['папка'] for x in A_.get('папки') or [] if not re.search(r'загруж|шаблон', str(x.get('что', '')))]
+        sysp += [x['адрес'] for x in A_.get('зоны') or [] if str(x.get('адрес', '')).startswith('/') and x['адрес'] not in sysp]
         FC = res['sheets'].get('Общий анализ', {}).get('Фасеты')
         navk = set(FC.groupby('ключ')['запросов'].sum().loc[lambda x: x >= 10].index.astype(str)) if FC is not None and len(FC) else set()   # мусор из битых адресов — не фасет
-        res['params'] = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp).to_dict('records')
+        allref = reference.Reference([n_ for n_ in reference.all_engine_names()], (), site_)
+        ref.other = allref
+        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref)
+        res['params'] = Pr.to_dict('records')
+        # незнакомые: нет в справочнике (или запись из поиска устарела) и заметное число запросов — Детектив ищет их в сети
+        unk = Pr[(Pr['источник'].isin(['', 'поведение', 'имя']) & (Pr['группа'] != 'Атаки и зонды') & (Pr['запросов'] >= 20))]
+        stale = [r_ for r_ in res['params'] if r_['источник'].startswith('поиск') and ref.stale(ref.match(r_['ключ']))]
+        res['unknown_params'] = [dict(ключ=r_['ключ'], ключи=r_['ключи'][:8], сейчас=r_['группа'], по=r_['источник'] or 'нет', запросов=r_['запросов'],
+                                      людей=r_['людей'], значения=r_['значения'], где=r_['где'], роботы=r_['роботы'], вместе_с=r_['вместе_с'])
+                                 for r_ in unk.head(40).to_dict('records')] + [dict(ключ=r_['ключ'], сейчас=r_['группа'], по='поиск, устарело', запросов=r_['запросов']) for r_ in stale[:10]]
+        # подсказка Детективу: ключ описан у другого движка (на сайте его нет — часто это зонды под чужой движок)
+        for u in res['unknown_params']:
+            h_ = allref.match(u['ключ'])
+            if h_ and h_.get('файл', '').startswith('engines/'): u['есть_у_другого_движка'] = f"{h_['название_файла']}: {h_['группа']} — {h_.get('что', '')}"
+        res['reference_files'] = [f['файл'] for f in ref.files]
+        ref.save()
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:
         import traceback; traceback.print_exc(); res['params'] = None

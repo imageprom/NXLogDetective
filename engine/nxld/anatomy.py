@@ -534,9 +534,13 @@ def get_receivers(R, c, st):
             np_ = g['tpl'].nunique()
             codes = Counter(g['st'])
             ks = [k for k, _ in Counter(g['ключ']).most_common(3)]
-            pg_ = 'странице' if np_ % 10 == 1 and np_ % 100 != 11 else 'страницах'
-            out.append(dict(адрес=f"{sec}*", метод='GET', что=kind,
-                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks) + f"; встречается на {np_} {pg_} раздела",
+            sub = g['tpl'].map(lambda t: '/filter/' in t)        # вложенные страницы умного фильтра …/filter/…/apply/
+            n_main = g.loc[~sub, 'tpl'].nunique()
+            n_sub = g.loc[sub, 'tpl'].nunique()
+            word = lambda k: 'страница' if k % 10 == 1 and k % 100 != 11 else 'страницы' if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14 else 'страниц'
+            where = f"{sec}* — {n_main} {word(n_main)}" + (f" + {n_sub} вложенных {'страница' if n_sub % 10 == 1 and n_sub % 100 != 11 else 'страниц'} фильтра" if n_sub else '')
+            out.append(dict(адрес=where, метод='GET', что=kind,
+                            почему=('параметр' if len(ks) == 1 else 'параметры') + ' в адресе: ' + ', '.join(ks),
                             отправок=len(g), IP=g['ip'].nunique(), коды=', '.join(f'{a}:{b}' for a, b in codes.most_common(4)),
                             первый=pd.to_datetime(g['ts'].min(), unit='s'), последний=pd.to_datetime(g['ts'].max(), unit='s')))
     return sorted(out, key=lambda x: (x['что'], -x['отправок']))

@@ -1,10 +1,37 @@
 """NXLD: лист «Файлы» — какие логи разобраны (ТЗ: технические данные — в общем файле, отдельным листом в конце)."""
 from collections import Counter
 import pandas as pd
-from openpyxl.styles import Font
-from .report_index import Sheet, ORANGE, ru_num, ru_short, plural, ru_date
+from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
+from .report_index import Sheet, ORANGE, ru_num, ru_short, plural, ru_date, NUM_FMT
 
 F_LIGHT = 'F7F7F7'
+
+
+def big_table(S, headers, rows, cols=('B', 'C', 'D', 'E', 'F'), num=(1,), center=(2, 3), wrap=(0, 4)):
+    """Таблица в стиле больших таблиц (как «Конверсии»): оранжевая шапка шрифтом 9, строки без заливки, тонкий разделитель, отступ в ячейках."""
+    ws = S.ws
+    white, sep = Side(style='thin', color='FFFFFF'), Side(style='thin', color='D9D9D9')
+    for i, h in enumerate(headers):
+        c = ws[f'{cols[i]}{S.r}']; c.value = h
+        c.font = Font(name='Arial', size=9, bold=True, color='FFFFFF'); c.fill = PatternFill('solid', fgColor=ORANGE)
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True); c.border = Border(left=white, right=white)
+    ws.row_dimensions[S.r].height = 32
+    S.r += 1
+    for row in rows:
+        lines = 1
+        for i, v in enumerate(row):
+            c = ws[f'{cols[i]}{S.r}']; c.value = v
+            c.font = Font(name='Arial', size=9, color='000000')
+            hz = 'center' if i in center else ('right' if i in num else 'left')
+            c.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=i in wrap, indent=0 if hz == 'center' else 1)
+            c.border = Border(bottom=sep)
+            if i in num and isinstance(v, int) and v >= 1000: c.number_format = NUM_FMT
+            if i in wrap and isinstance(v, str):
+                w_ = max(8, int(ws.column_dimensions[cols[i]].width or 10) - 2)
+                lines = max(lines, sum(max(1, -(-len(x) // int(w_ * 1.3))) for x in v.split('\n')))
+        ws.row_dimensions[S.r].height = 12 * lines + 3
+        S.r += 1
+    S.r += 1
 
 
 def dt(s):
@@ -72,7 +99,7 @@ def build_files(wb, res, title='Логи'):
             if r['файл'] in copy_of: note.append(f"копия {shown(copy_of[r['файл']]).splitlines()[0]}")
             if int(r['нераспознано']): note.append(f"не распознано {ru_num(int(r['нераспознано']))} строк")
             rows.append([shown(r['файл']), int(r['строк']), dt(r['с']), dt(r['по']), '\n'.join(note) or r['формат']])
-        S.table(['Файл', 'Строк', 'С', 'По', 'Формат и заметки'], rows, ['B', 'C', 'D', 'E', 'F'], num=(1,), body=F_LIGHT, wrap=1.1)
+        big_table(S, ['Файл', 'Строк', 'С', 'По', 'Формат и заметки'], rows)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

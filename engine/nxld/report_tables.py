@@ -2,13 +2,13 @@
 import numbers
 import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
-from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT
+from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT, RED
 
 SEP = Side(style='thin', color='D9D9D9')
 WHITE = Side(style='thin', color='FFFFFF')
 
 
-def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None):
+def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None, red=('Ошибки',)):
     """Пересобирает лист name: строка 1 — заголовок, 2 — пояснение, 4 — шапка, дальше данные.
     widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None."""
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
@@ -47,7 +47,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             cell = ws.cell(i, j + X, v)
             col = cols[j - 1]
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
-            cell.font = Font(name='Arial', size=size, bold=bool(bold_rule and bold_rule(col, v)), color='000000')
+            cell.font = Font(name='Arial', size=size, bold=bool(bold_rule and bold_rule(col, v)), color=RED if col in red else '000000')
             hz = 'center' if col in center else ('right' if isnum else 'left')
             cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
@@ -183,14 +183,15 @@ def _finish(rows):
     d = pd.DataFrame(rows)
     if not len(d): return d
     d['Первый'] = d['_t0'].dt.strftime('%d.%m.%Y %H:%M'); d['Последний'] = d['_t1'].dt.strftime('%d.%m.%Y %H:%M')
-    d['Коды ответа'] = d['Коды ответа'].map(fmt_codes)
-    d = d.sort_values('Запросов', ascending=False).drop(columns=['_t0', '_t1'])   # по числу запросов; группы — фильтром
-    order = ['Адрес точки', 'Запросов', 'Уникальных IP', 'Метод', 'Опознано как', 'Улики', 'Коды ответа', 'Первый', 'Последний']
+    sp_ = d['Коды ответа'].map(split_codes)
+    d['Ответы'], d['Ошибки'] = sp_.str[0], sp_.str[1]
+    d = d.sort_values('Запросов', ascending=False).drop(columns=['_t0', '_t1', 'Коды ответа'])   # по числу запросов; группы — фильтром
+    order = ['Адрес точки', 'Запросов', 'Уникальных IP', 'Метод', 'Опознано как', 'Улики', 'Ответы', 'Ошибки', 'Первый', 'Последний']
     d = d[[c_ for c_ in order if c_ in d.columns]]
     return d
 
 
-WIDTHS = {'Адрес точки': 55, 'Метод': 8, 'Опознано как': 22, 'Запросов': 10, 'Уникальных IP': 11, 'Улики': 50, 'Коды ответа': 34, 'Первый': 16, 'Последний': 16}
+WIDTHS = {'Адрес точки': 55, 'Метод': 8, 'Опознано как': 22, 'Запросов': 10, 'Уникальных IP': 11, 'Улики': 50, 'Ответы': 30, 'Ошибки': 24, 'Первый': 16, 'Последний': 16}
 
 
 def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
@@ -212,7 +213,7 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов') else None
     bold = lambda col, v: col == 'Опознано как' and v in ('Заявка', 'Вход')
     data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные', WIDTHS,
-               wrap=('Улики', 'Адрес точки'), bold_rule=bold, center=('Метод',), kpi=kpi, kpi_col='Метод', row_rule=row_rule,
+               wrap=('Улики', 'Адрес точки', 'Ответы', 'Ошибки'), bold_rule=bold, center=('Метод',), kpi=kpi, kpi_col='Метод', row_rule=row_rule,
                links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
     ws = wb[name]   # сноска и чего нет — тоже результат
     if d['Адрес точки'].astype(str).str.contains('фасетн').any():
@@ -238,11 +239,19 @@ def post_all(wb, res, name='POST-отправки', after='GET-отправки'
     kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Запросов сканеров', int(sc['Запросов'].sum()))]
     row_rule = lambda r: F_NOTE if r.get('Опознано как') == 'Сканер' else None
     data_sheet(wb, name, d, 'POST-отправки', 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
-               wrap=('Улики', 'Адрес точки'), center=(), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
+               wrap=('Улики', 'Адрес точки', 'Ответы', 'Ошибки'), center=(), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
     ws = wb[name]   # ссылка на другой файл
     r_ = ws.max_row + 2
     c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')
     c.hyperlink = "NXLD_01_Overview.xlsx#'Точки приёма данных'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
+
+
+def split_codes(s):
+    """«200:65634, 404:12, 499:3» → («200 (65 634), 499 (3)», «404 (12)»): ответы и ошибки (4xx/5xx, кроме 499 — человек ушёл сам)."""
+    ok, bad = [], []
+    for k, v in _codes(s).items():
+        (bad if k >= 400 and k != 499 else ok).append(f"{k} ({int(v):,})".replace(',', '\u00a0'))
+    return ', '.join(ok), ', '.join(bad)
 
 
 def fmt_codes(s):
@@ -259,8 +268,8 @@ def facets_sheet(wb, F, name='Фасеты'):
     d = pd.DataFrame({'Раздел': F['раздел'], 'Ключ': F['ключ'], 'Значение': F['значение'], 'Условие': F['условие'], 'Расшифровка': F['расшифровка'],
                       'Запросов': F['запросов'].astype(int), 'IP (люди)': F['людей'].astype(int), 'Откуда': F['откуда']})
     kpi = [('Условий', int(d['Условие'].nunique())), ('Значений', len(d)), ('Запросов', int(d['Запросов'].sum()))]
-    widths = {'Раздел': 14, 'Ключ': 26, 'Значение': 18, 'Условие': 16, 'Расшифровка': 28, 'Запросов': 11, 'IP (люди)': 10, 'Откуда': 30}
-    data_sheet(wb, name, d, 'Фасеты', 'Что люди выбирают в фильтре каталога', widths, kpi=kpi, kpi_col='Запросов',
+    widths = {'Раздел': 14, 'Ключ': 26, 'Значение': 34, 'Условие': 16, 'Расшифровка': 30, 'Запросов': 11, 'IP (люди)': 10, 'Откуда': 30}
+    data_sheet(wb, name, d, 'Фасеты', 'Что люди выбирают в фильтре каталога', widths, wrap=('Ключ', 'Значение', 'Условие', 'Расшифровка', 'Откуда'), kpi=kpi, kpi_col='Запросов',
                row_rule=lambda r: 'EFEFEF' if str(r.get('Откуда', '')).startswith('параметры') else None,
                links=[('Где фильтр принимает запросы', 'Точки приёма данных'), ('Устройство каталога', 'Анатомия сайта')])
 
@@ -301,8 +310,8 @@ def service_files(wb, res, name='Файлы'):
         a = unquote(str(f.get('адрес', '')), errors='replace') + (f"\n{f['внутри']}" if f.get('внутри') else '')
         day = lambda k: pd.to_datetime(f.get(k)).strftime('%d.%m.%Y') if f.get(k) else ''
         rows.append({'Файл': a, 'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Группа': f.get('группа', 'Прочие'),
-                     'Файлов': int(f.get('файлов') or 1), 'Запросов': int(f.get('запросов') or 0), 'Ошибок': int(err),
-                     'Коды ответа': fmt_codes(f.get('коды')),
+                     'Файлов': int(f.get('файлов') or 1), 'Запросов': int(f.get('запросов') or 0),
+                     'Ответы': split_codes(f.get('коды'))[0], 'Ошибки': split_codes(f.get('коды'))[1], '_err': int(err),
                      **({'Браузеры': int(f.get('браузеры') or 0), 'Роботы': _who(f.get('роботы', '')) if f.get('роботы') else ''} if 'браузеры' in f
                         else {'Кто забирает': _who(f.get('кто_забирает', ''))}),
                      'Со страниц сайта': int(f.get('со_страниц') or 0), 'Напрямую': int(f.get('напрямую') or 0),
@@ -314,12 +323,13 @@ def service_files(wb, res, name='Файлы'):
         d = d.drop(columns=['Со страниц сайта', 'Напрямую', 'Другие сайты'])
     d = d.sort_values('Запросов', ascending=False)
     if name not in wb.sheetnames: wb.create_sheet(name)
-    kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['Ошибок'] > 0).sum()))]
-    widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ошибок': 9, 'Коды ответа': 44, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
+    kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['_err'] > 0).sum()))]
+    d = d.drop(columns='_err')
+    widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
     missing = [nm for nm, _ in FILE_GROUPS if nm not in set(d['Группа']) and nm != 'Прочие файлы'] if res.get('files') is not None else []
     links = [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
-    data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта как отдельный файл', widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты'),
-               kpi=kpi, kpi_col='Ошибок', row_rule=lambda r: F_NOTE if r.get('Ошибок') else None, links=links)
+    data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта как отдельный файл', widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
+               kpi=kpi, kpi_col='Файлов', links=links)
     ws = wb[name]
     if missing:
         r = ws.max_row + 2
@@ -347,21 +357,21 @@ def embedded_sheet(wb, res, name='Динамические блоки'):
     d = pd.DataFrame([{'Блок': blk(e), 'Размер, КБ': float(e['средний_размер_КБ']), 'Вид': e['вид'], 'Загрузка': e['загрузка'],
                        'Запросов': int(e['запросов']), 'Визиты (люди)': int(e['визитов_людей']),
                        'Автозагрузка, %': e['автозагрузка'] if e.get('автозагрузка') is not None else '',
-                       'Охват страниц': int(e['охват_страниц']), 'Коды ответа': fmt_codes(e['коды']),
+                       'Охват страниц': int(e['охват_страниц']), 'Ответы': split_codes(e['коды'])[0], 'Ошибки': split_codes(e['коды'])[1],
                        'Первый': day(e['первый_день']), 'Последний': day(e['последний_день'])} for e in E])
-    bad = [(_err_share(e['коды'])[0] >= 0.01 or _err_share(e['коды'])[1]) for e in E]
+    bad = [bool(split_codes(e['коды'])[1]) for e in E]
     d['_bad'] = bad
     cnt = d['Загрузка'].value_counts()
     kpi = [('Блоков', len(d)), ('Подгрузок', int(d['Запросов'].sum())), ('Авто', int(cnt.get('авто', 0))), ('По действию', int(cnt.get('по действию', 0))), ('С ошибками', int(sum(bad)))]
     if name not in wb.sheetnames: wb.create_sheet(name)
     widths = {'Блок': 52, 'Размер, КБ': 10, 'Вид': 26, 'Загрузка': 13, 'Запросов': 13, 'Визиты (люди)': 13, 'Автозагрузка, %': 13,
-              'Охват страниц': 11, 'Коды ответа': 40, 'Первый': 12, 'Последний': 12}
+              'Охват страниц': 11, 'Ответы': 34, 'Ошибки': 26, 'Первый': 12, 'Последний': 12}
     data_sheet(wb, name, d.drop(columns='_bad'), 'Динамические блоки', 'Что подгружается внутри страницы: само или по действию человека', widths,
-               wrap=('Блок', 'Вид', 'Коды ответа'), center=('Загрузка',), kpi=kpi, kpi_col='Запросов',
+               wrap=('Блок', 'Вид', 'Ответы', 'Ошибки'), center=('Загрузка',), kpi=kpi, kpi_col='Запросов',
                links=[('Сводка по видам', 'Анатомия сайта'), ('Куда формы отправляют данные', 'Точки приёма данных'), ('Сочетания фильтров', 'Фасеты')])
     ws = wb[name]
-    for i, (b_, k_) in enumerate(zip(bad, d['Вид'])):   # ошибки — персиковым, неопознанные — серым
-        fill = F_NOTE if b_ else 'EFEFEF' if k_ == 'Неопознанные' else None
+    for i, k_ in enumerate(d['Вид']):   # неопознанные — серым; ошибки видны красным в колонке «Ошибки», много это или мало — решает аналитик
+        fill = 'EFEFEF' if k_ == 'Неопознанные' else None
         if fill:
             for c in range(2, 2 + len(d.columns) - 1): ws.cell(5 + i, c).fill = PatternFill('solid', fgColor=fill)
     return ws
@@ -391,3 +401,40 @@ def params_sheet(wb, res, name='Параметры запросов'):
                links=[('Сводка по группам', 'Анатомия сайта'), ('Фильтры каталога по значениям', 'Фасеты')])
     ws = wb[name]
     return ws
+
+
+ERR_TOKEN = None
+
+
+def redden_codes(wb, skip=('_snapshot',)):
+    """Во всех листах: в колонках с кодами ответа ошибки (4xx/5xx, кроме 499) — красным #C00000, остальное как было."""
+    import re
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    tok = re.compile(r'(?<!\d)([1-5]\d\d)(\s*(?::\s*[\d\s\u00a0]+|\([\d\s\u00a0]+\)))')
+    for ws in wb.worksheets:
+        if ws.title in skip or ws.max_row < 2: continue
+        hdr_rows = [r for r in range(1, min(ws.max_row, 6) + 1)]
+        cols = {}
+        for r in hdr_rows:
+            for c in range(1, ws.max_column + 1):
+                v = ws.cell(r, c).value
+                if isinstance(v, str) and re.search(r'код|ответ', v, re.I) and v.strip() not in ('Ответы',):
+                    cols[c] = r
+        for c, hr in cols.items():
+            for r in range(hr + 1, ws.max_row + 1):
+                cell = ws.cell(r, c); v = cell.value
+                if not isinstance(v, str) or not tok.search(v): continue
+                parts, pos, any_bad = [], 0, False
+                f0 = cell.font
+                base = InlineFont(rFont=f0.name or 'Arial', sz=f0.sz or 9, b=f0.b, color=(f0.color.rgb if f0.color is not None and isinstance(f0.color.rgb, str) else None))
+                redf = InlineFont(rFont=f0.name or 'Arial', sz=f0.sz or 9, b=f0.b, color=RED)
+                for m in tok.finditer(v):
+                    k = int(m.group(1)); bad = k >= 400 and k != 499
+                    if not bad: continue
+                    any_bad = True
+                    if m.start() > pos: parts.append(TextBlock(base, v[pos:m.start()]))
+                    parts.append(TextBlock(redf, m.group(0))); pos = m.end()
+                if any_bad:
+                    if pos < len(v): parts.append(TextBlock(base, v[pos:]))
+                    cell.value = CellRichText(parts)

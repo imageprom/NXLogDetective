@@ -334,6 +334,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             tail_ = [n_ for n_ in ('Файлы', 'Логи', '_snapshot') if n_ in wb.sheetnames]   # в конце: «Файлы», «Логи», затем снимок
             wb._sheets = [w for w in wb._sheets if w.title not in tail_] + [wb[n_] for n_ in tail_]
             report_index.build_index(wb, res, names)
+        report_tables.redden_codes(wb)   # ошибки в списках кодов — красным, на всех листах
         wb.save(path)
         written.append(path)
     if only:

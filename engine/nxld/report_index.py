@@ -11,6 +11,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from .prepare import VERSION
 
 ORANGE, ORANGE2, GREY, DARK = 'F57041', 'FF6D01', '666666', '333333'
+RED = 'C00000'   # ошибочные ответы (4xx/5xx, кроме 499) — красным
 INK = '404040'   # серый текст на белом фоне — контрастнее фирменного #666666
 F_CARD, F_NOTE, F_HEAD = 'EFEFEF', 'FCE5CD', 'E5E5E5'
 # тысячи — всегда пробелом, независимо от языка Excel (запятая путается с десятичным знаком)

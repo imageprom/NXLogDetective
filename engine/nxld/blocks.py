@@ -98,18 +98,48 @@ def top_pages(c, n=500, by_section=False, by_template=False):
 
 
 
+ACT_GROUPS = ('Люди', 'Роботы', 'Боты', 'Свои')
+
+
+def activity(c):
+    """Активность по дням: визиты и уникальные IP по группам, отправленные заявки (роботы форм не шлют), какая часть суток в логе.
+    Последняя строка — «Итого»: IP за весь период уникальные, а не сумма по дням."""
+    R, V = c.R, c.V
+    days = sorted(V['day'].unique())
+    D = pd.DataFrame({'день': days}).set_index('день')
+    for g in ACT_GROUPS:
+        vg = V[V['group'] == g]
+        D[f'Визиты|{g}'] = vg.groupby('day').size()
+    for g in ACT_GROUPS:
+        vg = V[V['group'] == g]
+        D[f'IP|{g}'] = vg.groupby('day')['ip'].nunique()
+    for g in ('Люди', 'Боты', 'Свои'):
+        vg = V[V['group'] == g]
+        D[f'Заявки|{g}'] = vg.groupby('day')['n_goal'].sum()
+    D = D.fillna(0).astype(int)
+    t = pd.to_datetime(R['ts'], unit='s')
+    span = t.groupby(t.dt.strftime('%Y-%m-%d')).agg(['min', 'max'])
+    D['_с'] = span['min'].reindex(D.index).dt.strftime('%H:%M')
+    D['_по'] = span['max'].reindex(D.index).dt.strftime('%H:%M')
+    full = (D['_с'] <= '00:05') & (D['_по'] >= '23:55')
+    D['_полный'] = full
+    D = D.reset_index()
+    tot = {'день': 'Итого', '_полный': True, '_с': '', '_по': ''}
+    for g in ACT_GROUPS:
+        tot[f'Визиты|{g}'] = int(D[f'Визиты|{g}'].sum())
+        tot[f'IP|{g}'] = int(V.loc[V['group'] == g, 'ip'].nunique())
+    for g in ('Люди', 'Боты', 'Свои'):
+        tot[f'Заявки|{g}'] = int(D[f'Заявки|{g}'].sum())
+    return pd.concat([D, pd.DataFrame([tot])], ignore_index=True)
+
+
 def overview(c, F):
     R, V, H = c.R, c.V, c.H
     S = {}
     grp = V.groupby(['group', 'subgroup']).agg(визитов=('n_req', 'size'), IP=('ip', 'nunique'), запросов=('n_req', 'sum'), ГБ=('bytes', lambda s: round(s.sum() / GB, 2))).reset_index()
     grp.columns = ['группа', 'подгруппа', 'визитов', 'IP', 'запросов', 'ГБ']
     S['Люди и боты'] = grp
-    D = V.pivot_table(index='day', columns='group', values='n_req', aggfunc='size', fill_value=0)
-    D['конверсий людей'] = H.groupby('day')['n_conv'].sum()
-    D['конверсий ботов'] = V[V['group'] == 'Боты'].groupby('day')['n_conv'].sum()
-    D['конверсий своих'] = V[V['group'] == 'Свои'].groupby('day')['n_conv'].sum()
-    D = D.fillna(0).astype(int).reset_index().rename(columns={'day': 'день'})
-    S['По дням'] = D
+    S['Активность'] = activity(c)
     ch = H.groupby('channel').agg(визитов=('n_req', 'size'), IP=('ip', 'nunique'), конверсий=('n_conv', 'sum')).sort_values('визитов', ascending=False)
     ch['доля_визитов_%'] = (ch['визитов'] / ch['визитов'].sum() * 100).round(1)
     ch['конверсия_%'] = (ch['конверсий'] / ch['визитов'] * 100).round(2)

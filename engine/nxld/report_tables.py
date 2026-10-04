@@ -426,6 +426,75 @@ def pages_sheet(wb, T, name, mode):
     return ws
 
 
+WEEKDAY = ('Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс')
+
+
+def activity_sheet(wb, A, name='Активность'):
+    """Активность по дням: двухуровневая шапка — «День» (день недели, дата, время в логе), «Визиты», «IP (уникальные)», «Заявки»."""
+    if A is None or not len(A) or name not in wb.sheetnames: return None
+    from openpyxl.utils import get_column_letter
+    body = A[A['день'] != 'Итого']
+    tot = A[A['день'] == 'Итого']
+    dt_ = pd.to_datetime(body['день'])
+    groups = [c_ for c_ in A.columns if '|' in c_]
+    cols = {'День': [WEEKDAY[d.weekday()] for d in dt_], 'Дата': dt_.dt.strftime('%d.%m.%Y').tolist(),
+            'Время': ['00:00–23:59' if full else f'{a}–{b}' for a, b, full in zip(body['_с'], body['_по'], body['_полный'])]}
+    for g in groups: cols[g] = body[g].astype(int).tolist()
+    d = pd.DataFrame(cols)
+    if len(tot):
+        t_ = {'День': 'Итого', 'Дата': '', 'Время': f'{len(body)} дн.'}
+        t_.update({g: int(tot[g].iloc[0]) for g in groups})
+        d = pd.concat([d, pd.DataFrame([t_])], ignore_index=True)
+    full_days = body['_полный'].values
+    hv = body.loc[body['_полный'], 'Визиты|Люди'] if full_days.any() else body['Визиты|Люди']
+    peak = body.loc[body['Визиты|Люди'].idxmax()] if len(body) else None
+    kpi = [('Визиты людей в день', int(round(hv.mean())) if len(hv) else 0),
+           ('Самый активный день', f"{WEEKDAY[pd.Timestamp(peak['день']).weekday()]} {pd.Timestamp(peak['день']).strftime('%d.%m')}" if peak is not None else ''),
+           ('Заявки людей', int(body['Заявки|Люди'].sum()))]
+    weekend = [x >= 5 for x in dt_.dt.weekday] + [False] * len(tot)
+    widths = {'День': 7, 'Дата': 12, 'Время': 13, **{g: 10 for g in groups}}
+    data_sheet(wb, name, d, name, 'Визиты, уникальные IP и заявки по дням', widths, center=('День', 'Дата', 'Время'),
+               kpi=kpi, kpi_col='IP|Люди' if 'IP|Люди' in groups else None, row_rule=lambda r, _it=iter(weekend): 'F3F3F3' if next(_it) else None,
+               links=[('Из кого состоит трафик', 'Люди и боты'), ('Все отправки форм', 'Конверсии')])
+    ws = wb[name]
+    H, X = 4, 1
+    # шапка в два уровня: строка 3 — группы (объединённые ячейки), строка 4 — колонки
+    hdr = ['День', 'День', 'День'] + [g.split('|')[0] for g in groups]
+    hdr = ['IP (уникальные)' if h == 'IP' else h for h in hdr]
+    j = 0
+    while j < len(hdr):
+        k = j
+        while k + 1 < len(hdr) and hdr[k + 1] == hdr[j]: k += 1
+        c_ = ws.cell(H - 1, j + 1 + X, hdr[j])
+        c_.font = Font(name='Arial', size=9, bold=True, color='FFFFFF'); c_.fill = PatternFill('solid', fgColor=ORANGE)
+        c_.alignment = Alignment(horizontal='center', vertical='center')
+        for q in range(j, k + 1):
+            cc = ws.cell(H - 1, q + 1 + X); cc.fill = PatternFill('solid', fgColor=ORANGE)
+            cc.border = Border(left=WHITE if q == j else None, right=WHITE if q == k else None, bottom=WHITE)
+        if k > j: ws.merge_cells(start_row=H - 1, start_column=j + 1 + X, end_row=H - 1, end_column=k + 1 + X)
+        j = k + 1
+    ws.row_dimensions[H - 1].height = 20
+    for q, g in enumerate(groups):
+        ws.cell(H, q + 4 + X).value = g.split('|')[1]
+    ws.row_dimensions[H].height = 20
+    # неполные дни — серым курсивом; «Итого» — жирным с линией сверху
+    for i, full in enumerate(full_days):
+        if not full:
+            for q in range(len(d.columns)):
+                c_ = ws.cell(H + 1 + i, q + 1 + X); c_.font = Font(name='Arial', size=9, italic=True, color=GREY)
+    if len(tot):
+        r_ = H + len(d)
+        for q in range(len(d.columns)):
+            c_ = ws.cell(r_, q + 1 + X); c_.font = Font(name='Arial', size=9, bold=True)
+            c_.border = Border(top=Side(style='thin', color=ORANGE), bottom=SEP)
+        ws.auto_filter.ref = f"{ws.cell(H, 1 + X).coordinate}:{ws.cell(H + len(d) - 1, len(d.columns) + X).coordinate}"
+    r_ = ws.max_row + 2
+    for t_ in ['Визиты — по группам, как на листе «Люди и боты». IP — разные адреса за день; в «Итого» — разные за весь период, поэтому меньше суммы по дням.',
+               'Заявки — отправки форм; у ботов — спам, у своих — тесты. Время — какая часть суток попала в лог; неполные дни — серым курсивом, в среднее не входят. Выходные — на сером.']:
+        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+    return ws
+
+
 SRC_LABEL = {'документация': 'Документация', 'сообщество': 'Сообщество', 'сборник': 'Сообщество', 'наблюдение': 'Сообщество',
              'поиск': 'Оперативный поиск', 'поиск, подтверждено': 'Оперативный поиск, подтверждено', 'дедукция': 'Дедукция', 'поведение': 'Дедукция', 'имя': 'Дедукция', '': ''}
 

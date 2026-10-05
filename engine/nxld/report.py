@@ -338,7 +338,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             report_tables.conversions(wb, S.get('Конверсии'))
             report_tables.facets_sheet(wb, S.get('Фасеты'))
             for nm_ in ('Разделы', 'Типы страниц', 'Страницы'): report_tables.pages_sheet(wb, S.get(nm_), nm_, nm_)
-            report_tables.activity_sheet(wb, S.get('Журнал активности'))
+            report_tables.activity_sheet(wb, S.get('Журнал активности'), outages=(res.get('errors') or {}).get('сбои'))
             report_tables.intake(wb, res)
             names['Точки приёма данных'] = 'Точки приёма данных'
             if report_tables.embedded_sheet(wb, res) is not None:   # сразу за «Анатомией сайта»

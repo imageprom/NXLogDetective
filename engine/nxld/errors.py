@@ -11,7 +11,7 @@ import pandas as pd
 
 WHO = ('Люди', 'Поисковики', 'Роботы', 'Мониторинг', 'Утилиты', 'Боты', 'Свои')
 ORIGIN = ('Со страниц сайта', 'Напрямую', 'С других сайтов')
-STATES = ('работает', 'переадресация', 'отказ', 'нет на сервере', 'ошибка сервера')   # состояние адреса за день
+STATES = ('работает', 'переадресация', 'отказ', 'нет на сервере', 'ошибка сервера', 'ошибка сервера в сбое')   # состояние адреса за день
 TYPE_LABEL = {'страница': 'страница', 'файл': 'файл', 'конструкт': 'битый адрес'}
 AD_MARK = r'(?:^|&)(?:yclid|gclid|fbclid|utm_source|utm_medium|utm_campaign|_openstat)='
 FAMILIES = [('404', lambda k: k == 404), ('5xx', lambda k: k >= 500),
@@ -43,6 +43,20 @@ def recent_day(R):
     """С какого дня ошибка считается актуальной: последние 2 дня лога или последние 10% периода, что больше."""
     days_all = sorted(R['day'].astype(str).unique())
     return days_all[max(0, len(days_all) - max(2, int(round(len(days_all) * 0.1))))]
+
+
+def outages(c, X):
+    """Сбои с кодом по времени начала («27.09 22:22» — не меняется, сколько логов ни добавь) и числом запросов за время сбоя."""
+    if X is None or not len(X): return pd.DataFrame()
+    ts = c.R['ts'].values
+    D = X.copy()
+    t0 = pd.to_datetime(D['деградация_с'].fillna(D['начало'])) if 'деградация_с' in D else pd.to_datetime(D['начало'])
+    t1 = pd.to_datetime(D['деградация_по'].fillna(D['конец'])) if 'деградация_по' in D else pd.to_datetime(D['конец'])
+    D['сбой'] = pd.to_datetime(D['начало']).dt.strftime('%d.%m %H:%M')
+    D['t0'] = t0.values.astype('datetime64[s]').astype('int64'); D['t1'] = t1.values.astype('datetime64[s]').astype('int64') + 59   # секунды эпохи, как R['ts']
+    D['запросов'] = [int(((ts >= a) & (ts <= b)).sum()) for a, b in zip(D['t0'], D['t1'])]
+    D['день'] = pd.to_datetime(D['начало']).dt.strftime('%Y-%m-%d')
+    return D
 
 
 def redirect_ends(c, codes):
@@ -96,7 +110,7 @@ def _redirect_text(info):
     return f'переадресация {code} → {dst} ({end})' + (f', шагов: {hops}' if hops >= 3 else '')
 
 
-def history(c, codes):
+def history(c, codes, OUT=None):
     """Статус адреса по дням и «сейчас». Состояние дня — преобладающий ответ людям, своим и поисковикам (если их не было — всем);
     переадресация оценивается по концу цепочки: привела на живую страницу — работает. 499 не считается.
     Актуально — адрес не работает сейчас и запрашивался в последние дни лога (2 дня или 10% периода, что больше)."""
@@ -114,7 +128,15 @@ def history(c, codes):
     rr = (s_ == 1) & (fin >= 0)
     s_[rr] = _state(np.maximum(fin[rr], 200))
     s_[rr & (fin >= 300) & (fin < 400)] = 1
-    X = pd.DataFrame({'b': bm, 'd': R['day'].astype(str).values[m], 's': s_, 'own': np.isin(w, (0, 1, 6))})
+    # 5xx во время сбоя — не поломка страницы, а сбой сервера: состояние «ошибка сервера в сбое …»
+    oid = np.array([''] * len(s_), dtype=object)
+    if OUT is not None and len(OUT):
+        tm = R['ts'].values[m]
+        for _, o in OUT.iterrows():
+            inn = (s_ == 4) & (tm >= o['t0']) & (tm <= o['t1'])
+            s_[inn] = 5; oid[inn] = o['сбой']
+    X = pd.DataFrame({'b': bm, 'd': R['day'].astype(str).values[m], 's': s_, 'own': np.isin(w, (0, 1, 6)), 'o': oid})
+    OID = X[X['o'] != ''].groupby(['b', 'd'])['o'].agg(lambda v: v.value_counts().index[0]).to_dict()
     has_own = X.groupby('b')['own'].transform('any')
     X = X[X['own'] | ~has_own]
     days_all = sorted(R['day'].astype(str).unique())
@@ -128,29 +150,31 @@ def history(c, codes):
         for d, st_ in zip(g['d'], g['s']):
             if runs and runs[-1][0] == st_: runs[-1][2] = d
             else: runs.append([st_, d, d])
-        names = [STATES[r[0]] for r in runs]
+        def nm_of(st_, a, z):   # «ошибка сервера в сбое 27.09 22:22» — по коду сбоя
+            return f"ошибка сервера в сбое {OID.get((b, a), '')}".strip() if st_ == 5 else STATES[st_]
+        names = [nm_of(*r) for r in runs]
         if len(runs) == 1:
-            txt = f'{names[0]} весь период' if runs[0][1] <= days_all[min(1, len(days_all) - 1)] else f'{names[0]} с {_fmt_day(runs[0][1])}'
+            txt = names[0] if runs[0][0] == 5 else (f'{names[0]} весь период' if runs[0][1] <= days_all[min(1, len(days_all) - 1)] else f'{names[0]} с {_fmt_day(runs[0][1])}')
         else:
             parts = []
             for i, (st_, a, z) in enumerate(runs):
-                nm = STATES[st_]
+                nm = nm_of(st_, a, z)
                 if i == 0:
-                    parts.append(nm if st_ == 0 else (f'{nm} с первого дня' if a <= days_all[min(1, len(days_all) - 1)] else f'{nm} с {_fmt_day(a)}'))
+                    parts.append(nm if st_ in (0, 5) else (f'{nm} с первого дня' if a <= days_all[min(1, len(days_all) - 1)] else f'{nm} с {_fmt_day(a)}'))
                 elif i == len(runs) - 1:
                     parts.append(('снова работает' if st_ == 0 else nm) + f' с {_fmt_day(a)}')
                 else:
-                    parts.append(f"{nm} {_fmt_day(a)}" if a == z else f"{nm} {_fmt_day(a)}–{_fmt_day(z)}")
+                    parts.append(nm if st_ == 5 else (f"{nm} {_fmt_day(a)}" if a == z else f"{nm} {_fmt_day(a)}–{_fmt_day(z)}"))
             txt = ' → '.join(parts)
         last = runs[-1]
         recent = last[2] >= recent_from
-        ill = any(r[0] in (2, 3, 4) for r in runs)
-        now = STATES[last[0]]
+        ill = any(r[0] in (2, 3, 4, 5) for r in runs)
+        now = nm_of(*last)
         if int(b) in RD and last[0] in (0, 1): now = _redirect_text(RD[int(b)])
         elif last[0] == 0 and ill: now = 'работает'
         if not recent: now += f' (последний запрос {_fmt_day(last[2])})'
         out[int(b)] = dict(статус=txt, сейчас=now, итог=STATES[last[0]], менялся=len(runs) > 1, работал=any(r[0] == 0 for r in runs),
-                           болел=ill, актуально=bool(recent and last[0] in (2, 3, 4)))
+                           болел=ill, актуально=bool(recent and last[0] in (2, 3, 4, 5)))
     return out
 
 
@@ -388,8 +412,8 @@ def summary(c, T, Sr=None):
         P = E[E['форма'] != 'файл']
         top = P.groupby('b').agg(адрес=('адрес', 'first'), Люди=('Люди', 'sum'), Поисковики=('Поисковики', 'sum'), коды=('код', lambda s: ', '.join(map(str, sorted(set(s))))),
                                  источник=('источник', 'first'), статус=('статус', 'first'), сейчас=('сейчас', 'first'), почему=('почему', 'first'),
-                                 критично=('критично', 'first'), актуально=('актуально', 'first'))
-        top = top.sort_values(['критично', 'Люди'], ascending=False).head(10)
+                                 критично=('критично', 'first'), актуально=('актуально', 'first'), запросов=('запросов', 'sum'))
+        top = top[top['критично']].sort_values('запросов', ascending=False).head(10) if top['критично'].any() else top.sort_values('запросов', ascending=False).head(10)
         if Sr is not None and len(Sr):
             Sx = Sr[Sr['b'].isin(top.index) & (Sr['код'] != 499)]
             tx = {b: sources_text(g) for b, g in Sx.groupby('b')}
@@ -403,9 +427,10 @@ def summary(c, T, Sr=None):
     return out
 
 
-def build(c):
+def build(c, outage_rows=None):
     T = codes_table(c)
-    H = history(c, set(T['b'])) if len(T) else {}
+    OUT = outages(c, outage_rows)
+    H = history(c, set(T['b']), OUT) if len(T) else {}
     if len(T):
         for k_ in ('сейчас', 'актуально', 'болел'):
             T[k_] = T['b'].map(lambda b: H.get(int(b), {}).get(k_, '' if k_ == 'сейчас' else False))
@@ -418,5 +443,5 @@ def build(c):
         WHY = criticality(T, Sr, int((c.V['group'] == 'Люди').sum()))
         T['почему'] = T['b'].map(lambda b: WHY.get(int(b), ''))
         T['критично'] = T['актуально'] & (T['почему'] != '') & (T['зонд'] == '')
-    return dict(с_дня=recent_day(c.R), коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
+    return dict(с_дня=recent_day(c.R), сбои=OUT, коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
                 битые_внутренние=broken_links(c, True), битые_внешние=broken_links(c, False))

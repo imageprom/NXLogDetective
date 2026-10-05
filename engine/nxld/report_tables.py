@@ -455,7 +455,7 @@ def activity_sheet(wb, A, name='Журнал активности'):
     widths = {'День': 7, 'Дата': 12, 'Время': 13, **{g: 10 for g in groups}}
     data_sheet(wb, name, d, name, 'Визиты, уникальные IP и заявки по дням', widths, center=('День', 'Дата', 'Время'),
                kpi=kpi, kpi_col='IP|Люди' if 'IP|Люди' in groups else None, row_rule=lambda r, _it=iter(weekend): 'F3F3F3' if next(_it) else None,
-               links=[('Из кого состоит трафик', 'Люди и боты'), ('Все отправки форм', 'Конверсии')])
+               links=[('Кто заходит на сайт', 'Активность'), ('Все отправки форм', 'Конверсии')])
     ws = wb[name]
     H, X = 4, 1
     # шапка в два уровня: строка 3 — группы (объединённые ячейки), строка 4 — колонки

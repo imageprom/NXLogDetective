@@ -295,14 +295,14 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         if b == 'Общий анализ':
             # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
             from .anatomy import appendix
-            sheets = {**S, **appendix(res)}   # «Файлы» строится оформленным листом в конце (report_files)   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
+            sheets = {k: v for k, v in {**S, **appendix(res)}.items() if k not in ('Люди и боты', 'Каналы')}   # их данные — в сводке «Активность»   # «Файлы» строится оформленным листом в конце (report_files)   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
             if 'Боты' not in res['selected']: sheets['IP'] = res['ips']      # иначе лист IP — в 04 Bots
             hidden = snap_json
         else:
             sheets = {'Сводка': summ, 'О данных': about}
             if b == 'Маркетинг':
                 O = res['sheets'].get('Общий анализ', {})
-                sheets.update({f'Общее: {k}': O[k] for k in ('Журнал активности', 'Каналы', 'Разделы', 'Типы страниц', 'Страницы', 'Конверсии') if k in O})
+                sheets.update({f'Общее: {k}': O[k] for k in ('Журнал активности', 'Разделы', 'Типы страниц', 'Страницы', 'Конверсии') if k in O})
             sheets.update(S)
             if b == 'Боты': sheets['IP'] = res['ips']
             hidden = None
@@ -323,7 +323,6 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             from . import report_activity   # сводка по реестру обращающихся, рядом с «Анатомией»
             if report_activity.build_activity(wb, res, set(wb.sheetnames), index=2, files={k: v for k, v in file_names.items() if k in res['selected']}) is not None:
                 names['Активность'] = 'Активность'
-            own_people(wb, res['site_map'])
             report_tables.conversions(wb, S.get('Конверсии'))
             report_tables.facets_sheet(wb, S.get('Фасеты'))
             for nm_ in ('Разделы', 'Типы страниц', 'Страницы'): report_tables.pages_sheet(wb, S.get(nm_), nm_, nm_)
@@ -347,7 +346,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             if report_files.build_files(wb, res) is not None: names['Логи'] = 'Логи'
             tail_ = [n_ for n_ in ('Файлы', 'Логи', '_snapshot') if n_ in wb.sheetnames]   # в конце: «Файлы», «Логи», затем снимок
             wb._sheets = [w for w in wb._sheets if w.title not in tail_] + [wb[n_] for n_ in tail_]
-            ORDER = ['Обзор', 'Проблемы', 'Анатомия сайта', 'Активность', 'Люди и боты', 'Журнал активности', 'Каналы', 'Конверсии', 'Разделы', 'Типы страниц', 'Страницы',
+            ORDER = ['Обзор', 'Проблемы', 'Анатомия сайта', 'Активность', 'Журнал активности', 'Конверсии', 'Разделы', 'Типы страниц', 'Страницы',
                      'Динамические блоки', 'Файлы', 'Фасеты', 'Точки приёма данных', 'Параметры запросов']
             TAIL = ['Логи', '_snapshot']   # всё прочее — между списком и «Логами»
             byname = {w.title: w for w in wb._sheets}

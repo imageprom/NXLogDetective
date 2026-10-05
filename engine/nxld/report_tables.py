@@ -429,7 +429,7 @@ def pages_sheet(wb, T, name, mode):
 WEEKDAY = ('Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс')
 
 
-def activity_sheet(wb, A, name='Активность'):
+def activity_sheet(wb, A, name='Журнал активности'):
     """Активность по дням: двухуровневая шапка — «День» (день недели, дата, время в логе), «Визиты», «IP (уникальные)», «Заявки»."""
     if A is None or not len(A) or name not in wb.sheetnames: return None
     from openpyxl.utils import get_column_letter

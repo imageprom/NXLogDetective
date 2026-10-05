@@ -139,11 +139,10 @@ def overview(c, F):
     grp = V.groupby(['group', 'subgroup']).agg(визитов=('n_req', 'size'), IP=('ip', 'nunique'), запросов=('n_req', 'sum'), ГБ=('bytes', lambda s: round(s.sum() / GB, 2))).reset_index()
     grp.columns = ['группа', 'подгруппа', 'визитов', 'IP', 'запросов', 'ГБ']
     S['Люди и боты'] = grp
-    S['Активность'] = activity(c)
-    ch = H.groupby('channel').agg(визитов=('n_req', 'size'), IP=('ip', 'nunique'), конверсий=('n_conv', 'sum')).sort_values('визитов', ascending=False)
-    ch['доля_визитов_%'] = (ch['визитов'] / ch['визитов'].sum() * 100).round(1)
-    ch['конверсия_%'] = (ch['конверсий'] / ch['визитов'] * 100).round(2)
-    S['Каналы'] = ch.reset_index().rename(columns={'channel': 'канал'})
+    S['Журнал активности'] = activity(c)
+    from .actors import channels   # каналы считаются в одном месте: сводка, этот лист, бриф
+    ch = channels(c)
+    S['Каналы'] = ch.assign(**{'доля_визитов_%': (ch['доля'] * 100).round(1), 'конверсия_%': (ch['конверсия'] * 100).round(2)}).drop(columns=['доля', 'конверсия'])
     hp = R.loc[c.human & R['is_page'].values, ['base', 'tpl', 'vid', 'ip']]
     S['Разделы'] = top_pages(c, n=100, by_section=True)
     S['Типы страниц'] = top_pages(c, n=200, by_template=True)

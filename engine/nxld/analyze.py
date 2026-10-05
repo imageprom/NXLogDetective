@@ -78,6 +78,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['sheets'][b] = S
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
+    from . import actors
+    res['actors'] = actors.build(c)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
     # GET-отправки — в «Нагрузку и безопасность» (03), рядом с карточкой о персональных данных
     go = res['sheets'].get('Общий анализ', {}).pop('GET-отправки', None)
     if go is not None and 'Нагрузка и безопасность' in res['sheets']:

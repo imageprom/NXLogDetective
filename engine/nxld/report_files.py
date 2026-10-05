@@ -58,7 +58,10 @@ def build_files(wb, res, title='Логи'):
     S.r = 2
     ws.merge_cells('B2:F2')
     S.cell('B', 'ЛОГИ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
-    S.r = 3
+    ws.merge_cells('B3:F3')
+    S.cell('B', 'Какие файлы логов разобраны, за какой период и что в них не так', Font(name='Comfortaa', size=11, bold=True, color='666666'), row=3)
+    ws.row_dimensions[3].height = 22
+    S.r = 4
     dup = {d['source']: int(d.get('lines_duplicate', 0)) for d in inv.get('duplicates', []) if d.get('lines_duplicate')}
     # копии: тот же тип, период и число строк
     key = F.apply(lambda r: (r['тип'], r['с'], r['по'], r['строк']), axis=1)
@@ -68,7 +71,7 @@ def build_files(wb, res, title='Логи'):
         if k in first: copy_of[F.loc[i, 'файл']] = F.loc[first[k], 'файл']
         else: first[k] = i
     # итого
-    S.section('Итого')
+    S.section('Итого', 'Сколько файлов и строк, за какой период, что удалено как повтор и что не удалось разобрать.')
     for t, nm in (('access', 'Access-логи'), ('error', 'Error-логи')):
         g = F[F['тип'] == t]
         if not len(g): continue
@@ -90,7 +93,7 @@ def build_files(wb, res, title='Логи'):
     for t, nm in (('access', 'Access-логи'), ('error', 'Error-логи')):
         g = F[F['тип'] == t].sort_values(['с', 'файл'])
         if not len(g): continue
-        S.section(nm)
+        S.section(nm, {'Access-логи': 'Журналы запросов к сайту: каждый файл, его период и формат.', 'Error-логи': 'Журналы ошибок сервера: каждый файл, его период и формат.'}[nm])
         rows = []
         for _, r in g.iterrows():
             note = []

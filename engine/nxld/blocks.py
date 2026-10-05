@@ -101,6 +101,15 @@ def top_pages(c, n=500, by_section=False, by_template=False):
 ACT_GROUPS = ('Люди', 'Роботы', 'Боты', 'Свои')
 
 
+def day_span(R):
+    """Какая часть суток каждого дня попала в лог: _с, _по (ЧЧ:ММ) и _полный — для журналов по дням."""
+    t = pd.to_datetime(R['ts'], unit='s')
+    span = t.groupby(t.dt.strftime('%Y-%m-%d')).agg(['min', 'max'])
+    out = pd.DataFrame({'_с': span['min'].dt.strftime('%H:%M'), '_по': span['max'].dt.strftime('%H:%M')})
+    out['_полный'] = (out['_с'] <= '00:05') & (out['_по'] >= '23:55')
+    return out
+
+
 def activity(c):
     """Активность по дням: визиты и уникальные IP по группам, отправленные заявки (роботы форм не шлют), какая часть суток в логе.
     Последняя строка — «Итого»: IP за весь период уникальные, а не сумма по дням."""
@@ -117,13 +126,7 @@ def activity(c):
         vg = V[V['group'] == g]
         D[f'Заявки|{g}'] = vg.groupby('day')['n_goal'].sum()
     D = D.fillna(0).astype(int)
-    t = pd.to_datetime(R['ts'], unit='s')
-    span = t.groupby(t.dt.strftime('%Y-%m-%d')).agg(['min', 'max'])
-    D['_с'] = span['min'].reindex(D.index).dt.strftime('%H:%M')
-    D['_по'] = span['max'].reindex(D.index).dt.strftime('%H:%M')
-    full = (D['_с'] <= '00:05') & (D['_по'] >= '23:55')
-    D['_полный'] = full
-    D = D.reset_index()
+    D = D.join(day_span(R)).reset_index()
     tot = {'день': 'Итого', '_полный': True, '_с': '', '_по': ''}
     for g in ACT_GROUPS:
         tot[f'Визиты|{g}'] = int(D[f'Визиты|{g}'].sum())
@@ -809,7 +812,6 @@ def load_security(c, F):
                 own_ = A_.loc[(A_['зонд'] != 'однозначный') & A_['людям'], 'адрес']
                 got = got[~got['base'].astype(str).isin(set(own_))]
             gg = got.groupby('base', observed=True).agg(ответов_200=('ip', 'size'), IP=('ip', 'nunique'), размер=('bytes', 'median'), первый=('day', 'min'), последний=('day', 'max')).sort_values('ответов_200', ascending=False).reset_index()
-            S['Служебные файлы: что отдано'] = gg
             # кому отдано: свои (сотрудники) или чужие; у чужих размер сравнивается с частыми ответами соседних адресов
             # (страница входа, заглушка, soft 404). Полный ответ, полученный только своими, — не утечка.
             staff = set(c.m.get('staff_ips', []))
@@ -833,11 +835,13 @@ def load_security(c, F):
             vv = [verdict(b_) for b_ in gg['base']]
             gg['получили_свои'] = [v[0] for v in vv]; gg['получили_чужие'] = [v[1] for v in vv]
             gg['размер_у_чужих'] = [v[2] for v in vv]; gg['вывод'] = [v[3] for v in vv]
-            S['Служебные файлы: что отдано'] = gg
             real = gg[gg['вывод'].str.startswith('ПРОВЕРИТЬ')]
+            c.leaks = real   # утечки — для «Файлов» и «Анатомии» в Overview
             if len(real):
+                # только утечки: служебные файлы, которые сервер отдал посторонним; заглушки и ответы своим сюда не входят
+                S['Утечки служебных файлов'] = real.drop(columns=['вывод']).rename(columns={'base': 'файл'})
                 F.add('Нагрузка и безопасность', 'Срочно', 'exposed', 'files', f'Сервер отдал служебные файлы по запросам сканеров ({len(real)} адресов)',
-                      ', '.join(real['base'].astype(str).head(8)), 'nginx / права на файлы', 'Проверить каждый адрес и закрыть доступ', len(real), 'Служебные файлы: что отдано')
+                      ', '.join(real['base'].astype(str).head(8)), 'nginx / права на файлы', 'Проверить каждый адрес и закрыть доступ', len(real), 'Утечки служебных файлов')
         nets = VQ.groupby(['ip'], observed=True).agg(запросов=('base', 'size'), сеть=('nettype', 'first'), страна=('cc', 'first'), дней=('day', 'nunique')).sort_values('запросов', ascending=False).reset_index()
         nets['org'] = c.T.set_index('ip').reindex(nets['ip'].astype(str))['org'].values
         S['Сканеры: IP'] = nets.head(300)

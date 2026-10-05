@@ -39,7 +39,9 @@ def load_extensions():
     by_addr = [(g['группа'], re.compile(g['шаблон'], re.I)) for g in E.get('по_адресу', [])]
     pages = {e.lower() for e in E.get('страницы', [])}
     tlds = {e.lower() for e in E.get('домены_в_хвосте', [])}
-    return dict(ext2grp=ext2grp, by_addr=by_addr, pages=pages, tlds=tlds)
+    H = E.get('скрытые_файлы') or {}
+    hidden = {e.lower() for e in H.get('файлы', [])} | {x['расширение'].lower() for x in L.get('скрытые', []) if x.get('расширение')}
+    return dict(ext2grp=ext2grp, by_addr=by_addr, pages=pages, tlds=tlds, hidden=hidden, hidden_group=H.get('группа', 'Конфиги и исходники'))
 
 
 _EXT = None
@@ -58,11 +60,15 @@ def form_of(path):
     global _EXT
     if _EXT is None: _EXT = load_extensions()
     p = re.sub(r'^https?://[^/]+', '', str(path)) or '/'   # абсолютная форма запроса (GET http://сайт/путь) — законна
-    if CONSTRUCT.search(p[1:] if p.startswith('/') else p): return 'конструкт', '', '', False
+    if CONSTRUCT.search(p): return 'конструкт', '', '', False   # и //robots.txt: двойной слэш — не адрес
     p = unquote(p)   # /.%65%6e%76 — это /.env: вид файла определяем по раскодированному адресу
-    if CONSTRUCT.search(p[1:] if p.startswith('/') else p): return 'конструкт', '', '', False
+    if CONSTRUCT.search(p): return 'конструкт', '', '', False
     for g, rx in _EXT['by_addr']:
         if rx.search(p): return 'файл', g, ext_of(p), False
+    leaf = p.rstrip('/').rsplit('/', 1)[-1]
+    if leaf.startswith('.') and len(leaf) > 1:   # скрытый файл: .htaccess, .gitignore, .settings.php — настройки, а не страница
+        nm = leaf[1:].lower()
+        return 'файл', _EXT['hidden_group'], nm, nm not in _EXT['hidden']
     e = ext_of(p)
     if not e or e in _EXT['pages'] or e in _EXT['tlds']: return 'страница', '', e, False
     if re.fullmatch(r'\d+', e): return 'страница', '', e, False   # /v1.2 — версия в адресе, не расширение

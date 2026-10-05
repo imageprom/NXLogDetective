@@ -9,7 +9,7 @@
       "id": "secrets",
       "цель": "Утечки конфигов (.env, .git, ключи)",
       "сила": "однозначный",
-      "шаблон": "(^|/)\\.(htaccess|gitignore|gitattributes|gitmodules|gitlab-ci\\.ya?ml|travis\\.ya?ml|user\\.ini|bash_history|mysql_history|env|git|aws|ssh|svn|hg|htpasswd|git-credentials|boto|s3cfg|docker|npmrc|pypirc|netrc|vscode|idea|DS_Store)(\\b|/|$)|/wp-config\\.php|/docker-compose\\.ya?ml$|/config\\.(json|ya?ml|env|php\\.bak)$|/credentials(\\.json)?$|/aws-credentials|/secrets?\\.(json|ya?ml)$|/(sendgrid|mailgun)\\.env$|/\\.?env\\.(json|js)$|/\\.settings(_extra)?\\.php$|/php_interface/dbconn\\.php$|\\.(tfstate|tfvars)(\\.|$)|/\\.terraform/",
+      "шаблон": "(^|/)\\.(gitconfig|htaccess|gitignore|gitattributes|gitmodules|gitlab-ci\\.ya?ml|travis\\.ya?ml|user\\.ini|bash_history|mysql_history|env|git|aws|ssh|svn|hg|htpasswd|git-credentials|boto|s3cfg|docker|npmrc|pypirc|netrc|vscode|idea|DS_Store)(\\b|/|$)|/wp-config\\.php|/docker-compose\\.ya?ml$|/config\\.(json|ya?ml|env|php\\.bak)$|/credentials(\\.json)?$|/aws-credentials|/secrets?\\.(json|ya?ml)$|/(sendgrid|mailgun)\\.env$|/\\.?env\\.(json|js)$|/\\.settings(_extra)?\\.php$|/php_interface/dbconn\\.php$|\\.(tfstate|tfvars)(\\.|$)|/\\.terraform/",
       "что": "файлы с паролями и ключами: .env, .git, ключи облаков"
     },
     {

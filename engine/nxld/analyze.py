@@ -80,6 +80,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
     from . import actors
     res['actors'] = actors.build(c)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
+    from . import errors as errors_
+    res['errors'] = errors_.build(c)   # «адрес × код», журнал и сводка ошибок — для файла 02
+    lk = getattr(c, 'leaks', None)   # служебные файлы, отданные посторонним (03): подсветка в «Файлах» и «Анатомии»
+    res['leaks'] = [] if lk is None else [dict(файл=str(r['base']), ответов=int(r['ответов_200']), IP=int(r['IP']), размер=float(r['размер'])) for _, r in lk.iterrows()]
     # GET-отправки — в «Нагрузку и безопасность» (03), рядом с карточкой о персональных данных
     go = res['sheets'].get('Общий анализ', {}).pop('GET-отправки', None)
     if go is not None and 'Нагрузка и безопасность' in res['sheets']:
@@ -139,6 +143,11 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     T_ = Sizes(визиты=int((V['group'] == 'Люди').sum()), запросы=len(R), ip=int(R['ip'].nunique()))   # пороги — доли от размера лога
     try:
         res['files'] = recon.files_inventory(R, T=T_, addr=c.addr, people=c.human | np.asarray(c.rg == 'Свои')).to_dict('records')
+        T_c = res['errors']['коды']
+        if len(T_c):   # «Файлы с ошибками» — тот же расчёт, что «Файлы», на файлах, которым хоть раз ответили 4xx/5xx
+            eb = set(T_c.loc[(T_c['форма'] == 'файл') & (T_c['код'] != 499), 'b'])
+            Rm = np.isin(R['base'].cat.codes.values, list(eb))
+            res['files_errors'] = recon.files_inventory(R[Rm], min_req=1, T=T_, addr=c.addr, people=(c.human | np.asarray(c.rg == 'Свои'))[Rm]).to_dict('records')
         res['unknown_extensions'] = classify.unknown_extensions(c.addr, R, T_('незнакомый_ключ'))
     except Exception as e:
         log(f'files_inventory: {e}'); res['files'] = None

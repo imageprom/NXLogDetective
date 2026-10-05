@@ -198,12 +198,9 @@ def conditions(res):
     return rows
 
 
-def build_index(wb, res, sheet_names, title='Обзор'):
-    ws = wb.create_sheet(title, 0)
-    S = Sheet(ws)
-    inv, m, sm = res['inventory'], res['site_map'], res['summary'].get('Общий анализ', {})
-    site = (m.get('site_hosts') or ['?'])[0]
-    # --- шапка
+def brand_header(ws, S, res, title, subtitle, last='F'):
+    """Шапка первого листа каждого файла отчёта: логотип, адрес компании, заголовок, подзаголовок, плашка проверки и дата.
+    last — последняя колонка листа (F на обычных, I на широких сводках)."""
     for i, h in enumerate((32.25, 23.25, 14, 8), start=1): ws.row_dimensions[i].height = h
     if os.path.exists(LOGO):
         from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
@@ -212,22 +209,93 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         cx, cy = 2000250, 457200                     # ~210×48 px: меньше прежнего, крупнее образца (EMU)
         img.anchor = OneCellAnchor(_from=AnchorMarker(col=1, colOff=1905, row=0, rowOff=123825), ext=XDRPositiveSize2D(cx, cy))
         ws.add_image(img)
-    S.cell('F', COMPANY_URL, Font(name='Arial', size=11, color=GREY), align=Alignment(horizontal='right', vertical='center'), row=1)
-    ws['F1'].hyperlink = COMPANY_URL; ws['F1'].font = Font(name='Arial', size=11, color=GREY)
-    S.r = 5
-    ws.merge_cells('B5:F5')
-    S.cell('B', f'NX LOG DETECTIVE — САЙТ {site.upper()}', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[5].height = 30
-    ws.merge_cells('B6:F6')
-    S.cell('B', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', Font(name='Comfortaa', size=11, bold=True, color=GREY), row=6)
+    S.cell(last, COMPANY_URL, Font(name='Arial', size=11, color=GREY), align=Alignment(horizontal='right', vertical='center'), row=1)
+    ws[f'{last}1'].hyperlink = COMPANY_URL; ws[f'{last}1'].font = Font(name='Arial', size=11, color=GREY)
+    ws.merge_cells(f'B5:{last}5')
+    S.cell('B', title, Font(name='Montserrat', size=16, bold=True, color=ORANGE), row=5); ws.row_dimensions[5].height = 30
+    ws.merge_cells(f'B6:{last}6')
+    S.cell('B', subtitle, Font(name='Comfortaa', size=11, bold=True, color=GREY), row=6)
     ws.row_dimensions[6].height = 20
-    S.r = 8
     kind = "ПОВТОРНАЯ ПРОВЕРКА" if res.get('prev_period') else 'ПЕРВИЧНАЯ ПРОВЕРКА'
-    S.cell('B', kind, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE, Alignment(horizontal='center', vertical='center'))
-    ws.merge_cells('C8:F8')
+    S.cell('B', kind, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE, Alignment(horizontal='center', vertical='center'), row=8)
+    ws.merge_cells(f'C8:{last}8')
     sub = f"Отчёт от {ru_date(date.today())} · NX Log Detective {VERSION}"
     if res.get('prev_period'): sub = f"Сравнение с проверкой за {ru_date(res['prev_period'][0])} — {ru_date(res['prev_period'][1])} · " + sub
-    S.cell('C', sub, Font(name='Arial', size=10, color=INK), align=Alignment(vertical='center', indent=1))
+    S.cell('C', sub, Font(name='Arial', size=10, color=INK), align=Alignment(vertical='center', indent=1), row=8)
     ws.row_dimensions[8].height = 24
+    S.r = 9
+
+
+WIDE_COLS = 'BCDEFGHI'
+WIDE_WIDTHS = dict(A=2.5, B=30, C=24, D=14, E=12, F=12, G=12, H=13, I=20, J=2.5)
+F_TOTAL = 'E5E5E5'
+
+
+class Wide(Sheet):
+    """Сводный лист пошире (B:I): блоки с подписями, таблицы до восьми колонок, «Итого», ссылки под блоком.
+    Общий для «Активности», «Обзора» файлов блоков и других сводок."""
+    def __init__(self, ws):
+        super().__init__(ws)
+        for col, w in WIDE_WIDTHS.items(): ws.column_dimensions[col].width = w
+
+    def section(self, title, sub=''):
+        self.r += 1
+        self.ws.merge_cells(f'B{self.r}:I{self.r}')
+        self.cell('B', title.upper(), Font(name='Montserrat', size=12, bold=True, color=ORANGE), align=Alignment(vertical='center'))
+        for col in WIDE_COLS: self.ws[f'{col}{self.r}'].border = Border(bottom=thin)
+        self.ws.row_dimensions[self.r].height = 26
+        self.r += 1
+        if sub:
+            self.ws.merge_cells(f'B{self.r}:I{self.r}')
+            self.cell('B', sub, Font(name='Arial', size=10, italic=True, color='666666'), align=Alignment(vertical='center', wrap_text=True, indent=1))
+            self.ws.row_dimensions[self.r].height = row_height(sub, 125)
+            self.r += 1
+
+    def note(self, text):
+        self.ws.merge_cells(f'B{self.r}:I{self.r}')
+        for col in WIDE_COLS: self.ws[f'{col}{self.r}'].fill = PatternFill('solid', fgColor=F_NOTE)
+        self.cell('B', text, Font(name='Arial', size=10, italic=True, color=DARK), F_NOTE, Alignment(vertical='center', wrap_text=True, indent=1))
+        self.ws.row_dimensions[self.r].height = row_height(text, 150)
+        self.r += 1
+
+    def table(self, headers, rows, spans, **kw):
+        h0 = self.r
+        super().table(headers, rows, spans, **kw)
+        if any(len(h) > 11 for h in headers): self.ws.row_dimensions[h0].height = 32   # длинные названия колонок — в две строки
+
+    def link(self, text, target, names=None):
+        """Ссылка под блоком: на лист этого файла (строка) или на лист другого файла (кортеж «файл, лист»)."""
+        if isinstance(target, tuple):
+            file_, sheet_ = target
+            ref, label = f"{file_}#'{sheet_}'!A1", f'{text}: {file_}, лист «{sheet_}» →'
+        else:
+            if names is not None and target not in names: return
+            ref, label = f"#'{target}'!A1", f'{text}: лист «{target}» →'
+        self.ws.merge_cells(f'B{self.r}:I{self.r}')
+        c = self.cell('B', label, align=Alignment(vertical='center', indent=1))
+        c.hyperlink = ref; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
+        self.ws.row_dimensions[self.r].height = 20
+        self.r += 1
+
+    def total(self, n=8):
+        """Последняя строка таблицы — «Итого»: жирным на сером."""
+        r = self.r - 1
+        for col in WIDE_COLS[:n]:
+            c = self.ws[f'{col}{r}']
+            c.font = Font(name='Arial', size=11, bold=True, color='000000'); c.fill = PatternFill('solid', fgColor=F_TOTAL)
+
+    def red(self, rows_from, col):
+        for r in range(rows_from, self.r):
+            c = self.ws[f'{col}{r}']
+            if c.value: c.font = Font(name='Arial', size=11, color=RED)
+
+
+def build_index(wb, res, sheet_names, title='Обзор'):
+    ws = wb.create_sheet(title, 0)
+    S = Sheet(ws)
+    inv, m, sm = res['inventory'], res['site_map'], res['summary'].get('Общий анализ', {})
+    site = (m.get('site_hosts') or ['?'])[0]
+    brand_header(ws, S, res, f'NX LOG DETECTIVE — САЙТ {site.upper()}', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так')
     S.r = 9
     # --- проверка
     S.section('Проверка')

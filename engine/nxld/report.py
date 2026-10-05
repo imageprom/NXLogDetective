@@ -279,6 +279,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     Если его нет, кладётся запасной черновик движка с пометкой «черновик»."""
     os.makedirs(outdir, exist_ok=True)
     res = apply_edits(res, edits)
+    from . import report_errors
+    report_errors.relink(res['findings'])   # карточки ссылаются на новые листы 02
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
@@ -298,6 +300,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             sheets = {k: v for k, v in {**S, **appendix(res)}.items() if k not in ('Люди и боты', 'Каналы')}   # их данные — в сводке «Активность»   # «Файлы» строится оформленным листом в конце (report_files)   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
             if 'Боты' not in res['selected']: sheets['IP'] = res['ips']      # иначе лист IP — в 04 Bots
             hidden = snap_json
+        elif b == 'Ошибки':   # 02 — по правилам Overview: сводка вместо «Сводки» и «О данных» (они в Overview)
+            from . import report_errors
+            sheets = report_errors.sheets_for(S)
+            hidden = None
         else:
             sheets = {'Сводка': summ, 'О данных': about}
             if b == 'Маркетинг':
@@ -315,8 +321,11 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         wb = load_workbook(path)
         report_problems.build_problems(wb, res, res['findings'] if b == 'Общий анализ' else items, file_names[b], with_block=(b == 'Общий анализ'))
         names = {'Проблемы': 'Проблемы', **names}
+        if b == 'Ошибки':
+            report_errors.build(wb, res, S, site)
         if b == 'Нагрузка и безопасность':
             report_tables.post_all(wb, res)
+            report_tables.leaks_sheet(wb, S.get('Утечки служебных файлов'), names.get('Утечки служебных файлов', 'Утечки служебных файлов'))
         if b == 'Общий анализ':
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
@@ -354,6 +363,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             tail_ = [byname[n_] for n_ in TAIL if n_ in byname]
             wb._sheets = head_ + [w for w in wb._sheets if w not in head_ and w not in tail_] + tail_
             report_index.build_index(wb, res, names)
+        report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
         report_tables.redden_codes(wb)   # ошибки в списках кодов — красным, на всех листах
         wb.save(path)
         written.append(path)

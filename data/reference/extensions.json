@@ -59,7 +59,7 @@
   "по_адресу": [
     {
       "группа": "Для роботов",
-      "шаблон": "^/(robots\\.txt|sitemap[\\w.-]*\\.xml(\\.gz)?|sitemap/.*|llms(-full)?\\.txt|ai\\.txt|ads\\.txt|app-ads\\.txt|humans\\.txt|security\\.txt)$"
+      "шаблон": "^/(robots\\.txt|[\\w-]*sitemap[\\w.-]*\\.xml(\\.gz)?|sitemap/.*|llms(-full)?\\.txt|ai\\.txt|ads\\.txt|app-ads\\.txt|humans\\.txt|security\\.txt)$"
     },
     {
       "группа": "Проверочные файлы",
@@ -316,5 +316,39 @@
         "xslt"
       ]
     }
-  ]
+  ],
+  "скрытые_файлы": {
+    "группа": "Конфиги и исходники",
+    "_": "файлы с точкой в начале имени: настройки сервера, системы контроля версий, окружения. Сайт не должен отдавать их посторонним",
+    "файлы": [
+      "htaccess",
+      "htpasswd",
+      "gitignore",
+      "gitattributes",
+      "gitmodules",
+      "gitlab-ci.yml",
+      "travis.yml",
+      "env",
+      "env.local",
+      "env.production",
+      "env.example",
+      "user.ini",
+      "npmrc",
+      "yarnrc",
+      "dockerignore",
+      "editorconfig",
+      "eslintrc",
+      "prettierrc",
+      "babelrc",
+      "browserslistrc",
+      "settings.php",
+      "settings_extra.php",
+      "ds_store",
+      "bash_history",
+      "mysql_history",
+      "git-credentials",
+      "svn",
+      "hg"
+    ]
+  }
 }

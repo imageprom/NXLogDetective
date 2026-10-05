@@ -290,8 +290,27 @@ def _who(s):
     return ', '.join(out)
 
 
-def service_files(wb, res, name='Файлы'):
-    """Файлы, которые забирают напрямую: для роботов, фиды, иконки, документы, данные виджетов, картинки не со страниц сайта."""
+def leaks_sheet(wb, L, name='Утечки служебных файлов'):
+    """03: служебные файлы, которые сервер отдал посторонним, — каждый адрес проверить и закрыть."""
+    if L is None or not len(L) or name not in wb.sheetnames: return None
+    day = lambda v: pd.to_datetime(v).strftime('%d.%m.%Y') if v else ''
+    d = pd.DataFrame({'Файл': L['файл'].astype(str), 'Отдан раз': L['ответов_200'].astype(int), 'IP': L['IP'].astype(int),
+                      'Размер ответа, байт': L['размер_у_чужих'].fillna(L['размер']).round().astype(int),
+                      'Получили свои': L['получили_свои'].astype(int), 'Первый': L['первый'].map(day), 'Последний': L['последний'].map(day)})
+    data_sheet(wb, name, d, name, 'Служебные файлы, которые сервер отдал посторонним', {'Файл': 50, 'Отдан раз': 11, 'IP': 9, 'Размер ответа, байт': 14, 'Получили свои': 12, 'Первый': 12, 'Последний': 12},
+               wrap=('Файл',), kpi=[('Файлов', len(d)), ('Отдан раз', int(d['Отдан раз'].sum()))], kpi_col='IP', row_rule=lambda r: F_NOTE,
+               links=[('Что искали сканеры', 'Сканеры — что искали')])
+    ws = wb[name]
+    r_ = ws.max_row + 2
+    for t_ in ['Размер ответа не похож на страницу входа или заглушку соседних адресов — значит, отдано настоящее содержимое файла.',
+               'Что сделать: открыть каждый адрес, закрыть доступ в настройках сервера (deny в nginx, правило в .htaccess) и сменить пароли и ключи, если они были в файле.']:
+        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+    return ws
+
+
+def service_files(wb, res, name='Файлы', title='Файлы', note='Что забирают с сайта как отдельный файл', links=None, errors_mode=False):
+    """Все файлы сайта, кроме страниц: кто забирает, откуда, коды. errors_mode — тот же лист в срезе ошибок (02 «Файлы с ошибками»):
+    персиковым — файлы, которые подгружают страницы сайта, серым — те, что просят только роботы."""
     import re
     from .recon import FILE_GROUPS
     sf = res.get('files')
@@ -304,12 +323,14 @@ def service_files(wb, res, name='Файлы'):
         for f in sf:
             if isinstance(f, dict): f.setdefault('группа', next((nm for nm, rx in SERVICE_GROUPS if re.search(rx, str(f.get('адрес', '')), re.I)), 'Прочие'))
     rows = []
+    leaked = {x['файл'] for x in res.get('leaks') or []}
     for f in sf:
         if not isinstance(f, dict): continue
         cd = _codes(f.get('коды'))
         err = sum(v for k, v in cd.items() if 400 <= k and k != 499)
         from urllib.parse import unquote
         a = unquote(str(f.get('адрес', '')), errors='replace') + (f"\n{f['внутри']}" if f.get('внутри') else '')
+        if str(f.get('адрес', '')) in leaked: a += '\nотдан посторонним — см. NXLD_03, «Утечки служебных файлов»'
         day = lambda k: pd.to_datetime(f.get(k)).strftime('%d.%m.%Y') if f.get(k) else ''
         rows.append({'Файл': a, 'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Группа': f.get('группа', 'Прочие'),
                      'Файлов': int(f.get('файлов') or 1), 'Запросов': int(f.get('запросов') or 0),
@@ -318,7 +339,7 @@ def service_files(wb, res, name='Файлы'):
                         else {'Кто забирает': _who(f.get('кто_забирает', ''))}),
                      'Со страниц сайта': int(f.get('со_страниц') or 0), 'Напрямую': int(f.get('напрямую') or 0),
                      'Другие сайты': _who(f.get('другие_сайты', '')) if f.get('другие_сайты') else '',
-                     'Первый': day('первый_день'), 'Последний': day('последний_день')})
+                     'Первый': day('первый_день'), 'Последний': day('последний_день'), '_leak': str(f.get('адрес', '')) in leaked})
     d = pd.DataFrame(rows)
     if not len(d): return None
     if 'со_страниц' not in (sf[0] if sf and isinstance(sf[0], dict) else {}) or (d['Со страниц сайта'].sum() == 0 and not d['Другие сайты'].astype(bool).any()):   # старый анализ или в логе нет Referer
@@ -326,18 +347,29 @@ def service_files(wb, res, name='Файлы'):
     d = d.sort_values('Запросов', ascending=False)
     if name not in wb.sheetnames: wb.create_sheet(name)
     kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['_err'] > 0).sum()))]
-    bad_ = list(d['_err'] > 0)
-    d = d.drop(columns='_err')
+    if errors_mode:   # своё — персиковым (страницы сайта просят то, чего нет), только роботы — серым
+        own = (d['Со страниц сайта'] > 0) if 'Со страниц сайта' in d else (d['_err'] > 0)
+        robots_only = (d['Браузеры'] == 0) if 'Браузеры' in d else pd.Series(False, index=d.index)
+        fills_ = [F_NOTE if o else ('EFEFEF' if ro else None) for o, ro in zip(own, robots_only)]
+        kpi = [('Файлов', int(d['Файлов'].sum())), ('Ошибок', int(d['_err'].sum())), ('Просят страницы сайта', int(own.sum()))]
+    else:
+        fills_ = [F_NOTE if b_ else None for b_ in ((d['_err'] > 0) | d['_leak'])]   # ошибки и утечки — персиковым
+    d = d.drop(columns=['_err', '_leak'])
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
-    missing = [nm for nm in ('Документы', 'Видео и звук') if nm not in set(d['Группа'])] if res.get('files') is not None else []   # заметные отсутствия
-    links = [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
-    data_sheet(wb, name, d, 'Файлы', 'Что забирают с сайта как отдельный файл', widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
-               kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(bad_): F_NOTE if next(_it) else None)   # файлы с ошибками — персиковым
+    missing = [nm for nm in ('Документы', 'Видео и звук') if nm not in set(d['Группа'])] if res.get('files') is not None and not errors_mode else []   # заметные отсутствия
+    links = links if links is not None else [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
+    data_sheet(wb, name, d, title, note, widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
+               kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(fills_): next(_it))
     ws = wb[name]
     if missing:
         r = ws.max_row + 2
         ws.cell(r, 2, 'Не найдено: ' + ', '.join(missing).lower() + '. Обращения сканеров к несуществующим файлам сюда не попадают.')
         ws.cell(r, 2).font = Font(name='Arial', size=9, italic=True, color=GREY)
+    if errors_mode:
+        r = ws.max_row + 2
+        for t_ in ['Персиковым — файлы, которые просят сами страницы сайта: это поломки сайта, их видят люди. Серым — файлы, которые просят только роботы.',
+                   'Зонды сканеров сюда не входят — они на вкладках по кодам и в отчёте по безопасности.']:
+            ws.cell(r, 2, t_).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
     return wb[name]
 
 
@@ -429,10 +461,11 @@ def pages_sheet(wb, T, name, mode):
 WEEKDAY = ('Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс')
 
 
-def activity_sheet(wb, A, name='Журнал активности'):
-    """Активность по дням: двухуровневая шапка — «День» (день недели, дата, время в логе), «Визиты», «IP (уникальные)», «Заявки»."""
+def journal_sheet(wb, name, A, subtitle, kpi, links, notes, top_labels=None, kpi_col=None):
+    """Журнал по дням с двухуровневой шапкой: «День» (день недели, дата, время в логе) и группы колонок вида «Верх|Низ».
+    A — строки по дням (день, _с, _по, _полный, «Верх|Низ»…) и строка «Итого». Общий для «Журнала активности» и «Журнала ошибок»."""
     if A is None or not len(A) or name not in wb.sheetnames: return None
-    from openpyxl.utils import get_column_letter
+    top_labels = top_labels or {}
     body = A[A['день'] != 'Итого']
     tot = A[A['день'] == 'Итого']
     dt_ = pd.to_datetime(body['день'])
@@ -446,21 +479,15 @@ def activity_sheet(wb, A, name='Журнал активности'):
         t_.update({g: int(tot[g].iloc[0]) for g in groups})
         d = pd.concat([d, pd.DataFrame([t_])], ignore_index=True)
     full_days = body['_полный'].values
-    hv = body.loc[body['_полный'], 'Визиты|Люди'] if full_days.any() else body['Визиты|Люди']
-    peak = body.loc[body['Визиты|Люди'].idxmax()] if len(body) else None
-    kpi = [('Визиты людей в день', int(round(hv.mean())) if len(hv) else 0),
-           ('Самый активный день', f"{WEEKDAY[pd.Timestamp(peak['день']).weekday()]} {pd.Timestamp(peak['день']).strftime('%d.%m')}" if peak is not None else ''),
-           ('Заявки людей', int(body['Заявки|Люди'].sum()))]
     weekend = [x >= 5 for x in dt_.dt.weekday] + [False] * len(tot)
     widths = {'День': 7, 'Дата': 12, 'Время': 13, **{g: 10 for g in groups}}
-    data_sheet(wb, name, d, name, 'Визиты, уникальные IP и заявки по дням', widths, center=('День', 'Дата', 'Время'),
-               kpi=kpi, kpi_col='IP|Люди' if 'IP|Люди' in groups else None, row_rule=lambda r, _it=iter(weekend): 'F3F3F3' if next(_it) else None,
-               links=[('Кто заходит на сайт', 'Активность'), ('Все отправки форм', 'Конверсии')])
+    data_sheet(wb, name, d, name, subtitle, widths, center=('День', 'Дата', 'Время'),
+               kpi=kpi(body) if callable(kpi) else kpi, kpi_col=kpi_col if kpi_col in groups else None,
+               row_rule=lambda r, _it=iter(weekend): 'F3F3F3' if next(_it) else None, links=links)
     ws = wb[name]
     H, X = 4, 1
     # шапка в два уровня: строка 3 — группы (объединённые ячейки), строка 4 — колонки
-    hdr = ['День', 'День', 'День'] + [g.split('|')[0] for g in groups]
-    hdr = ['IP (уникальные)' if h == 'IP' else h for h in hdr]
+    hdr = ['День', 'День', 'День'] + [top_labels.get(g.split('|')[0], g.split('|')[0]) for g in groups]
     j = 0
     while j < len(hdr):
         k = j
@@ -489,10 +516,26 @@ def activity_sheet(wb, A, name='Журнал активности'):
             c_.border = Border(top=Side(style='thin', color=ORANGE), bottom=SEP)
         ws.auto_filter.ref = f"{ws.cell(H, 1 + X).coordinate}:{ws.cell(H + len(d) - 1, len(d.columns) + X).coordinate}"
     r_ = ws.max_row + 2
-    for t_ in ['Визиты — по группам, как на листе «Люди и боты». IP — разные адреса за день; в «Итого» — разные за весь период, поэтому меньше суммы по дням.',
-               'Заявки — отправки форм; у ботов — спам, у своих — тесты. Время — какая часть суток попала в лог; неполные дни — серым курсивом, в среднее не входят. Выходные — на сером.']:
+    for t_ in notes:
         c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
     return ws
+
+
+def _day(ts): return f"{WEEKDAY[pd.Timestamp(ts).weekday()]} {pd.Timestamp(ts).strftime('%d.%m')}"
+
+
+def activity_sheet(wb, A, name='Журнал активности'):
+    """Журнал активности: визиты, уникальные IP и заявки по дням для людей, роботов, ботов и своих."""
+    def kpi(body):
+        hv = body.loc[body['_полный'], 'Визиты|Люди'] if body['_полный'].any() else body['Визиты|Люди']
+        return [('Визиты людей в день', int(round(hv.mean())) if len(hv) else 0),
+                ('Самый активный день', _day(body.loc[body['Визиты|Люди'].idxmax(), 'день']) if len(body) else ''),
+                ('Заявки людей', int(body['Заявки|Люди'].sum()))]
+    return journal_sheet(wb, name, A, 'Визиты, уникальные IP и заявки по дням', kpi,
+                         [('Кто заходит на сайт', 'Активность'), ('Все отправки форм', 'Конверсии')],
+                         ['Визиты — по группам, как на листе «Активность». IP — разные адреса за день; в «Итого» — разные за весь период, поэтому меньше суммы по дням.',
+                          'Заявки — отправки форм; у ботов — спам, у своих — тесты. Время — какая часть суток попала в лог; неполные дни — серым курсивом, в среднее не входят. Выходные — на сером.'],
+                         top_labels={'IP': 'IP (уникальные)'}, kpi_col='IP|Люди')
 
 
 SRC_LABEL = {'документация': 'Документация', 'сообщество': 'Сообщество', 'сборник': 'Сообщество', 'наблюдение': 'Сообщество',
@@ -522,6 +565,47 @@ def params_sheet(wb, res, name='Параметры запросов'):
 
 
 ERR_TOKEN = None
+
+
+_PCT = None
+
+
+def human_url(v):
+    """Раскодирует в адресе только не-латинские буквы (кириллицу и т. п.) и пробел. Закодированная латиница
+    (%27, %3C, %65) остаётся как в логе — это улика: так прячут атаки и зонды."""
+    import re
+    global _PCT
+    if not isinstance(v, str) or '%' not in v: return v
+    if _PCT is None: _PCT = re.compile(r'(?:%[0-9A-Fa-f]{2})+')
+    def rep(m):
+        raw = m.group(0)
+        toks = [raw[i:i + 3] for i in range(0, len(raw), 3)]
+        bs = bytes(int(t[1:], 16) for t in toks)
+        out, i = [], 0
+        while i < len(bs):
+            b = bs[i]
+            if b < 0x80:
+                out.append(' ' if b == 0x20 else toks[i]); i += 1; continue
+            n = 2 if b >> 5 == 0b110 else 3 if b >> 4 == 0b1110 else 4 if b >> 3 == 0b11110 else 0
+            try:
+                if not n: raise ValueError
+                out.append(bs[i:i + n].decode('utf-8')); i += n
+            except Exception:
+                out.append(toks[i]); i += 1
+        return ''.join(out)
+    return _PCT.sub(rep, v)
+
+
+def humanize_urls(wb, skip=('_snapshot',)):
+    """Во всех листах: кириллица в адресах — буквами, а не %D0%BA…; по правилу human_url."""
+    for ws in wb.worksheets:
+        if ws.title in skip: continue
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if isinstance(v, str) and '%' in v:
+                    h = human_url(v)
+                    if h != v: c.value = h
 
 
 def redden_codes(wb, skip=('_snapshot',)):

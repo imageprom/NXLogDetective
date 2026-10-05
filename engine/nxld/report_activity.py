@@ -7,61 +7,7 @@ from openpyxl.styles import Font, Alignment, Border, PatternFill
 from .report_index import Sheet, ORANGE, ORANGE2, RED, ru_num, plural, thin, F_NOTE
 from .report_tables import split_codes
 
-COLS = 'BCDEFGHI'
-WIDTHS = dict(A=2.5, B=30, C=24, D=14, E=12, F=12, G=12, H=13, I=20, J=2.5)
-F_TOTAL = 'E5E5E5'
-
-
-class Wide(Sheet):
-    """Та же раскладка, что у «Анатомии», но шире: таблицы до восьми колонок (B:I)."""
-    def __init__(self, ws):
-        super().__init__(ws)
-        for col, w in WIDTHS.items(): ws.column_dimensions[col].width = w
-
-    def section(self, title, sub=''):
-        self.r += 1
-        self.ws.merge_cells(f'B{self.r}:I{self.r}')
-        self.cell('B', title.upper(), Font(name='Montserrat', size=12, bold=True, color=ORANGE), align=Alignment(vertical='center'))
-        for col in COLS: self.ws[f'{col}{self.r}'].border = Border(bottom=thin)
-        self.ws.row_dimensions[self.r].height = 26
-        self.r += 1
-        if sub:
-            self.ws.merge_cells(f'B{self.r}:I{self.r}')
-            self.cell('B', sub, Font(name='Arial', size=10, italic=True, color='666666'), align=Alignment(vertical='center', wrap_text=True, indent=1))
-            from .report_index import row_height
-            self.ws.row_dimensions[self.r].height = row_height(sub, 125)
-            self.r += 1
-
-    def link(self, text, target, names=None):
-        """Ссылка под блоком: на лист этого файла или на лист другого файла отчёта."""
-        if isinstance(target, tuple):
-            file_, sheet_ = target
-            ref, label = f"{file_}#'{sheet_}'!A1", f'{text}: {file_}, лист «{sheet_}» →'
-        else:
-            if names is not None and target not in names: return
-            ref, label = f"#'{target}'!A1", f'{text}: лист «{target}» →'
-        self.ws.merge_cells(f'B{self.r}:I{self.r}')
-        c = self.cell('B', label, align=Alignment(vertical='center', indent=1))
-        c.hyperlink = ref; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
-        self.ws.row_dimensions[self.r].height = 20
-        self.r += 1
-
-    def table(self, headers, rows, spans, **kw):
-        h0 = self.r
-        super().table(headers, rows, spans, **kw)
-        if any(len(h) > 11 for h in headers): self.ws.row_dimensions[h0].height = 32   # длинные названия колонок — в две строки
-
-    def total(self, row, n):
-        """Строка «Итого» — жирным на сером, сразу под таблицей."""
-        r = self.r - 1
-        for col in COLS[:n]:
-            c = self.ws[f'{col}{r}']
-            c.font = Font(name='Arial', size=11, bold=True, color='000000'); c.fill = PatternFill('solid', fgColor=F_TOTAL)
-
-    def red(self, rows_from, col):
-        for r in range(rows_from, self.r):
-            c = self.ws[f'{col}{r}']
-            if c.value: c.font = Font(name='Arial', size=11, color=RED)
+from .report_index import Wide, WIDE_COLS as COLS
 
 
 def pct(x, d=1):
@@ -111,7 +57,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
         rows = [[r['канал'], int(r['визитов']), pct(r['доля']), int(r['IP']), int(r['заявок']), pct(r['конверсия'], 2)] for _, r in ch.iterrows()]
         rows.append(['Итого', int(ch['визитов'].sum()), '100%', '', int(ch['заявок'].sum()), pct(ch['заявок'].sum() / max(1, ch['визитов'].sum()), 2)])
         S.table(['Канал', 'Визиты (люди)', 'Доля', 'IP (люди)', 'Заявок отправлено', 'Конверсия'], rows, ['BC', 'D', 'E', 'F', 'G', 'HI'], num=(1, 2, 3, 4, 5))
-        S.total(rows[-1], 8)
+        S.total(8)
     # 2. посетители
     G = A.get('группы')
     if G is not None and len(G):
@@ -119,7 +65,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
         rows = [[r['группа'], r['подгруппа'] or '—', int(r['визитов']), int(r['IP']), int(r['запросов']), size(r['байт'])] for _, r in G.iterrows()]
         rows.append(['Итого', '', int(G['визитов'].sum()), '', int(G['запросов'].sum()), size(G['байт'].sum())])
         S.table(['Группа', 'Подгруппа', 'Визиты', 'IP', 'Запросов', 'Трафик'], rows, ['B', 'CD', 'E', 'F', 'G', 'HI'], num=(2, 3, 4, 5))
-        S.total(rows[-1], 8)
+        S.total(8)
     # 3. сотрудники
     St = A.get('сотрудники')
     if St is not None and len(St):
@@ -129,7 +75,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
                 for _, r in St.iterrows()]
         rows.append(['Итого', '', int(St['визитов'].sum()), int(St['запросов'].sum()), '', '', int(St['в_админке'].sum()), int(St['заявок'].sum())])
         S.table(['IP', 'Сеть', 'Визиты', 'Запросов', 'Дней', 'Период', 'В админке, запросов', 'Тесты форм'], rows, list(COLS), num=(2, 3, 4, 6, 7), center=(5,))
-        S.total(rows[-1], 8)
+        S.total(8)
     # 4. системы мониторинга
     M = A.get('мониторинг')
     if M is not None and len(M):

@@ -277,6 +277,16 @@ class Wide(Sheet):
         self.ws.row_dimensions[self.r].height = 20
         self.r += 1
 
+    def kpis(self, items):
+        """Строка ключевых цифр: подпись мелко, число крупно — до восьми, по колонкам B:I."""
+        cols = WIDE_COLS[:len(items)]
+        for col, (lab, val) in zip(cols, items):
+            a = self.cell(col, lab, Font(name='Arial', size=9, color=INK), align=Alignment(horizontal='center', vertical='bottom', wrap_text=True))
+            b = self.cell(col, val, Font(name='Arial', size=16, bold=True, color='000000'), align=Alignment(horizontal='center', vertical='center'), row=self.r + 1)
+            if isinstance(val, int) and val >= 1000: b.number_format = NUM_FMT
+        self.ws.row_dimensions[self.r].height = 28; self.ws.row_dimensions[self.r + 1].height = 26
+        self.r += 2
+
     def total(self, n=8):
         """Последняя строка таблицы — «Итого»: жирным на сером."""
         r = self.r - 1

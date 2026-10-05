@@ -272,6 +272,17 @@ def apply_edits(res, edits):
     if edits.get('мониторинги'):   # Детектив нашёл, чей это мониторинг, — в справочник (learned/monitors.json)
         from . import visits
         visits.learn_monitors(edits['мониторинги'], (res.get('site_map', {}).get('site_hosts') or ['site'])[0])
+    X_ = res.get('security') or {}
+    if edits.get('проверка_утечек') and X_.get('утечки') is not None and len(X_['утечки']):   # скил открыл утёкшие файлы из сети (SKILL.md)
+        L_ = X_['утечки']
+        for f_, ch in edits['проверка_утечек'].items():
+            m_ = L_['файл'] == f_
+            if m_.any():
+                L_.loc[m_, 'проверка'] = ch.get('итог', 'проверено'); L_.loc[m_, 'проверено'] = ch.get('когда', '')
+                L_.loc[m_, 'внутри'] = ch.get('внутри', ''); L_.loc[m_, 'тревога'] = bool(ch.get('тревога'))
+    if edits.get('встраивание') and X_.get('встраивание') is not None and len(X_['встраивание']):   # скил сверил IP сайтов с нашим сервером
+        Em_ = X_['встраивание']
+        for h_, why in edits['встраивание'].items(): Em_.loc[Em_['сайт'] == h_, 'вывод'] = why
     if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
         res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res
@@ -284,6 +295,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     res = apply_edits(res, edits)
     from . import report_errors
     report_errors.relink(res['findings'])   # карточки ссылаются на новые листы 02
+    from . import report_load
+    report_load.relink(res['findings'])   # и 03
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
@@ -303,6 +316,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             sheets = {k: v for k, v in {**S, **appendix(res)}.items() if k not in ('Люди и боты', 'Каналы')}   # их данные — в сводке «Активность»   # «Файлы» строится оформленным листом в конце (report_files)   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
             if 'Боты' not in res['selected']: sheets['IP'] = res['ips']      # иначе лист IP — в 04 Bots
             hidden = snap_json
+        elif b == 'Нагрузка и безопасность':   # 03 — по правилам 01 и 02: обзор вместо «Сводки» и «О данных»
+            from . import report_load
+            sheets = {'Обзор': pd.DataFrame(), **report_load.sheets_for(S)}
+            hidden = None
         elif b == 'Ошибки':   # 02 — по правилам Overview: сводка вместо «Сводки» и «О данных» (они в Overview)
             from . import report_errors
             sheets = report_errors.sheets_for(S)
@@ -327,8 +344,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         if b == 'Ошибки':
             report_errors.build(wb, res, S, site)
         if b == 'Нагрузка и безопасность':
-            report_tables.post_all(wb, res)
-            report_tables.leaks_sheet(wb, S.get('Утечки служебных файлов'), names.get('Утечки служебных файлов', 'Утечки служебных файлов'))
+            report_load.build(wb, res, S, site)
+        if b == 'Боты' and res.get('security'):
+            from . import report_load as rl_
+            rl_.scanner_ips_sheet(wb, res)
         if b == 'Общий анализ':
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
@@ -367,7 +386,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             wb._sheets = head_ + [w for w in wb._sheets if w not in head_ and w not in tail_] + tail_
             report_index.build_index(wb, res, names)
         report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
-        if b != 'Ошибки': report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
+        if b not in ('Ошибки', 'Нагрузка и безопасность'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
         wb.save(path)
         written.append(path)
     if only:

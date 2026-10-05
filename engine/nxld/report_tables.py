@@ -83,7 +83,19 @@ LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «По�
           'со_страниц': (F_NOTE, None, 'Файл просят страницы сайта, и ошибка встречается сейчас'),
           '5xx': (F_NOTE, None, 'Сервер отвечает ошибкой 5xx'), 'клик_впустую': (F_NOTE, None, 'Клик привёл на ошибку: деньги впустую'),
           'сбой': (F_NOTE, None, 'Сбой: сервер отвечал ошибками на многие страницы сразу'), 'выходные': ('F3F3F3', None, 'Выходные'),
-          'неполный': ('FFFFFF', GREY, 'Неполный день: в лог попала только часть суток')}
+          'неполный': ('FFFFFF', GREY, 'Неполный день: в лог попала только часть суток'),
+          'находка': (F_NOTE, None, 'Сервер отдал постороннему то, что ему не положено'),
+          'не_улика': ('EFEFEF', None, 'Только обычные страницы сайта и заглушки — не улика'),
+          'чужой': (F_NOTE, None, 'Чужой: не сотрудник'), 'программа': ('FFFFFF', GREY, 'Не человек: программа или бот'),
+          'ложный': ('EFEFEF', None, 'Ложный раздел: на сайте его нет, сканеры угадывали'),
+          'открыто': (F_NOTE, None, 'Настоящий раздел: есть страницы, которые открываются без входа'),
+          'всплеск': (F_NOTE, None, 'Всплеск от программ, похожий на DDoS, или с последствиями для людей'),
+          'подозрительно': (F_NOTE, None, 'Сервер ответил 200, и ответ не похож на обычную страницу — проверить'),
+          'посторонние': (F_NOTE, None, 'Адрес с токеном видели посторонние'), 'свои_норма': ('EFEFEF', None, 'Видели только свои — норма'),
+          'ловушка': (F_NOTE, None, 'По вариантам ходят в основном роботы и боты'),
+          'принято': (F_NOTE, None, 'Сервер принял необычный метод (ответ 2xx)'),
+          'утечка': (F_NOTE, None, 'Файл отдаётся посторонним сейчас или не проверен'), 'закрыт': ('FFFFFF', GREY, 'Закрыт: больше не отдаётся'),
+          'массовые_люди': ('FFFFFF', GREY, 'Люди и свои: проверить, не общий ли это IP (офис, мобильный оператор)')}
 
 
 def legend(ws, keys):
@@ -266,7 +278,7 @@ def post_all(wb, res, name='POST-отправки', after='GET-отправки'
     sc = d[d['Опознано как'] == 'Сканер']
     kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Запросов сканеров', int(sc['Запросов'].sum()))]
     row_rule = lambda r: F_NOTE if r.get('Опознано как') == 'Сканер' else None
-    data_sheet(wb, name, d, 'POST-отправки', 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
+    data_sheet(wb, name, d, name, 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
                wrap=('Улики', 'Адрес точки', 'Ответы', 'Ошибки'), center=(), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
     ws = wb[name]   # ссылка на другой файл
     r_ = ws.max_row + 2
@@ -682,3 +694,86 @@ def redden_codes(wb, skip=('_snapshot',), only=None, rx=r'код|ответ'):
                 if any_bad:
                     if pos < len(v): parts.append(TextBlock(base, v[pos:]))
                     cell.value = CellRichText(parts)
+
+
+def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='Запросов за час'):
+    """Тепловые карты «день × час» друг под другом на одном листе: blocks — [(заголовок, подпись, DataFrame день × 0..23)].
+    Перед картами — заметка, куда смотреть (intro). Общий для «Нагрузки по часам» (03) и «Признаков торможения» (02)."""
+    from openpyxl.formatting.rule import ColorScaleRule
+    from openpyxl.utils import get_column_letter as L_
+    idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
+    if name in wb.sheetnames: del wb[name]
+    ws = wb.create_sheet(name, idx)
+    ws.column_dimensions['A'].width = 2.5
+    ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE); ws.row_dimensions[1].height = 34
+    ws['B2'] = subtitle; ws['B2'].font = Font(name='Comfortaa', size=11, bold=True, color=GREY); ws.row_dimensions[2].height = 24
+    r = 4
+    for t_ in intro:   # заметка перед картами — персиковая плашка на всю ширину
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=28)
+        c_ = ws.cell(r, 2, t_); c_.font = Font(name='Arial', size=10, italic=True, color=INK); c_.fill = PatternFill('solid', fgColor=F_NOTE)
+        c_.alignment = Alignment(wrap_text=True, vertical='center', indent=1)
+        ws.row_dimensions[r].height = 15 * (len(t_) // 170 + 1) + 10
+        r += 1
+    r += 1
+    for bt, bn, P in blocks:
+        if P is None or not len(P): continue
+        ws.cell(r, 2, bt.upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.row_dimensions[r].height = 22; r += 1
+        if bn:
+            ws.cell(r, 2, bn).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
+        hdr = ['День', 'Дата'] + [f'{h:02d}' for h in range(24)] + ['Всего']
+        for j, v in enumerate(hdr):
+            c_ = ws.cell(r, 2 + j, v); c_.font = Font(name='Arial', size=9, bold=True, color='FFFFFF'); c_.fill = PatternFill('solid', fgColor=ORANGE)
+            c_.alignment = Alignment(horizontal='center', vertical='center'); c_.border = Border(left=WHITE, right=WHITE)
+        r += 1; r0 = r
+        for day, row in P.iterrows():
+            d_ = pd.Timestamp(day)
+            ws.cell(r, 2, WEEKDAY[d_.weekday()]).alignment = Alignment(horizontal='center')
+            ws.cell(r, 3, d_.strftime('%d.%m')).alignment = Alignment(horizontal='center')
+            for h in range(24):
+                c_ = ws.cell(r, 4 + h, int(row.get(h, 0))); c_.number_format = NUM_FMT; c_.font = Font(name='Arial', size=8)
+            c_ = ws.cell(r, 28, int(row.sum())); c_.number_format = NUM_FMT; c_.font = Font(name='Arial', size=9, bold=True)
+            for q in (2, 3): ws.cell(r, q).font = Font(name='Arial', size=9, color='000000' if d_.weekday() < 5 else GREY)
+            r += 1
+        ws.conditional_formatting.add(f'D{r0}:AA{r - 1}', ColorScaleRule(start_type='min', start_color='FFFFFF', mid_type='percentile', mid_value=50,
+                                                                        mid_color='FCD9C4', end_type='max', end_color='E8541C'))
+        r += 1
+    ws.column_dimensions['B'].width = 6; ws.column_dimensions['C'].width = 7
+    for j in range(24): ws.column_dimensions[L_(4 + j)].width = 6.3
+    ws.column_dimensions['AB'].width = 10
+    for text, target in links:
+        c = ws.cell(r, 2, f'{text}: лист «{target}» →'); c.hyperlink = f"#'{target}'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single'); r += 1
+    c_ = ws.cell(r + 1, 2, f'{unit}. Цвет — от белого (меньше всего) до тёмно-оранжевого (больше всего) в каждой карте отдельно. Выходные — серой датой.')
+    c_.font = Font(name='Arial', size=9, italic=True, color=GREY)
+    ws.page_setup.orientation = 'landscape'; ws.sheet_properties.pageSetUpPr.fitToPage = True; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
+    return ws
+
+
+def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, size=9, at=None):
+    """Вторая таблица на листе — под первой (после ссылок и заметок): заголовок, подпись, оранжевая шапка, строки.
+    at — буквы колонок листа для каждой колонки таблицы (широкие колонки — на широкие места первой таблицы)."""
+    from openpyxl.utils import column_index_from_string as ci_
+    r = ws.max_row + 3
+    ws.cell(r, 2, title.upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.row_dimensions[r].height = 22; r += 1
+    if note:
+        ws.cell(r, 2, note).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
+    cols = list(df.columns)
+    pos = [ci_(x) for x in at] if at else [2 + j for j in range(len(cols))]
+    for j, c in enumerate(cols):
+        cell = ws.cell(r, pos[j], c); cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF'); cell.fill = PatternFill('solid', fgColor=ORANGE)
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True); cell.border = Border(left=WHITE, right=WHITE)
+    ws.row_dimensions[r].height = 32
+    for row in df.itertuples(index=False):
+        r += 1
+        rf = row_rule(dict(zip(cols, row))) if row_rule else None
+        for j, v in enumerate(row):
+            if isinstance(v, float) and pd.isna(v): v = None
+            if hasattr(v, 'item'): v = v.item()
+            if isinstance(v, str): v = ILLEGAL.sub('�', v)
+            cell = ws.cell(r, pos[j], v)
+            isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
+            cell.font = Font(name='Arial', size=size)
+            cell.alignment = Alignment(horizontal='right' if isnum else 'left', vertical='top', wrap_text=cols[j] in wrap, indent=1)
+            if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
+            cell.border = Border(bottom=SEP)
+            if rf: cell.fill = PatternFill('solid', fgColor=rf)
+    return ws

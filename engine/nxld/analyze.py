@@ -228,6 +228,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         import traceback; traceback.print_exc(); res['params'] = None
     if 'Нагрузка и безопасность' in selected:   # срезы 03 на общих расчётах (common): после реестров, ошибок и параметров
         from . import security
+        if os.environ.get('NXLD_DUMP_CTX'): pickle.dump((c, res), open(os.environ['NXLD_DUMP_CTX'], 'wb'), protocol=4)   # отладка срезов 03 без полного пересчёта
         if os.environ.get('NXLD_DUMP_CTX'): pickle.dump((c, res), open(os.environ['NXLD_DUMP_CTX'], 'wb'), protocol=4)   # для отладки срезов без полного пересчёта
         res['security'] = security.build(c, res, res['sheets'].get('Нагрузка и безопасность', {}))
         security.findings(res, F.items)

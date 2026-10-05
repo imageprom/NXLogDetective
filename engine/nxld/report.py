@@ -269,6 +269,9 @@ def apply_edits(res, edits):
             e_ = classify.ext_of(r_.get('адрес', ''))
             if r_.get('группа') == 'Неизвестный вид' and e_ in ok: r_['группа'] = ok[e_]
         res['unknown_extensions'] = [u for u in res.get('unknown_extensions') or [] if u['расширение'] not in ok]
+    if edits.get('мониторинги'):   # Детектив нашёл, чей это мониторинг, — в справочник (learned/monitors.json)
+        from . import visits
+        visits.learn_monitors(edits['мониторинги'], (res.get('site_map', {}).get('site_hosts') or ['site'])[0])
     if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
         res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res
@@ -364,7 +367,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             wb._sheets = head_ + [w for w in wb._sheets if w not in head_ and w not in tail_] + tail_
             report_index.build_index(wb, res, names)
         report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
-        report_tables.redden_codes(wb)   # ошибки в списках кодов — красным, на всех листах
+        if b != 'Ошибки': report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
         wb.save(path)
         written.append(path)
     if only:

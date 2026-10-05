@@ -24,7 +24,7 @@ CHANNEL_LABEL = dict(TOP_CHANNELS)
 def sub_label(s):
     s = str(s)
     if s in SUB_LABEL: return SUB_LABEL[s]
-    if s in ('по имени', 'по ритму'): return 'Опознаны ' + s
+    if s == 'неопознанный мониторинг': return 'Неопознанный мониторинг'
     if s and ':' not in s and s[:1].islower() and s not in ('известные', 'неизвестные'): return s   # имя утилиты (curl, wget) — как есть
     head = s.split(': ', 1)[0]
     return {'сканер под браузер': 'Сканеры под браузер', 'спам форм': 'Спам форм', 'человек-исследователь, разово': 'Люди-исследователи',
@@ -92,25 +92,24 @@ def _interval(ts):
 
 
 def monitoring(c, top=10):
-    """Системы мониторинга: названные (семейство робота с категорией «Мониторинг») и опознанные по ритму (один адрес через равные промежутки)."""
-    R = c.R
+    """Системы мониторинга — группа реестра обращающихся: название сервиса (справочник или User-Agent) или «неопознанный мониторинг» (по ритму).
+    Что проверяет, с какого интервала, ошибки, трафик; у неопознанного — с IP сотрудника ли он ходит."""
+    R, V = c.R, c.V
+    m = np.asarray(c.rg) == 'Системы мониторинга'
+    if not m.any(): return pd.DataFrame()
+    sub = V['subgroup'].reindex(R['vid'].values[m]).astype(str).values
+    X = pd.DataFrame({'s': sub, 'ip': R['ip'].astype(str).values[m], 'ts': R['ts'].values[m], 'base': R['base'].astype(str).values[m],
+                      'st': R['status'].values[m], 'b': R['bytes'].values[m]})
+    staff = set(str(x) for x in (c.m.get('staff_ips') or []))
     rows = []
-    fc = R['fam_cat'].astype(str).values
-    m = fc == 'Мониторинг'
-    if m.any():
-        X = R.loc[m, ['fam', 'ip', 'ts', 'base', 'status', 'bytes', 'ua']]
-        # «Мониторинг: прочие» — по названию продукта из User-Agent: номера запросов, ссылки и версии отбрасываются
-        X = X.assign(fam=[product_name(u) if 'прочие' in str(f) else str(f) for f, u in zip(X['fam'].astype(str), X['ua'].astype(str))])
-        for f, g in X.groupby('fam'):
-            per_ip = [_interval(gi['ts'].values) for _, gi in g.groupby('ip', observed=True)]
+    for nm, g in X.groupby('s'):
+        unk = nm == 'неопознанный мониторинг'
+        for key, gg in (g.groupby('ip') if unk else [(None, g)]):   # неопознанные — по одному IP: это разные системы
+            per_ip = [_interval(gi['ts'].values) for _, gi in gg.groupby('ip')]
             per_ip = [x for x in per_ip if x]
-            rows.append(dict(система=str(f).replace(' (мониторинг)', ''), как='по имени', проверяет=', '.join(g['base'].astype(str).value_counts().head(2).index), IP=int(g['ip'].nunique()),
-                             интервал=int(np.median(per_ip)) if per_ip else None, запросов=len(g), коды=topn(g['status'], 4), байт=int(g['bytes'].sum())))
-    for x in c.m.get('monitors') or []:
-        g = R[(R['ip'].astype(str) == str(x.get('ip'))) & (R['ua'].astype(str) == str(x.get('ua')))]
-        if not len(g): continue
-        rows.append(dict(система=f"Без имени ({x.get('ip')})", как='по ритму', проверяет=str(x.get('адрес')), IP=1, интервал=x.get('интервал_с'),
-                         запросов=len(g), коды=topn(g['status'], 4), байт=int(g['bytes'].sum())))
+            rows.append(dict(система=(f"Неопознанный ({key})" + (' — IP сотрудника' if key in staff else '')) if unk else nm, как='по ритму' if unk else 'по имени и поведению',
+                             проверяет=', '.join(gg['base'].value_counts().head(2).index), IP=int(gg['ip'].nunique()),
+                             интервал=int(np.median(per_ip)) if per_ip else None, запросов=len(gg), коды=topn(gg['st'], 4), байт=int(gg['b'].sum())))
     d = pd.DataFrame(rows)
     return d.sort_values('запросов', ascending=False).head(top) if len(d) else d
 
@@ -129,7 +128,7 @@ def product_name(ua):
     return m.group(1) if m else 'без названия'
 
 
-UTIL_NAME = {'Без User-Agent': 'Без User-Agent', 'Headless-браузер': 'Headless-браузер', 'Скрипты: прочие': 'Прочие программы'}
+UTIL_NAME = {'Headless-браузер': 'Headless-браузер', 'Скрипты: прочие': 'Прочие программы'}
 
 
 def utilities(c):
@@ -140,7 +139,8 @@ def utilities(c):
     if not m.any(): return pd.DataFrame()
     A = c.addr
     cc = R['base'].cat.codes.values
-    X = pd.DataFrame({'u': R['fam'].astype(str).values[m], 'ip': R['ip'].astype(str).values[m], 'asn': R['asn'].values[m], 'day': R['day'].astype(str).values[m],
+    fam_ = R['fam'].astype(str).values[m]; ua_ = R['ua'].astype(str).values[m]
+    X = pd.DataFrame({'u': [product_name(u) if f == 'Скрипты: прочие' else f for f, u in zip(fam_, ua_)], 'ip': R['ip'].astype(str).values[m], 'asn': R['asn'].values[m], 'day': R['day'].astype(str).values[m],
                       'b': cc[m], 'st': R['status'].values[m]})
     X['зонд'] = A['зонд'].values[X['b']] != ''
     X['живой'] = A['существование'].values[X['b']] == 'живой'

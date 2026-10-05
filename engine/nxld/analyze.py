@@ -58,7 +58,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     from . import classify
     form_ = np.array([classify.form_of(p_)[0] for p_ in R['base'].cat.categories.astype(str)])
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
-    V = visits.regroup(V)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
+    V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
@@ -81,6 +81,17 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
     from . import actors
     res['actors'] = actors.build(c)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
+    # незнакомые системы мониторинга (имя не из справочника) — Детективу: найти сервис и записать (edits.json → «мониторинги»)
+    mv_ = V[V['group'] == 'Системы мониторинга']
+    res['unknown_monitors'] = [dict(имя=str(sg), user_agent=str(g['ua'].iloc[0])[:200], IP=int(g['ip'].nunique()), визитов=len(g))
+                               for sg, g in mv_.groupby('subgroup') if sg != 'неопознанный мониторинг' and visits.monitor_name(g['ua'].iloc[0]) is None][:20]
+    Mn = res['actors'].get('мониторинг')
+    if Mn is not None and len(Mn):   # неопознанная система по расписанию — вопрос аналитику: чья
+        U_ = Mn[Mn['система'].str.startswith('Неопознанный')]
+        for _, r_ in U_.iterrows():
+            F.add('Боты', 'К сведению', 'unknown_monitor', r_['система'], f"Неизвестная система следит за сайтом по расписанию: {r_['система']}",
+                  f"проверяет {r_['проверяет']} примерно раз в {int(r_['интервал'] or 0) // 60} мин; {int(r_['запросов'])} запросов; коды: {r_['коды']}",
+                  'хостинг, мониторинги компании', 'Выяснить, чья это система: если своя — отметить как норму; если чужая — решить, нужна ли она', int(r_['запросов']), '')
     from . import errors as errors_
     res['errors'] = errors_.build(c)   # «адрес × код», журнал и сводка ошибок — для файла 02
     lk = getattr(c, 'leaks', None)   # служебные файлы, отданные посторонним (03): подсветка в «Файлах» и «Анатомии»

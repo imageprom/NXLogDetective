@@ -41,7 +41,7 @@ def load_extensions():
     tlds = {e.lower() for e in E.get('домены_в_хвосте', [])}
     H = E.get('скрытые_файлы') or {}
     hidden = {e.lower() for e in H.get('файлы', [])} | {x['расширение'].lower() for x in L.get('скрытые', []) if x.get('расширение')}
-    return dict(ext2grp=ext2grp, by_addr=by_addr, pages=pages, tlds=tlds, hidden=hidden, hidden_group=H.get('группа', 'Конфиги и исходники'))
+    return dict(ext2grp=ext2grp, by_addr=by_addr, pages=pages, tlds=tlds, hidden=hidden, hidden_group=H.get('группа', 'Конфиги'))
 
 
 _EXT = None
@@ -99,6 +99,19 @@ def build(R, human, staff=None, engines=()):
     e5 = np.bincount(codes[st >= 500], minlength=L)
     ok_any = np.bincount(codes[(st >= 200) & (st < 300)], minlength=L)
     F['существование'] = np.select([ok > 0, ok_any > 0, r3 > 0, e5 > 0, e4 > 0], ['живой', 'живой', 'переадресация', 'сломан', 'не существует'], 'не существует')
+    # фид или выгрузка — по поведению, а не по расширению: XML/YML/CSV, который забирают роботы и сервисы напрямую (Авито, Маркет, ЦИАН),
+    # а не подгружают страницы сайта, — это выгрузка, а не данные для виджетов
+    fam_ = (R['fam'].astype(str).values != '')
+    ri_ = R['ref_internal'].values.astype(bool)
+    n_all = np.bincount(codes, minlength=L)
+    rob = np.bincount(codes[fam_], minlength=L)
+    inn = np.bincount(codes[ri_], minlength=L)
+    feedish = (F['группа'] == 'Данные для виджетов') & F['расширение'].isin(['xml', 'yml', 'csv', 'tsv']) & (n_all > 0)
+    feedish &= (rob >= 0.5 * n_all) & (inn < 0.2 * n_all)
+    F.loc[feedish, 'группа'] = 'Фиды и выгрузки'
+    # /.well-known/: стандартные имена — служебные; нестандартный файл, который отдаётся, — постороннее в служебной папке (критично)
+    wk = F['адрес'].str.startswith('/.well-known/') & ~F['группа'].isin(['Служебные (.well-known)', 'Подтверждение прав'])
+    F['чужое_в_well_known'] = wk & (ok_any > 0)
     F['людям'] = ok > 0   # полный ответ получали люди или свои — это адрес сайта, а не находка сканера
     F['раздел'] = cats.str.extract(r'^(/[^/]*/?)')[0].values
     return F

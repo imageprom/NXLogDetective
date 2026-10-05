@@ -642,7 +642,7 @@ def errors(c, F):
     kg = constructs(c)
     bad = kg[kg['со_страниц_сайта'] > 0] if len(kg) else kg
     if len(bad):
-        S['Битые адреса из скриптов'] = bad[['адрес', 'со_страниц_сайта', 'IP', 'коды', 'страница']].rename(columns={'адрес': 'Адрес', 'со_страниц_сайта': 'Запросов со страниц сайта', 'коды': 'Коды', 'страница': 'Страница-источник'})
+        S['Битые адреса из скриптов'] = bad[['адрес', 'со_страниц_сайта', 'IP', 'коды', 'страница', 'последний']].rename(columns={'адрес': 'Адрес', 'со_страниц_сайта': 'Запросов со страниц сайта', 'коды': 'Коды', 'страница': 'Страница-источник', 'последний': 'Последний'})
         F.add('Ошибки', 'Важно', 'broken_js', 'constructs', f'Скрипты сайта собирают битые адреса ({len(bad)})',
               '; '.join(f"{r['адрес']} — со страницы {r['страница'] or '?'}, {int(r['со_страниц_сайта'])} раз" for _, r in bad.head(5).iterrows()),
               'шаблоны и скрипты сайта', 'Найти на этих страницах код, который подставляет переменную в адрес, и исправить', int(bad['со_страниц_сайта'].sum()), 'Битые адреса из скриптов')
@@ -669,11 +669,12 @@ def constructs(c):
     if A_ is not None and (A_['форма'] == 'конструкт').any():
         cc_ = R['base'].cat.codes.values
         km = (A_['форма'] == 'конструкт').reindex(range(len(R['base'].cat.categories))).fillna(False).values[cc_]
-        K = R.loc[km, ['base', 'status', 'ip', 'ref_internal', 'ref_path']].assign(люди=c.human[km] | np.asarray(c.rg == 'Свои')[km], роботы=np.asarray(c.rg == 'Роботы')[km])
+        K = R.loc[km, ['base', 'status', 'ip', 'ref_internal', 'ref_path', 'day']].assign(люди=c.human[km] | np.asarray(c.rg == 'Свои')[km], роботы=np.asarray(c.rg == 'Роботы')[km])
         if len(K):
             self_ = K['ref_path'].astype(str).values == K['base'].astype(str).values   # реферер «сам на себя» — не страница-источник
             K = K.assign(со_страниц=K['ref_internal'].astype(bool) & K['люди'] & ~self_, ref_path=K['ref_path'].astype(str).where(~self_, ''))
             kg = K.groupby('base', observed=True).agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), люди=('люди', 'sum'), роботы=('роботы', 'sum'), со_страниц_сайта=('со_страниц', 'sum'),
+                                                       последний=('day', lambda s: str(s.astype(str).max())),
                                                        коды=('status', lambda s: topn(s, 4)),
                                                        страница=('ref_path', lambda s: (s.astype(str)[s.astype(str).str.startswith('/')].mode().tolist() or [''])[0])).reset_index().rename(columns={'base': 'адрес'})
             kg['вывод'] = np.select([kg['со_страниц_сайта'] > 0, kg['люди'] > 0, kg['роботы'] > 0],
@@ -856,6 +857,13 @@ def load_security(c, F):
         if len(a5):
             F.add('Нагрузка и безопасность', 'Срочно', 'attack_500', 'params', f'Атаки через параметры вызвали 500 ({len(a5)} раз)',
                   ', '.join(a5['base'].astype(str).unique()[:5]), 'код сайта', 'Проверить обработку параметров на этих адресах', len(a5), 'Атаки в параметрах')
+    # постороннее в /.well-known/: служебная папка для стандартных адресов; нестандартный файл, который отдаётся, — веб-шелл, подложенная страница
+    A_w = getattr(c, 'addr', None)
+    if A_w is not None and 'чужое_в_well_known' in A_w and A_w['чужое_в_well_known'].any():
+        wkf = A_w.loc[A_w['чужое_в_well_known'], 'адрес']
+        F.add('Нагрузка и безопасность', 'Срочно', 'wellknown_foreign', 'files', f'Посторонние файлы в служебной папке /.well-known/ ({len(wkf)})',
+              ', '.join(wkf.head(8)), 'сервер / файлы сайта', 'Открыть каждый файл на сервере: в /.well-known/ должны лежать только стандартные служебные файлы; лишнее удалить, проверить, кто его положил',
+              len(wkf), '')
     # подозрительные исполняемые файлы в папках загрузок
     sx = bs.str.contains(r'^/(upload|uploads|wp-content/uploads|files|images|media)/.*\.(php\d?|phtml|asp|aspx|jsp|cgi|pl)$', regex=True, case=False).values[R['base'].cat.codes.values]
     SX = R.loc[sx & (st == 200), ['ip', 'base', 'method', 'day']]

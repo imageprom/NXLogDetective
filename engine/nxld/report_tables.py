@@ -9,7 +9,7 @@ SEP = Side(style='thin', color='D9D9D9')
 WHITE = Side(style='thin', color='FFFFFF')
 
 
-def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None, red=('Ошибки',)):
+def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None, red=('Ошибки',), font_rule=None):
     """Пересобирает лист name: строка 1 — заголовок, 2 — пояснение, 4 — шапка, дальше данные.
     widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None."""
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
@@ -42,6 +42,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     ws.row_dimensions[H].height = 32
     for i, row in enumerate(df.itertuples(index=False), H + 1):
         rf = row_rule(dict(zip(cols, row))) if row_rule else None   # заливка всей строки
+        ff = font_rule(dict(zip(cols, row))) if font_rule else None   # цвет текста всей строки (неактуальное — серым)
         for j, v in enumerate(row, 1):
             if isinstance(v, float) and pd.isna(v): v = None
             if hasattr(v, 'item'): v = v.item()
@@ -49,7 +50,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             cell = ws.cell(i, j + X, v)
             col = cols[j - 1]
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
-            cell.font = Font(name='Arial', size=size, bold=bool(bold_rule and bold_rule(col, v)), color=RED if col in red else '000000')
+            cell.font = Font(name='Arial', size=size, bold=bool(bold_rule and bold_rule(col, v)), color=ff or (RED if col in red else '000000'))
             hz = 'center' if col in center else ('right' if isnum else 'left')
             cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
@@ -70,6 +71,26 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             c_ = cols.index(sort_by) + 1 + X
             ws.auto_filter.add_sort_condition(f"{ws.cell(H + 1, c_).coordinate}:{ws.cell(H + len(df), c_).coordinate}")
     return ws
+
+
+LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «Почему важно»'), 'обычно': ('FFFFFF', None, 'Ошибка есть, не критична'),
+          'неактуально': ('FFFFFF', GREY, 'Уже неактуально: починилось или давно не встречалось'),
+          'чужое': ('EFEFEF', None, 'Чужое: сканеры и посторонние'), 'норма': ('EFEFEF', None, 'Норма'),
+          'люди': (F_NOTE, None, 'Ошибку получили люди, и она встречается сейчас'),
+          'со_страниц': (F_NOTE, None, 'Файл просят страницы сайта, и ошибка встречается сейчас'),
+          '5xx': (F_NOTE, None, 'Сервер отвечает ошибкой 5xx'), 'клик_впустую': (F_NOTE, None, 'Клик привёл на ошибку: деньги впустую')}
+
+
+def legend(ws, keys):
+    """Легенда цветов под таблицей: квадратик цвета и подпись. keys — какие цвета есть на этом листе (ключи LEGEND)."""
+    r_ = ws.max_row + 2
+    for k in keys:
+        fill, font, text = LEGEND[k]
+        c0 = ws.cell(r_, 2, text)   # подпись прямо на образце цвета: залитая ячейка с текстом нужного цвета
+        c0.fill = PatternFill('solid', fgColor=fill); c0.border = Border(left=SEP, right=SEP, top=SEP, bottom=SEP)
+        c0.font = Font(name='Arial', size=9, color=font or '000000')
+        c0.alignment = Alignment(vertical='center', indent=1)
+        r_ += 1
 
 
 def conversions(wb, C, name='Конверсии'):
@@ -339,7 +360,7 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
                         else {'Кто забирает': _who(f.get('кто_забирает', ''))}),
                      'Со страниц сайта': int(f.get('со_страниц') or 0), 'Напрямую': int(f.get('напрямую') or 0),
                      'Другие сайты': _who(f.get('другие_сайты', '')) if f.get('другие_сайты') else '',
-                     'Первый': day('первый_день'), 'Последний': day('последний_день'), '_leak': str(f.get('адрес', '')) in leaked})
+                     'Первый': day('первый_день'), 'Последний': day('последний_день'), '_leak': str(f.get('адрес', '')) in leaked, '_last': str(f.get('последний_день') or '')})
     d = pd.DataFrame(rows)
     if not len(d): return None
     if 'со_страниц' not in (sf[0] if sf and isinstance(sf[0], dict) else {}) or (d['Со страниц сайта'].sum() == 0 and not d['Другие сайты'].astype(bool).any()):   # старый анализ или в логе нет Referer
@@ -347,19 +368,23 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
     d = d.sort_values('Запросов', ascending=False)
     if name not in wb.sheetnames: wb.create_sheet(name)
     kpi = [('Файлов', int(d['Файлов'].sum())), ('Запросов', int(d['Запросов'].sum())), ('С ошибками', int((d['_err'] > 0).sum()))]
-    if errors_mode:   # своё — персиковым (страницы сайта просят то, чего нет), только роботы — серым
+    fonts_ = [None] * len(d)
+    if errors_mode:   # критично — файл просят страницы сайта, и ошибка встречается сейчас; давно не встречалась — серым текстом
+        recent = errors_mode if isinstance(errors_mode, str) else ''
         own = (d['Со страниц сайта'] > 0) if 'Со страниц сайта' in d else (d['_err'] > 0)
-        robots_only = (d['Браузеры'] == 0) if 'Браузеры' in d else pd.Series(False, index=d.index)
-        fills_ = [F_NOTE if o else ('EFEFEF' if ro else None) for o, ro in zip(own, robots_only)]
-        kpi = [('Файлов', int(d['Файлов'].sum())), ('Ошибок', int(d['_err'].sum())), ('Просят страницы сайта', int(own.sum()))]
+        act = pd.Series([str(x) >= recent for x in d['_last']], index=d.index)
+        fills_ = [F_NOTE if o and a else None for o, a in zip(own, act)]
+        fonts_ = [None if a else GREY for a in act]
+        kpi = [('Файлов', int(d['Файлов'].sum())), ('Ошибок', int(d['_err'].sum())), ('Критично', int((own & act).sum()))]
     else:
         fills_ = [F_NOTE if b_ else None for b_ in ((d['_err'] > 0) | d['_leak'])]   # ошибки и утечки — персиковым
-    d = d.drop(columns=['_err', '_leak'])
+    d = d.drop(columns=['_err', '_leak', '_last'])
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
     missing = [nm for nm in ('Документы', 'Видео и звук') if nm not in set(d['Группа'])] if res.get('files') is not None and not errors_mode else []   # заметные отсутствия
     links = links if links is not None else [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
     data_sheet(wb, name, d, title, note, widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
-               kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(fills_): next(_it))
+               kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(fills_): next(_it), font_rule=lambda r, _it=iter(fonts_): next(_it),
+               red=() if errors_mode else ('Ошибки',))
     ws = wb[name]
     if missing:
         r = ws.max_row + 2
@@ -367,9 +392,9 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
         ws.cell(r, 2).font = Font(name='Arial', size=9, italic=True, color=GREY)
     if errors_mode:
         r = ws.max_row + 2
-        for t_ in ['Персиковым — файлы, которые просят сами страницы сайта: это поломки, их видят люди. Серым — файлы, которые просят только роботы.',
-                   'Файлы, которые никто не запрашивал по ссылке, — перебор и мусор, их здесь нет: они на вкладках по кодам. Зонды сканеров — в отчёте по безопасности.']:
+        for t_ in ['Файлы, которые никто не запрашивал по ссылке, — перебор и мусор, их здесь нет: они на вкладках по кодам. Зонды сканеров — в отчёте по безопасности.']:
             ws.cell(r, 2, t_).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
+        legend(ws, ['со_страниц', 'обычно', 'неактуально'])
     return wb[name]
 
 

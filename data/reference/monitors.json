@@ -1,0 +1,27 @@
+{
+  "id": "monitors",
+  "название": "Системы мониторинга",
+  "вид": "сервисы",
+  "описание": "Известные сервисы проверки доступности сайта: по имени в User-Agent. Системой мониторинга обращающийся считается, только если и поведение мониторинговое: мало адресов (до 3) через равные промежутки. Незнакомые — в brief «незнакомые_мониторинги», Детектив дописывает их в learned/monitors.json со ссылкой.",
+  "поведение": {"адресов_не_больше": 3, "_": "больше разных адресов — это уже не проверка доступности: бот под именем мониторинга"},
+  "сервисы": [
+    {"сервис": "Prufen", "шаблон": "Prufen", "ссылка": "https://prufen.ru/"},
+    {"сервис": "Overseer", "шаблон": "Overseer", "ссылка": "https://overseer.observer/"},
+    {"сервис": "DomainCheckService", "шаблон": "DomainCheckService"},
+    {"сервис": "UptimeRobot", "шаблон": "UptimeRobot", "ссылка": "https://uptimerobot.com/"},
+    {"сервис": "Pingdom", "шаблон": "Pingdom", "ссылка": "https://www.pingdom.com/"},
+    {"сервис": "StatusCake", "шаблон": "StatusCake", "ссылка": "https://www.statuscake.com/"},
+    {"сервис": "Site24x7", "шаблон": "Site24x7", "ссылка": "https://www.site24x7.com/"},
+    {"сервис": "Better Stack", "шаблон": "Better ?Uptime|BetterStack|Better Stack", "ссылка": "https://betterstack.com/"},
+    {"сервис": "HetrixTools", "шаблон": "HetrixTools", "ссылка": "https://hetrixtools.com/"},
+    {"сервис": "Uptime Kuma", "шаблон": "Uptime-?Kuma", "ссылка": "https://github.com/louislam/uptime-kuma"},
+    {"сервис": "Zabbix", "шаблон": "Zabbix", "ссылка": "https://www.zabbix.com/"},
+    {"сервис": "Nagios", "шаблон": "check_http|Nagios", "ссылка": "https://www.nagios.org/"},
+    {"сервис": "Datadog Synthetics", "шаблон": "Datadog.*Synthetic", "ссылка": "https://www.datadoghq.com/"},
+    {"сервис": "Freshping", "шаблон": "Freshping", "ссылка": "https://www.freshworks.com/website-monitoring/"},
+    {"сервис": "Host-tracker", "шаблон": "host-tracker|HostTracker", "ссылка": "https://www.host-tracker.com/"},
+    {"сервис": "Яндекс.Метрика: мониторинг", "шаблон": "YandexMetrika.*monitor|Yandex.*Monitor", "ссылка": "https://yandex.ru/support/metrica/general/site-monitoring.html"},
+    {"сервис": "Ping-Admin", "шаблон": "Ping-?Admin", "ссылка": "https://ping-admin.com/"},
+    {"сервис": "Мониторинг сайтов (Monitorus)", "шаблон": "Monitorus", "ссылка": "https://monitorus.ru/"}
+  ]
+}

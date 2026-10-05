@@ -151,21 +151,105 @@ def aggregate(R, staff_ips=(), monitor_keys=()):
         default='')
     V['group'] = grp
     V['subgroup'] = sub
-    return regroup(V)
+    return regroup(V, R)
 
 
-def regroup(V):
-    """Группы без смешения: «Свои» — только сотрудники; системы мониторинга (по имени или по ритму) — своя группа:
-    не факт, что они наши; утилиты (curl, wget, Python, PHP, Go, headless, без User-Agent) — своя группа: за ними может стоять
-    и разработчик с консоли, и интеграция, и сканер — это решают улики, а не имя. Повторный вызов ничего не меняет."""
+_MON = None
+
+
+def monitors_ref():
+    """Справочник систем мониторинга + найденное Детективом (learned/monitors.json)."""
+    global _MON
+    if _MON is None:
+        import json, os, re as re_
+        base = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+        def rd(p):
+            try: return json.load(open(p, encoding='utf-8'))
+            except Exception: return {}
+        M = rd(os.path.join(base, 'monitors.json'))
+        L = rd(os.path.join(base, 'learned', 'monitors.json'))
+        items = (M.get('сервисы') or []) + (L.get('сервисы') or [])
+        _MON = dict(rx=[(x['сервис'], re_.compile(x['шаблон'], re_.I)) for x in items if x.get('шаблон')],
+                    max_addr=int((M.get('поведение') or {}).get('адресов_не_больше', 3)))
+    return _MON
+
+
+def monitor_name(ua):
+    """Название системы мониторинга по User-Agent из справочника; None — не знаем."""
+    for nm, rx in monitors_ref()['rx']:
+        if rx.search(str(ua)): return nm
+    return None
+
+
+def learn_monitors(items, site=''):
+    """Запись Детектива: [{сервис, шаблон, ссылка}] → learned/monitors.json (без ссылки не принимается)."""
+    import json, os
+    from .reference import anon
+    p = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'learned', 'monitors.json'))
+    try: L = json.load(open(p, encoding='utf-8'))
+    except Exception: L = {'сервисы': []}
+    have = {x['сервис'].lower() for x in L['сервисы']}
+    ok = []
+    for it in items or []:
+        nm, rx, url = str(it.get('сервис', '')).strip(), str(it.get('шаблон', '')).strip(), str(it.get('ссылка', ''))
+        if not nm or not rx or not url.startswith('http') or nm.lower() in have: continue
+        L['сервисы'].append(dict(сервис=nm, шаблон=rx, ссылка=url, источник='поиск', сайт=anon(site))); ok.append(nm); have.add(nm.lower())
+    if ok:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        json.dump(L, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+        global _MON
+        _MON = None
+    return ok
+
+
+def regroup(V, R=None):
+    """Группы без смешения. «Свои» — только люди-сотрудники.
+    Системы мониторинга — по имени (справочник) или ритму, и только если поведение мониторинговое: мало адресов. Имя есть,
+    а поведение другое — бот под именем мониторинга. Ритм без имени — «неопознанный мониторинг»: вопрос аналитику.
+    Утилиты (curl, wget, Python, PHP, Go, headless) — своя группа: решают улики. Без User-Agent — боты: честные программы и браузеры
+    себя называют. Повторный вызов ничего не меняет."""
     V = V.copy()
-    mon = (V['subgroup'] == 'мониторинги') | ((V['fam'] != '') & (V['fam_cat'] == 'Мониторинг') & (V['group'] == 'Роботы'))
+    key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
+    if R is not None:   # разных адресов у обращающегося за период
+        rk = key.reindex(R['vid'].values).values
+        n_addr = pd.Series(R['base'].cat.codes.values).groupby(rk).nunique()
+    else:
+        n_addr = V.groupby(key)['entry'].nunique()
+    addr = key.map(n_addr).fillna(1).values
+    MX = monitors_ref()['max_addr']
+    named = pd.Series([monitor_name(u) for u in V['ua'].astype(str)], index=V.index)
+    by_name = ((V['fam'] != '') & (V['fam_cat'] == 'Мониторинг')) | named.notna()
+    by_name &= V['group'].isin(['Роботы', 'Люди', 'Боты', 'Системы мониторинга']) & (V['subgroup'] != 'сотрудники')
+    rhythm = V['subgroup'].isin(['мониторинги', 'неопознанный мониторинг'])
+    ok_beh = addr <= MX
+    from .actors import product_name
+    if R is not None and rhythm.any():   # ритм без имени, но с зондами — это не мониторинг, а разведка по расписанию
+        import warnings
+        cats = R['base'].cat.categories.to_series().astype(str)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            pr = cats.str.contains(probe_rx(('однозначный', 'неоднозначный')), regex=True, case=False).values[R['base'].cat.codes.values]
+        probing = set(pd.unique(rk[pr]))
+        spy = rhythm & key.isin(probing)
+        V.loc[spy, 'group'] = 'Боты'; V.loc[spy, 'subgroup'] = 'разведка по расписанию'
+        rhythm &= ~spy
+    mon = (by_name & ok_beh) | rhythm
     V.loc[mon, 'group'] = 'Системы мониторинга'
-    V.loc[mon, 'subgroup'] = np.where(V.loc[mon, 'subgroup'] == 'мониторинги', 'по ритму', 'по имени')
-    ut = (V['fam'] != '') & (V['fam_cat'] == 'Скрипты/библиотеки') & (V['group'] == 'Роботы')
+    V.loc[mon & by_name, 'subgroup'] = [named[i] or product_name(V.at[i, 'ua']) for i in V.index[mon & by_name]]
+    V.loc[mon & ~by_name, 'subgroup'] = 'неопознанный мониторинг'
+    fake = by_name & ~ok_beh & ~rhythm
+    V.loc[fake, 'group'] = 'Боты'
+    V.loc[fake, 'subgroup'] = 'выдаёт себя за мониторинг'
+    noua = (V['fam'] == 'Без User-Agent') & V['group'].isin(['Роботы', 'Утилиты'])
+    V.loc[noua, 'group'] = 'Боты'
+    V.loc[noua, 'subgroup'] = 'без User-Agent'
+    ut = (V['fam'] != '') & (V['fam_cat'] == 'Скрипты/библиотеки') & V['group'].isin(['Роботы', 'Утилиты']) & ~noua
     V.loc[ut, 'group'] = 'Утилиты'
-    V.loc[ut, 'subgroup'] = V.loc[ut, 'fam'].astype(str)
+    V.loc[ut, 'subgroup'] = [UTIL_LABEL.get(f, f) if f != 'Скрипты: прочие' else product_name(u) for f, u in zip(V.loc[ut, 'fam'].astype(str), V.loc[ut, 'ua'].astype(str))]
     return V
+
+
+UTIL_LABEL = {'Скрипты: прочие': 'Прочие программы'}
 
 
 def load_probes():

@@ -62,8 +62,14 @@
       "шаблон": "^/(robots\\.txt|[\\w-]*sitemap[\\w.-]*\\.xml(\\.gz)?|sitemap/.*|llms(-full)?\\.txt|ai\\.txt|ads\\.txt|app-ads\\.txt|humans\\.txt|security\\.txt)$"
     },
     {
-      "группа": "Проверочные файлы",
-      "шаблон": "(^/yandex_[0-9a-f]+\\.html$|^/google[0-9a-f]+\\.html$|^/\\.well-known/)"
+      "группа": "Подтверждение прав",
+      "шаблон": "(^/yandex_[0-9a-f]+\\.html$|^/google[0-9a-f]+\\.html$|^/\\.well-known/acme-challenge/|^/BingSiteAuth\\.xml$|^/mailru-domain[\\w-]*\\.html$)",
+      "_": "файлы, которыми подтверждают права на сайт в Вебмастере, Search Console, для SSL-сертификата"
+    },
+    {
+      "группа": "Служебные (.well-known)",
+      "шаблон": "^/\\.well-known/(security\\.txt|assetlinks\\.json|apple-app-site-association|change-password|traffic-advice|passkey-endpoints|openid-configuration|oauth-authorization-server|oauth-protected-resource|jwks\\.json|webfinger|host-meta(\\.json)?|nodeinfo|dnt-policy\\.txt|gpc\\.json|ai-plugin\\.json|mcp\\.json|agent\\.json|openai-plugin\\.json|matrix/.*|caldav|carddav|mta-sts\\.txt|pki-validation/.*|apple-developer-merchantid-domain-association|keybase\\.txt|nostr\\.json|did\\.json|ucp|privacy-sandbox-attestations\\.json|related-website-set\\.json|tdmrep\\.json|api-catalog|resourcesync|timezone|stun-key|credentials\\.json)$",
+      "_": "стандартные адреса по реестру IANA (Well-Known URIs): их запрашивают браузеры, поисковики, приложения и ИИ-агенты; если их нет — это не ошибка"
     },
     {
       "группа": "Фиды и выгрузки",
@@ -271,7 +277,7 @@
       ]
     },
     {
-      "группа": "Конфиги и исходники",
+      "группа": "Конфиги",
       "расширения": [
         "env",
         "ini",
@@ -318,7 +324,7 @@
     }
   ],
   "скрытые_файлы": {
-    "группа": "Конфиги и исходники",
+    "группа": "Конфиги",
     "_": "файлы с точкой в начале имени: настройки сервера, системы контроля версий, окружения. Сайт не должен отдавать их посторонним",
     "файлы": [
       "htaccess",
@@ -350,5 +356,7 @@
       "svn",
       "hg"
     ]
-  }
+  },
+  "well_known_источник": "https://www.iana.org/assignments/well-known-uris/well-known-uris.xhtml",
+  "well_known_правило": "файл в /.well-known/ не из списка стандартных: отдан (2xx) — постороннее в служебной папке, критично (безопасность); не отдан — зонд"
 }

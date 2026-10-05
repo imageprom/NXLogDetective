@@ -59,7 +59,7 @@ SERVICE_GROUPS = [
     ('Для роботов', r'^/(robots\.txt|sitemap[\w.-]*\.xml(\.gz)?|sitemap/.*)$'),
     ('Фиды и выгрузки', r'(/export/|/feeds?(/|\.xml|$)|\.yml$|\.csv$|yandex[\w-]*\.xml$|google[\w-]*\.xml$|/rss)'),
     ('Иконки и манифест', r'(favicon|apple-touch|manifest\.json|site\.webmanifest|browserconfig\.xml|\.ico$)'),
-    ('Проверочные файлы', r'(yandex_[0-9a-f]+\.html|google[0-9a-f]+\.html|\.well-known/)'),
+    ('Подтверждение прав', r'(yandex_[0-9a-f]+\.html|google[0-9a-f]+\.html|\.well-known/acme-challenge/)'), ('Служебные (.well-known)', r'\.well-known/'),
     ('Стили и скрипты', r'\.(css|js|mjs|map)$'),
     ('Данные для виджетов', r'\.(xml|json)$'),
 ]
@@ -173,9 +173,21 @@ def build(c, res):
     for d, what in eng_dirs.items():
         idx = np.where(cats.str.startswith(d))[0]
         mm = np.isin(codes, idx)
-        if mm.sum():
-            ext = Counter(R['ext'].values[mm].astype(str)).most_common(4)
-            A['папки'].append(dict(папка=d, что=what, запросов=int(mm.sum()), доля=float(round(mm.mean() * 100, 1)), типы=', '.join(f"{e or 'страницы'}" for e, _ in ext)))
+        if mm.sum():   # виды — группами из справочника расширений, все, с числом запросов (не примеры)
+            from . import classify
+            uc, cn = np.unique(codes[mm], return_counts=True)
+            kinds = Counter()
+            from .visits import probe_rx
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', UserWarning)
+                prx = re.compile(probe_rx(('однозначный', 'неоднозначный')), re.I)
+            for u_, n_ in zip(uc, cn):
+                if prx.search(str(cats[u_])): continue   # зонды сканеров — не содержимое папки
+                f_ = classify.form_of(str(cats[u_]))
+                kinds[f_[1] if f_[0] == 'файл' else 'страницы и обработчики'] += int(n_)
+            A['папки'].append(dict(папка=d, что=what, запросов=int(mm.sum()), доля=float(round(mm.mean() * 100, 1)),
+                                   типы='\n'.join(f"{k.lower()} — {n:,}".replace(',', ' ') for k, n in kinds.most_common())))
     # --- папки с файлами: все виды файлов из реестра (справочник расширений), не только картинки; с ошибками
     from . import classify
     grp_c = np.array([(lambda f: f[1] if f[0] == 'файл' else '')(classify.form_of(p_)) for p_ in cats.astype(str)], dtype=object)

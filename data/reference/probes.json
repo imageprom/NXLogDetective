@@ -45,7 +45,7 @@
       "цель": "WordPress",
       "сила": "однозначный",
       "условие": "сайт не на WordPress",
-      "шаблон": "/wp-login\\.php|/wp-admin|/xmlrpc\\.php|/wp-content/(plugins|themes)/|/wp-includes/|/wp-json/",
+      "шаблон": "/wp-login\\.php|/wp-admin|/xmlrpc\\.php|/wp-content/(plugins|themes)/|/wp-includes/|/wp-json/|/wp-sitemap[\\w.-]*\\.xml(\\.gz)?$",
       "что": "адреса WordPress на сайте другого движка"
     },
     {

@@ -33,25 +33,93 @@ def origin_of(R):
 
 def _state(st):
     """Код ответа → индекс состояния в STATES (499 — не состояние адреса: посетитель ушёл сам)."""
-    return np.select([st < 300, st < 400, (st == 404) | (st == 410), st < 500], [0, 1, 3, 2], 4)
+    return np.select([(st < 300) | (st == 304), st < 400, (st == 404) | (st == 410), st < 500], [0, 1, 3, 2], 4)   # 304 — «не изменился»: работает, отдано из кэша
 
 
 def _fmt_day(d): return pd.Timestamp(d).strftime('%d.%m')
 
 
+def recent_day(R):
+    """С какого дня ошибка считается актуальной: последние 2 дня лога или последние 10% периода, что больше."""
+    days_all = sorted(R['day'].astype(str).unique())
+    return days_all[max(0, len(days_all) - max(2, int(round(len(days_all) * 0.1))))]
+
+
+def redirect_ends(c, codes):
+    """Чем кончается переадресация: следующий запрос того же посетителя через несколько секунд — до 5 шагов.
+    Возвращает {b: (код, куда, итоговый_код, шагов)} — самый частый исход для адреса."""
+    R = c.R
+    st = R['status'].values
+    cc = R['base'].cat.codes.values
+    RED_ = (st >= 300) & (st < 400) & (st != 304)
+    red = np.where(np.isin(cc, np.asarray(list(codes))) & RED_)[0]
+    if not len(red): return {}
+    vid, ts = R['vid'].values, R['ts'].values
+    cats_s = np.asarray(R['base'].cat.categories.astype(str))
+    order = np.lexsort((ts, vid))
+    pos = np.empty(len(order), dtype=np.int64); pos[order] = np.arange(len(order))
+    cur = red.copy(); hops = np.zeros(len(red), int); alive = np.ones(len(red), bool)
+    first_dst = np.full(len(red), -1)
+    for step in range(5):
+        p_ = pos[cur] + 1
+        okp = alive & (p_ < len(order))
+        nx = np.where(okp, order[np.minimum(p_, len(order) - 1)], -1)
+        okn = okp & (nx >= 0)
+        okn[okn] = (vid[nx[okn]] == vid[cur[okn]]) & (ts[nx[okn]] - ts[cur[okn]] <= 3)
+        # следующий запрос — это переход по переадресации, только если адрес родственный: тот же раздел, со слэшем или без, главная;
+        # иначе это просто следующий запрос (у сканеров — следующий зонд)
+        if okn.any():
+            i_ = np.where(okn)[0]
+            src = cats_s[cc[cur[i_]]]; dst = cats_s[cc[nx[i_]]]
+            sec = lambda a: a.str.extract(r'^(/[^/]*)')[0]
+            rel = (sec(pd.Series(src)).values == sec(pd.Series(dst)).values) | (dst == '/') | (pd.Series(src).str.rstrip('/').values == pd.Series(dst).str.rstrip('/').values)
+            okn[i_[~rel]] = False
+        alive &= okn
+        if step == 0: first_dst = np.where(okn, nx, -1)
+        cur = np.where(okn, nx, cur); hops += okn
+        if not (RED_[cur] & alive).any(): break
+        alive &= RED_[cur]
+    D = pd.DataFrame({'b': cc[red], 'код': st[red], 'куда': np.where(first_dst >= 0, cc[np.maximum(first_dst, 0)], -1),
+                      'итог': np.where(hops > 0, st[cur], -1), 'шагов': hops})
+    cats = R['base'].cat.categories.astype(str)
+    out = {}
+    for b_, g in D.groupby('b'):
+        top = g.groupby(['код', 'куда', 'итог']).size().sort_values(ascending=False).reset_index().iloc[0]
+        out[int(b_)] = (int(top['код']), cats[int(top['куда'])] if top['куда'] >= 0 else '', int(top['итог']), int(g['шагов'].max()))
+    return out
+
+
+def _redirect_text(info):
+    code, dst, fin, hops = info
+    if fin < 0 or not dst: return f'переадресация {code}, куда — по логу не видно'
+    end = 'работает' if fin < 300 or fin == 304 else ('нет на сервере' if fin in (404, 410) else ('ошибка сервера' if fin >= 500 else ('цепочка переадресаций' if fin < 400 else f'отказ {fin}')))
+    return f'переадресация {code} → {dst} ({end})' + (f', шагов: {hops}' if hops >= 3 else '')
+
+
 def history(c, codes):
-    """Статус адреса как история по дням: «работает → ошибка сервера с 24.09 → нет на сервере с 26.09», «нет на сервере весь период».
-    Состояние дня — преобладающий ответ людям, своим и поисковикам; если их не было — всем. 499 не считается."""
+    """Статус адреса по дням и «сейчас». Состояние дня — преобладающий ответ людям, своим и поисковикам (если их не было — всем);
+    переадресация оценивается по концу цепочки: привела на живую страницу — работает. 499 не считается.
+    Актуально — адрес не работает сейчас и запрашивался в последние дни лога (2 дня или 10% периода, что больше)."""
     R = c.R
     cc = R['base'].cat.codes.values
     m = np.isin(cc, np.asarray(list(codes))) & (R['status'].values != 499)
     if not m.any(): return {}
+    RD = redirect_ends(c, codes)
     w = who_of(c)[m]
-    X = pd.DataFrame({'b': cc[m], 'd': R['day'].astype(str).values[m], 's': _state(R['status'].values[m]), 'own': np.isin(w, (0, 1, 6))})
+    st_m = R['status'].values[m]
+    s_ = _state(st_m)
+    bm = cc[m]
+    # переадресация с известным концом — состояние конца цепочки
+    fin = np.array([RD.get(int(b_), (0, '', -1, 0))[2] for b_ in bm]) if RD else np.full(len(bm), -1)
+    rr = (s_ == 1) & (fin >= 0)
+    s_[rr] = _state(np.maximum(fin[rr], 200))
+    s_[rr & (fin >= 300) & (fin < 400)] = 1
+    X = pd.DataFrame({'b': bm, 'd': R['day'].astype(str).values[m], 's': s_, 'own': np.isin(w, (0, 1, 6))})
     has_own = X.groupby('b')['own'].transform('any')
     X = X[X['own'] | ~has_own]
     days_all = sorted(R['day'].astype(str).unique())
-    d0, d1 = days_all[0], days_all[-1]
+    span = max(2, int(round(len(days_all) * 0.1)))
+    recent_from = days_all[max(0, len(days_all) - span)]
     N = X.groupby(['b', 'd', 's']).size().reset_index(name='n').sort_values(['b', 'd', 'n'], ascending=[True, True, False])
     top = N.drop_duplicates(['b', 'd'])
     out = {}
@@ -74,8 +142,38 @@ def history(c, codes):
                 else:
                     parts.append(f"{nm} {_fmt_day(a)}" if a == z else f"{nm} {_fmt_day(a)}–{_fmt_day(z)}")
             txt = ' → '.join(parts)
-        out[int(b)] = dict(статус=txt, итог=STATES[runs[-1][0]], менялся=len(runs) > 1, работал=any(r[0] == 0 for r in runs))
+        last = runs[-1]
+        recent = last[2] >= recent_from
+        ill = any(r[0] in (2, 3, 4) for r in runs)
+        now = STATES[last[0]]
+        if int(b) in RD and last[0] in (0, 1): now = _redirect_text(RD[int(b)])
+        elif last[0] == 0 and ill: now = 'работает'
+        if not recent: now += f' (последний запрос {_fmt_day(last[2])})'
+        out[int(b)] = dict(статус=txt, сейчас=now, итог=STATES[last[0]], менялся=len(runs) > 1, работал=any(r[0] == 0 for r in runs),
+                           болел=ill, актуально=bool(recent and last[0] in (2, 3, 4)))
     return out
+
+
+def criticality(T, Sr, human_visits):
+    """Почему ошибка важна: реклама ведёт, ссылка с сайта, 5xx у людей, поисковики получают 5xx, массово (доля от визитов людей).
+    Возвращает {b: «реклама · ссылка с сайта»}; пусто — не критично."""
+    if T is None or not len(T): return {}
+    E = T[T['код'] != 499]
+    mass = max(10, 0.001 * human_visits)   # порог «много людей» — 0,1% визитов людей
+    why = {}
+    g = E.groupby('b')
+    p5 = E[E['код'] >= 500].groupby('b')[['Люди', 'Поисковики']].sum()
+    people = g['Люди'].sum()
+    kinds = Sr[Sr['код'] != 499].groupby(['b', 'вид'])['n'].sum().unstack(fill_value=0) if Sr is not None and len(Sr) else pd.DataFrame()
+    for b in people.index:
+        r = []
+        if len(kinds) and b in kinds.index and kinds.loc[b].get('реклама', 0) > 0: r.append('реклама ведёт сюда')
+        if len(kinds) and b in kinds.index and kinds.loc[b].get('страницы сайта', 0) > 0: r.append('ссылка с сайта')
+        if b in p5.index and p5.at[b, 'Люди'] > 0: r.append('5xx у людей')
+        if b in p5.index and p5.at[b, 'Поисковики'] > 0: r.append('поисковики получают 5xx')
+        if people[b] >= mass: r.append('массово')
+        if r: why[int(b)] = ' · '.join(r)
+    return why
 
 
 def sources(c, m):
@@ -157,7 +255,7 @@ def by_family(T, family, Sr=None):
     D = g[num].sum()
     D['IP'] = g['IP'].max()   # по разным кодам IP не складываются; оценка снизу
     D['коды'] = g.apply(lambda d: ', '.join(f"{k}: {n}" for k, n in zip(d['код'], d['запросов'])))
-    for col in ('адрес', 'форма', 'группа', 'существование', 'зонд', 'раздел', 'статус', 'итог', 'тип'):
+    for col in ('адрес', 'форма', 'группа', 'существование', 'зонд', 'раздел', 'статус', 'итог', 'тип', 'сейчас', 'актуально', 'болел', 'почему', 'критично'):
         if col in X: D[col] = g[col].first()
     D['источник'] = g['источник'].agg(lambda s: next((x for x in s if x), ''))
     if Sr is not None and len(Sr):
@@ -222,11 +320,13 @@ def broken_links(c, internal=True):
         kind = np.where(ad[m], 'реклама', np.where(pd.Series(host).str.contains(SEARCH, regex=True).values, 'поиск', 'сайты'))
         X = pd.DataFrame({'вид': kind, 'откуда': np.where(np.isin(host, ['', '-', 'nan']), 'без реферера', host), 'страница': host})
     X['куда'] = tpl[m]; X['адрес'] = R['base'].astype(str).values[m]; X['vid'] = R['vid'].values[m]
-    X['люди'] = w == 0; X['поисковики'] = w == 1; X['ip'] = R['ip'].astype(str).values[m]; X['код'] = st[m]
+    X['люди'] = w == 0; X['поисковики'] = w == 1; X['ip'] = R['ip'].astype(str).values[m]; X['код'] = st[m]; X['day'] = R['day'].astype(str).values[m]
     keys = ['откуда', 'куда'] if internal else ['вид', 'откуда', 'куда']
     g = X.groupby(keys)
     D = g.agg(переходов=('vid', 'size'), визитов=('vid', 'nunique'), людей=('люди', 'sum'), поисковиков=('поисковики', 'sum'),
-              страниц=('страница', 'nunique'), адресов=('адрес', 'nunique'), коды=('код', lambda s: ', '.join(f"{k}: {v}" for k, v in s.value_counts().items())))
+              страниц=('страница', 'nunique'), адресов=('адрес', 'nunique'), коды=('код', lambda s: ', '.join(f"{k}: {v}" for k, v in s.value_counts().items())),
+              первый=('day', 'min'), последний=('day', 'max'))
+    D['актуально'] = D['последний'] >= recent_day(R)
     return D.sort_values(['людей', 'переходов'], ascending=False).reset_index()
 
 
@@ -239,14 +339,14 @@ def broken(T, Sr=None):
     g = E.groupby('b')
     D = g[['Люди', 'Поисковики', 'Свои', 'запросов']].sum()
     D['коды'] = g.apply(lambda d: ', '.join(f"{k}: {n}" for k, n in d.groupby('код')['запросов'].sum().items()))
-    for col in ('адрес', 'тип', 'группа', 'раздел', 'статус', 'итог', 'менялся'): D[col] = g[col].first()
+    for col in ('адрес', 'тип', 'группа', 'раздел', 'статус', 'итог', 'менялся', 'сейчас', 'актуально', 'болел', 'почему', 'критично'): D[col] = g[col].first()
     D['первый'] = g['первый'].min(); D['последний'] = g['последний'].max()
     if Sr is not None and len(Sr):
         Sx = Sr[Sr['b'].isin(D.index) & (Sr['код'] != 499)]
         tx = {b: sources_text(gb) for b, gb in Sx.groupby('b')}
         D['источники'] = [tx.get(b, '') for b in D.index]
-    D['починился'] = D['итог'] == 'работает'
-    return D.sort_values(['починился', 'Люди', 'запросов'], ascending=[True, False, False]).reset_index(drop=True)
+    D['починился'] = ~D['актуально']
+    return D.sort_values(['критично', 'актуально', 'Люди', 'запросов'], ascending=[False, False, False, False]).reset_index(drop=True)
 
 
 def journal(c):
@@ -287,8 +387,9 @@ def summary(c, T, Sr=None):
         out['разделы'] = pe.sort_values('Люди', ascending=False).reset_index()
         P = E[E['форма'] != 'файл']
         top = P.groupby('b').agg(адрес=('адрес', 'first'), Люди=('Люди', 'sum'), Поисковики=('Поисковики', 'sum'), коды=('код', lambda s: ', '.join(map(str, sorted(set(s))))),
-                                 источник=('источник', 'first'), статус=('статус', 'first'))
-        top = top.sort_values('Люди', ascending=False).head(10)
+                                 источник=('источник', 'first'), статус=('статус', 'first'), сейчас=('сейчас', 'first'), почему=('почему', 'first'),
+                                 критично=('критично', 'first'), актуально=('актуально', 'first'))
+        top = top.sort_values(['критично', 'Люди'], ascending=False).head(10)
         if Sr is not None and len(Sr):
             Sx = Sr[Sr['b'].isin(top.index) & (Sr['код'] != 499)]
             tx = {b: sources_text(g) for b, g in Sx.groupby('b')}
@@ -306,10 +407,16 @@ def build(c):
     T = codes_table(c)
     H = history(c, set(T['b'])) if len(T) else {}
     if len(T):
+        for k_ in ('сейчас', 'актуально', 'болел'):
+            T[k_] = T['b'].map(lambda b: H.get(int(b), {}).get(k_, '' if k_ == 'сейчас' else False))
         T['статус'] = T['b'].map(lambda b: H.get(int(b), {}).get('статус', ''))
         T['итог'] = T['b'].map(lambda b: H.get(int(b), {}).get('итог', ''))
         T['менялся'] = T['b'].map(lambda b: H.get(int(b), {}).get('менялся', False))
         T['тип'] = T['форма'].map(TYPE_LABEL).fillna(T['форма'])
     Sr = sources(c, c.R['status'].values >= 400) if len(T) else pd.DataFrame()
-    return dict(коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
+    if len(T):
+        WHY = criticality(T, Sr, int((c.V['group'] == 'Люди').sum()))
+        T['почему'] = T['b'].map(lambda b: WHY.get(int(b), ''))
+        T['критично'] = T['актуально'] & (T['почему'] != '') & (T['зонд'] == '')
+    return dict(с_дня=recent_day(c.R), коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
                 битые_внутренние=broken_links(c, True), битые_внешние=broken_links(c, False))

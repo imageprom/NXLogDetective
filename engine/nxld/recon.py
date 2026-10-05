@@ -243,7 +243,7 @@ def detect_hosting(E, rules_path=None):
 # --- Файлы: всё, что забирают как отдельный файл (не страницы) ---------------------------------
 FILE_GROUPS = [   # порядок важен: первая подходящая группа
     ('Для роботов', r'^/(robots\.txt|sitemap[\w.-]*\.xml(\.gz)?|sitemap/.*|llms(-full)?\.txt|ai\.txt|ads\.txt|app-ads\.txt|humans\.txt)$'),
-    ('Проверочные файлы', r'(^/yandex_[0-9a-f]+\.html$|^/google[0-9a-f]+\.html$|^/\.well-known/)'),
+    ('Подтверждение прав', r'(^/yandex_[0-9a-f]+\.html$|^/google[0-9a-f]+\.html$|^/\.well-known/acme-challenge/)'), ('Служебные (.well-known)', r'^/\.well-known/'),
     ('Фиды и выгрузки', r'(/export/|/feeds?(/|\.xml$|$)|/rss(/|\.xml$|$)|\.ya?ml(\.gz)?$|yandex[\w-]*\.xml$|google[\w-]*\.xml$|\.csv$)'),
     ('Иконки и манифест', r'(favicon[\w.-]*\.(ico|png|svg)$|apple-touch[\w.-]*\.png$|/manifest\.json$|\.webmanifest$|/browserconfig\.xml$|\.ico$)'),
     ('Документы', r'\.(pdf|docx?|xlsx?|pptx?|rtf|odt|ods|odp|zip|rar|7z|gz|tar)$'),
@@ -598,5 +598,9 @@ def embedded_inventory(R, human, emb_templates, admin_paths=(), zone_paths=(), T
         t_min = T('блок_по_действию') if T else 50
         for k, g in B[~lst].groupby('tpl'):
             redir = g['st'].between(300, 399).mean() >= 0.9   # только переадресации — не блок
-            if g['vid'].nunique() >= t_min and not redir: rows.append(row(k, g, 'действие', None))
+            if g['vid'].nunique() >= t_min and not redir:
+                r_ = row(k, g, 'действие', None)
+                if k in page_tpls and (g['meth'] == 'POST').mean() >= 0.5 and (g['ref'] == k).mean() >= 0.5:   # страница отправляет POST сама себе
+                    r_['вид'] = 'POST на саму страницу'; r_['блок'] = f'{k} — POST на саму страницу'
+                rows.append(r_)
     return pd.DataFrame(rows).sort_values('запросов', ascending=False) if rows else pd.DataFrame()

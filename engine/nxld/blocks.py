@@ -777,7 +777,8 @@ def load_security(c, F):
                              отпечаток_формы_байт=round(fp), POST_входов=len(pr), неудачных=len(fail), адресов_вошло=len(logged),
                              форма_входа='да' if len(pr) else 'не видно', внутренних_без_входа=len(inner_open), адресов_без_входа=inner_open['ip'].nunique(),
                              страницы_без_входа=', '.join(sorted(inner_open['base'].unique())[:5]),
-                             кто_без_входа=', '.join(f"{k} — {v}" for k, v in inner_open['fam'].astype(str).replace('', 'не робот').value_counts().head(4).items()), подбор_IP=fail['ip'].nunique(), последний=g['day'].max()))
+                             кто_без_входа=', '.join(f"{k} — {v}" for k, v in inner_open['fam'].astype(str).replace('', 'не робот').value_counts().head(4).items()), подбор_IP=fail['ip'].nunique(), последний=g['day'].max(),
+                             запросов=len(g), коды=', '.join(f'{k}:{v}' for k, v in g['status'].value_counts().items()), первый=g['day'].min()))
         sec = pd.DataFrame(rows)
         S['Открытые служебные разделы'] = sec
         for _, r in sec[sec['IP'] >= 5].iterrows():

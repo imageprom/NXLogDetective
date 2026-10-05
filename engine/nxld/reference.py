@@ -84,6 +84,14 @@ class Reference:
                     if roles is None or x.get('роль') in roles: out[x['путь']] = x['что']
         return out
 
+    def system_note(self, path, key='пустой_ответ'):
+        """Что справочник движка говорит про служебный адрес: «что» и оценку для key (например, нормален ли пустой ответ)."""
+        for f in self.files:
+            if f['вид'] not in ('движок', 'решение'): continue
+            for a in f['data'].get('адреса', []):
+                if a.get(key) and re.search(a['шаблон'], str(path)): return a.get('что', ''), a[key]
+        return None
+
     # ---------------- поиск ключа ----------------
     def match(self, key):
         """Лучшая запись для ключа: точное совпадение раньше шаблона, курированные файлы раньше learned, выше доверие — раньше."""

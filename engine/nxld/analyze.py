@@ -145,7 +145,16 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['files'] = recon.files_inventory(R, T=T_, addr=c.addr, people=c.human | np.asarray(c.rg == 'Свои')).to_dict('records')
         T_c = res['errors']['коды']
         if len(T_c):   # «Файлы с ошибками» — тот же расчёт, что «Файлы», на файлах, которым хоть раз ответили 4xx/5xx
-            eb = set(T_c.loc[(T_c['форма'] == 'файл') & (T_c['код'] != 499), 'b'])
+            # поломка — файл, на который ссылаются: страницы сайта, реклама, другие сайты. Просят только напрямую — перебор или
+            # необязательный файл: для ИИ и роботов (llms.txt, ads.txt…) — рекомендацией, остальное — мусор, на вкладках по кодам
+            Sr_ = res['errors'].get('источники')
+            fb = set(T_c.loc[(T_c['форма'] == 'файл') & (T_c['код'] != 499), 'b'])
+            linked = set(Sr_.loc[Sr_['вид'].isin(['страницы сайта', 'реклама', 'сайты', 'поиск']), 'b']) if Sr_ is not None and len(Sr_) else set()
+            OPT_ = r'^/(llms(-full)?\.txt|ai\.txt|ads\.txt|app-ads\.txt|humans\.txt|security\.txt|\.well-known/security\.txt|apple-touch-icon[\w.-]*\.png|browserconfig\.xml|manifest\.json|site\.webmanifest)$'
+            A_c = c.addr
+            opt = {b for b in fb - linked if re.search(OPT_, str(A_c['адрес'].values[b]))}
+            eb = fb & linked
+            res['files_optional'] = sorted(str(A_c['адрес'].values[b]) for b in opt)
             Rm = np.isin(R['base'].cat.codes.values, list(eb))
             res['files_errors'] = recon.files_inventory(R[Rm], min_req=1, T=T_, addr=c.addr, people=(c.human | np.asarray(c.rg == 'Свои'))[Rm]).to_dict('records')
         res['unknown_extensions'] = classify.unknown_extensions(c.addr, R, T_('незнакомый_ключ'))
@@ -169,6 +178,12 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         A_ = res.get('anatomy') or {}
         site_ = (m.get('site_hosts') or ['site'])[0]
         ref = reference.load(m, R['base'].cat.categories.astype(str), site_)
+        EP_ = res['sheets'].get('Ошибки', {}).get('Пустые страницы')   # пустой ответ служебного адреса движка — по справочнику
+        if EP_ is not None and len(EP_):
+            nt_ = [ref.system_note(b_) for b_ in EP_['base'].astype(str)]
+            EP_['что'] = [x[0] if x else '' for x in nt_]
+            EP_['комментарий'] = [x[1] if x else 'проверить: страница отдала почти пустой ответ' for x in nt_]
+            EP_['норма'] = [bool(x) and str(x[1]).startswith('норма') for x in nt_]
         # системное — ядро, админка, API и закрытые зоны; шаблоны и доработки сайта (/local/ и т. п.) — это код самого сайта, не движок
         # системное — только папки движка по справочнику (ядро, админка, API); закрытые разделы сайта — отдельно: их сделал программист
         sysp = [p_ for p_ in ref.folders(('система', 'админка', 'api', 'служебное', 'обмен')) if p_.startswith('/')]

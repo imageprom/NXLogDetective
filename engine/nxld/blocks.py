@@ -98,7 +98,8 @@ def top_pages(c, n=500, by_section=False, by_template=False):
 
 
 
-ACT_GROUPS = ('Люди', 'Роботы', 'Боты', 'Свои')
+ACT_GROUPS = ('Люди', 'Роботы', 'Системы мониторинга', 'Утилиты', 'Боты', 'Свои')
+SHORT = {'Системы мониторинга': 'Мониторинг'}   # подпись колонки во второй строке шапки
 
 
 def day_span(R):
@@ -118,10 +119,10 @@ def activity(c):
     D = pd.DataFrame({'день': days}).set_index('день')
     for g in ACT_GROUPS:
         vg = V[V['group'] == g]
-        D[f'Визиты|{g}'] = vg.groupby('day').size()
+        D[f'Визиты|{SHORT.get(g, g)}'] = vg.groupby('day').size()
     for g in ACT_GROUPS:
         vg = V[V['group'] == g]
-        D[f'IP|{g}'] = vg.groupby('day')['ip'].nunique()
+        D[f'IP|{SHORT.get(g, g)}'] = vg.groupby('day')['ip'].nunique()
     for g in ('Люди', 'Боты', 'Свои'):
         vg = V[V['group'] == g]
         D[f'Заявки|{g}'] = vg.groupby('day')['n_goal'].sum()
@@ -129,8 +130,8 @@ def activity(c):
     D = D.join(day_span(R)).reset_index()
     tot = {'день': 'Итого', '_полный': True, '_с': '', '_по': ''}
     for g in ACT_GROUPS:
-        tot[f'Визиты|{g}'] = int(D[f'Визиты|{g}'].sum())
-        tot[f'IP|{g}'] = int(V.loc[V['group'] == g, 'ip'].nunique())
+        tot[f'Визиты|{SHORT.get(g, g)}'] = int(D[f'Визиты|{SHORT.get(g, g)}'].sum())
+        tot[f'IP|{SHORT.get(g, g)}'] = int(V.loc[V['group'] == g, 'ip'].nunique())
     for g in ('Люди', 'Боты', 'Свои'):
         tot[f'Заявки|{g}'] = int(D[f'Заявки|{g}'].sum())
     return pd.concat([D, pd.DataFrame([tot])], ignore_index=True)
@@ -197,7 +198,7 @@ def overview(c, F):
          'Отправок целей всего': int(len(P)), 'Принято от людей': int((acc['группа'] == 'Люди').sum()),
          'Принято от ботов': int((acc['группа'] == 'Боты').sum()), 'Принято от своих (тесты)': int((acc['группа'] == 'Свои').sum()),
          'Конверсия людей (визит → принятая цель), %': round((acc['группа'] == 'Люди').sum() / max(1, hv) * 100, 3)}
-    for gname in ['Роботы', 'Боты', 'Свои']:
+    for gname in ['Роботы', 'Системы мониторинга', 'Утилиты', 'Боты', 'Свои']:
         s[f'Визитов: {gname}'] = int((V['group'] == gname).sum())
     # черновые проблемы
     bot_ok = acc[acc['группа'] == 'Боты']

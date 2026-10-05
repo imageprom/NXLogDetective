@@ -24,6 +24,8 @@ CHANNEL_LABEL = dict(TOP_CHANNELS)
 def sub_label(s):
     s = str(s)
     if s in SUB_LABEL: return SUB_LABEL[s]
+    if s in ('по имени', 'по ритму'): return 'Опознаны ' + s
+    if s and ':' not in s and s[:1].islower() and s not in ('известные', 'неизвестные'): return s   # имя утилиты (curl, wget) — как есть
     head = s.split(': ', 1)[0]
     return {'сканер под браузер': 'Сканеры под браузер', 'спам форм': 'Спам форм', 'человек-исследователь, разово': 'Люди-исследователи',
             'человек-исследователь, регулярно': 'Люди-исследователи'}.get(head, head[:1].upper() + head[1:])
@@ -96,8 +98,10 @@ def monitoring(c, top=10):
     fc = R['fam_cat'].astype(str).values
     m = fc == 'Мониторинг'
     if m.any():
-        X = R.loc[m, ['fam', 'ip', 'ts', 'base', 'status', 'bytes']]
-        for f, g in X.groupby('fam', observed=True):
+        X = R.loc[m, ['fam', 'ip', 'ts', 'base', 'status', 'bytes', 'ua']]
+        # «Мониторинг: прочие» — по названию продукта из User-Agent: номера запросов, ссылки и версии отбрасываются
+        X = X.assign(fam=[product_name(u) if 'прочие' in str(f) else str(f) for f, u in zip(X['fam'].astype(str), X['ua'].astype(str))])
+        for f, g in X.groupby('fam'):
             per_ip = [_interval(gi['ts'].values) for _, gi in g.groupby('ip', observed=True)]
             per_ip = [x for x in per_ip if x]
             rows.append(dict(система=str(f).replace(' (мониторинг)', ''), как='по имени', проверяет=', '.join(g['base'].astype(str).value_counts().head(2).index), IP=int(g['ip'].nunique()),
@@ -111,10 +115,59 @@ def monitoring(c, top=10):
     return d.sort_values('запросов', ascending=False).head(top) if len(d) else d
 
 
+def product_name(ua):
+    """Название программы из User-Agent без номеров и ссылок: «Uptime monitoring by Overseer (…rid: …)» → «Overseer»,
+    «Mozilla/5.0 (DomainCheckService)» → «DomainCheckService», «curl/8.4.0» → «curl»."""
+    import re
+    u = str(ua)
+    m = re.match(r'^Mozilla/[\d.]+ \(([A-Za-z][\w.-]+)\)\s*$', u)
+    if m: return m.group(1)
+    m = re.search(r'\b(?:by|from)\s+([A-Z][\w.-]+)', u)
+    if m: return m.group(1)
+    u = re.sub(r'\(.*?\)|https?://\S+|\brid:\s*\S+|[0-9a-f]{8}-[0-9a-f-]{20,}', ' ', u)
+    m = re.search(r'([A-Za-z][\w.-]*[A-Za-z])(?=/|\s|$)', u)
+    return m.group(1) if m else 'без названия'
+
+
+UTIL_NAME = {'Без User-Agent': 'Без User-Agent', 'Headless-браузер': 'Headless-браузер', 'Скрипты: прочие': 'Прочие программы'}
+
+
+def utilities(c):
+    """Утилиты: curl, wget, Python, PHP, Go, headless-браузеры, запросы без User-Agent. Что запрашивали и на что похоже —
+    по уликам: зонды → сканер; IP сотрудника → свой; один адрес по расписанию → интеграция; немного запросов к живым страницам → разработчик или проверка."""
+    R, V = c.R, c.V
+    m = (np.asarray(c.rg) == 'Утилиты')
+    if not m.any(): return pd.DataFrame()
+    A = c.addr
+    cc = R['base'].cat.codes.values
+    X = pd.DataFrame({'u': R['fam'].astype(str).values[m], 'ip': R['ip'].astype(str).values[m], 'asn': R['asn'].values[m], 'day': R['day'].astype(str).values[m],
+                      'b': cc[m], 'st': R['status'].values[m]})
+    X['зонд'] = A['зонд'].values[X['b']] != ''
+    X['живой'] = A['существование'].values[X['b']] == 'живой'
+    X['адрес'] = A['адрес'].values[X['b']]
+    staff = set(str(x) for x in (c.m.get('staff_ips') or []))
+    rows = []
+    def verdict(g):   # вывод — по каждому IP отдельно: под одной утилитой бывают и сканеры, и интеграции
+        n = len(g); probes = int(g['зонд'].sum()); top = g['адрес'].value_counts()
+        if g['ip'].iloc[0] in staff: return 'свой'
+        if probes >= 3 or probes / n >= 0.2: return 'сканер'
+        if top.iloc[0] / n >= 0.8 and g['day'].nunique() >= 3: return 'интеграция'
+        if n <= 300 and g['живой'].mean() >= 0.8: return 'разработчик или проверка'
+        return 'не ясно'
+    for u, g in X.groupby('u'):
+        n = len(g)
+        top = g['адрес'].value_counts()
+        per_ip = pd.Series({ip: verdict(gi) for ip, gi in g.groupby('ip')}).value_counts()
+        like = ', '.join(f"{k} — {v} IP" for k, v in per_ip.items())
+        rows.append(dict(утилита=UTIL_NAME.get(u, u), запросов=n, IP=g['ip'].nunique(), сетей=g['asn'].nunique(), дней=g['day'].nunique(),
+                         что=', '.join(f"{a or '(пусто)'} ({k})" for a, k in top.head(3).items()), зондов=int(g['зонд'].sum()), коды=topn(pd.Series(g['st']), 4), похоже=like))
+    return pd.DataFrame(rows).sort_values('запросов', ascending=False)
+
+
 def robots(c, top=10):
     """Роботы по семействам (кроме систем мониторинга), по запросам."""
     R = c.R
-    m = np.asarray(c.declared) & (R['fam_cat'].astype(str).values != 'Мониторинг')
+    m = np.asarray(c.rg) == 'Роботы'   # без систем мониторинга и утилит — у них свои группы
     X = R.loc[m, ['fam', 'fam_cat', 'ip', 'day', 'bytes', 'status', 'fam_verified']]
     if not len(X): return pd.DataFrame()
     g = X.groupby('fam', observed=True)
@@ -141,4 +194,4 @@ def signatures(c, top=None):
 def build(c):
     """Реестр обращающихся — в результаты анализа (res['actors'])."""
     return dict(каналы=channels(c), группы=groups(c), сотрудники=staff(c), мониторинг=monitoring(c),
-                роботы=robots(c), сигнатуры=signatures(c))
+                роботы=robots(c), утилиты=utilities(c), сигнатуры=signatures(c))

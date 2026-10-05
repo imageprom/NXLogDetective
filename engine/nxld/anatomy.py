@@ -176,19 +176,30 @@ def build(c, res):
         if mm.sum():
             ext = Counter(R['ext'].values[mm].astype(str)).most_common(4)
             A['папки'].append(dict(папка=d, что=what, запросов=int(mm.sum()), доля=float(round(mm.mean() * 100, 1)), типы=', '.join(f"{e or 'страницы'}" for e, _ in ext)))
-    # --- медиа
-    ext = R['ext'].astype(str).values
-    mm = np.isin(ext, list(MEDIA_EXT)) & (st == 200)
-    MD = pd.DataFrame({'p': cats[codes[mm]].astype(str), 'ext': ext[mm], 'b': R['bytes'].values[mm]})
+    # --- папки с файлами: все виды файлов из реестра (справочник расширений), не только картинки; с ошибками
+    from . import classify
+    grp_c = np.array([(lambda f: f[1] if f[0] == 'файл' else '')(classify.form_of(p_)) for p_ in cats.astype(str)], dtype=object)
+    from .visits import probe_rx
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        probe_c = pd.Series(np.asarray(cats).astype(str)).str.contains(probe_rx(('однозначный', 'неоднозначный')), regex=True, case=False).values
+    grp_c[probe_c] = ''   # зонды сканеров — не файлы сайта
+    gg = grp_c[codes]
+    mm = gg != ''
+    MD = pd.DataFrame({'p': cats[codes[mm]].astype(str), 'вид': gg[mm], 'b': R['bytes'].values[mm], 'st': st[mm]})
     MD['папка'] = MD['p'].map(lambda p: '/' + '/'.join(p.strip('/').split('/')[:1]) + '/' if '/' in p.strip('/') else '/ (корень)')
-    MD['вид'] = MD['ext'].map(MEDIA_KIND)
     media = []
     for f, g in MD.groupby('папка'):
-        if len(g) < max(100, 0.01 * len(MD)): continue
-        kinds = g.groupby('вид').agg(n=('b', 'size'), b=('b', 'sum')).sort_values('n', ascending=False)
-        sub = g['p'].map(lambda p: '/' + '/'.join(p.strip('/').split('/')[:2]) + '/').value_counts().head(3)
-        media.append(dict(папка=f, запросов=len(g), ГБ=float(round(g['b'].sum() / 1024 ** 3, 1)), виды='; '.join(f"{k} — {int(r['n']):,}".replace(',', ' ') for k, r in kinds.iterrows()),
-                          подпапки=', '.join(sub.index)))
+        if len(g) < max(100, 0.005 * len(MD)): continue
+        ok = (g['st'] < 400)
+        err = int(((g['st'] >= 400) & (g['st'] != 499)).sum())
+        kinds = g.groupby('вид').size().sort_values(ascending=False)
+        deep = g['p'][g['p'].str.strip('/').str.count('/') >= 2]   # подпапка — только настоящая папка, не файл в корне папки
+        sub = deep.map(lambda p: '/' + '/'.join(p.strip('/').split('/')[:2]) + '/').value_counts().head(3)
+        media.append(dict(папка=f, запросов=len(g), ГБ=float(round(g.loc[ok, 'b'].sum() / 1024 ** 3, 1)), ошибок=err,
+                          виды='; '.join(f"{k.lower()} — {int(n):,}".replace(',', ' ') for k, n in kinds.head(5).items()),
+                          подпапки=', '.join(sub.index), почти_ошибки=err > 0.5 * len(g)))
     A['медиа'] = sorted(media, key=lambda x: -x['запросов'])
     # --- служебные файлы, подгружаемые блоки, параметры
     A['служебные'] = service_groups(m, res)

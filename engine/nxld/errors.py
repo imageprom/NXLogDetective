@@ -9,7 +9,7 @@
 import numpy as np
 import pandas as pd
 
-WHO = ('Люди', 'Поисковики', 'Роботы', 'Боты', 'Свои')
+WHO = ('Люди', 'Поисковики', 'Роботы', 'Мониторинг', 'Утилиты', 'Боты', 'Свои')
 ORIGIN = ('Со страниц сайта', 'Напрямую', 'С других сайтов')
 STATES = ('работает', 'переадресация', 'отказ', 'нет на сервере', 'ошибка сервера')   # состояние адреса за день
 TYPE_LABEL = {'страница': 'страница', 'файл': 'файл', 'конструкт': 'битый адрес'}
@@ -21,7 +21,7 @@ FAMILIES = [('404', lambda k: k == 404), ('5xx', lambda k: k >= 500),
 def who_of(c):
     """Кто получил ответ: люди, поисковики (подлинные), прочие роботы, боты, свои — индексы в WHO."""
     rg = np.asarray(c.rg)
-    return np.select([c.human, c.search_ok, rg == 'Роботы', rg == 'Свои'], [0, 1, 2, 4], 3).astype(np.int8)
+    return np.select([c.human, c.search_ok, rg == 'Роботы', rg == 'Системы мониторинга', rg == 'Утилиты', rg == 'Свои'], [0, 1, 2, 3, 4, 6], 5).astype(np.int8)
 
 
 def origin_of(R):
@@ -47,7 +47,7 @@ def history(c, codes):
     m = np.isin(cc, np.asarray(list(codes))) & (R['status'].values != 499)
     if not m.any(): return {}
     w = who_of(c)[m]
-    X = pd.DataFrame({'b': cc[m], 'd': R['day'].astype(str).values[m], 's': _state(R['status'].values[m]), 'own': np.isin(w, (0, 1, 4))})
+    X = pd.DataFrame({'b': cc[m], 'd': R['day'].astype(str).values[m], 's': _state(R['status'].values[m]), 'own': np.isin(w, (0, 1, 6))})
     has_own = X.groupby('b')['own'].transform('any')
     X = X[X['own'] | ~has_own]
     days_all = sorted(R['day'].astype(str).unique())
@@ -89,7 +89,8 @@ def sources(c, m):
     qc = R['query'].cat.categories.to_series()
     ad = qc.str.contains(AD_MARK, regex=True).values[R['query'].cat.codes.values[m]]
     se = pd.Series(host).str.contains(SEARCH, regex=True).values
-    kind = np.select([ad, o == 0, (o == 2) & se, o == 2], ['реклама', 'страницы сайта', 'поиск', 'сайты'], 'напрямую')
+    self_ = R['ref_path'].astype(str).values[m] == R['base'].astype(str).values[m]   # обновил ту же страницу — не источник
+    kind = np.select([ad, (o == 0) & ~self_, (o == 2) & se, o == 2], ['реклама', 'страницы сайта', 'поиск', 'сайты'], 'напрямую')
     # страницы сайта — по шаблону страницы-источника (тот же шаблон, что у «Типов страниц»)
     tpl_of = pd.Series(R['tpl'].astype(str).values, index=R['base'].astype(str).values)
     tpl_of = tpl_of[~tpl_of.index.duplicated()]
@@ -175,10 +176,65 @@ def site_errors(T):
     return T[m]
 
 
+ERRLOG_MEANING = {
+    'Бэкенд: таймаут': ('PHP не успел ответить, сервер отдал посетителю 504', False),
+    'Бэкенд: не отвечает': ('PHP-FPM упал или перегружен, сервер отдал 502', False),
+    'База данных': ('сайт не смог обратиться к базе данных', False),
+    'PHP Fatal': ('скрипт сайта упал с фатальной ошибкой — страница не отдалась', False),
+    'PHP Warning': ('предупреждение в коде сайта: страница отдалась, но код с ошибкой', False),
+    'PHP Notice/Deprecated': ('замечания к коду: устаревшие функции, неаккуратный код', False),
+    'Слишком большой запрос (413)': ('отправили файл или форму больше разрешённого размера', False),
+    'Ограничение частоты': ('сервер притормозил слишком частые запросы — работает защита', True),
+    'Запрещено правилом': ('сервер закрыл доступ по своим правилам — работает защита', True),
+    'Файл не найден': ('запрошенного файла нет на диске', False),
+    'Права доступа': ('серверу не хватает прав прочитать файл', False),
+    'Нет места на диске': ('на сервере закончилось место', False),
+    'Мало соединений': ('серверу не хватило соединений под нагрузку', False),
+    'SSL': ('ошибка защищённого соединения', False),
+    'Буферизация ответа (норма)': ('большой ответ записан во временный файл — норма', True),
+    'Прочее': ('прочие сообщения', False)}
+
+
+def broken_links(c, internal=True):
+    """Битые ссылки по шаблонам: внутренние — «где стоит ссылка → куда ведёт» (страница сайта → несуществующая страница);
+    внешние — «откуда пришли → куда»: реклама, поиск, другие сайты. Зонды не в счёт, только страницы."""
+    R, A = c.R, c.addr
+    st = R['status'].values
+    cc = R['base'].cat.codes.values
+    page = (A['форма'].values == 'страница')[cc] & (A['зонд'].values == '')[cc]
+    bad = page & (((st >= 400) & (st < 500) & (st != 499)) | (st >= 500))
+    o = origin_of(R)
+    qc = R['query'].cat.categories.to_series()
+    ad = qc.str.contains(AD_MARK, regex=True).values[R['query'].cat.codes.values]
+    rp = R['ref_path'].astype(str).values
+    m = bad & (o == 0) & (rp != R['base'].astype(str).values) if internal else bad & ((o == 2) | ad)
+    if not m.any(): return pd.DataFrame()
+    w = who_of(c)[m]
+    tpl = R['tpl'].astype(str).values
+    if internal:
+        tpl_of = pd.Series(tpl, index=R['base'].astype(str).values)
+        tpl_of = tpl_of[~tpl_of.index.duplicated()]
+        src = pd.Series(rp[m]).map(tpl_of).fillna(pd.Series(rp[m])).values
+        X = pd.DataFrame({'откуда': src, 'страница': rp[m]})
+    else:
+        from .visits import SEARCH
+        host = R['ref_host'].astype(str).str.split(',').str[0].str.strip().values[m]
+        kind = np.where(ad[m], 'реклама', np.where(pd.Series(host).str.contains(SEARCH, regex=True).values, 'поиск', 'сайты'))
+        X = pd.DataFrame({'вид': kind, 'откуда': np.where(np.isin(host, ['', '-', 'nan']), 'без реферера', host), 'страница': host})
+    X['куда'] = tpl[m]; X['адрес'] = R['base'].astype(str).values[m]; X['vid'] = R['vid'].values[m]
+    X['люди'] = w == 0; X['поисковики'] = w == 1; X['ip'] = R['ip'].astype(str).values[m]; X['код'] = st[m]
+    keys = ['откуда', 'куда'] if internal else ['вид', 'откуда', 'куда']
+    g = X.groupby(keys)
+    D = g.agg(переходов=('vid', 'size'), визитов=('vid', 'nunique'), людей=('люди', 'sum'), поисковиков=('поисковики', 'sum'),
+              страниц=('страница', 'nunique'), адресов=('адрес', 'nunique'), коды=('код', lambda s: ', '.join(f"{k}: {v}" for k, v in s.value_counts().items())))
+    return D.sort_values(['людей', 'переходов'], ascending=False).reset_index()
+
+
 def broken(T, Sr=None):
     """«Нерабочие адреса»: все адреса сайта, на которых люди, свои или поисковики получали ошибку, — с историей статуса.
     И трупы (не работали весь период), и тяжёлые (ошибка сервера с первого дня), и те, что починились."""
     E = site_errors(T)
+    E = E[E['форма'] == 'страница']   # «Пострадавшие страницы»: только страницы, файлы — своим листом
     if not len(E): return pd.DataFrame()
     g = E.groupby('b')
     D = g[['Люди', 'Поисковики', 'Свои', 'запросов']].sum()
@@ -255,4 +311,5 @@ def build(c):
         T['менялся'] = T['b'].map(lambda b: H.get(int(b), {}).get('менялся', False))
         T['тип'] = T['форма'].map(TYPE_LABEL).fillna(T['форма'])
     Sr = sources(c, c.R['status'].values >= 400) if len(T) else pd.DataFrame()
-    return dict(коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr))
+    return dict(коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
+                битые_внутренние=broken_links(c, True), битые_внешние=broken_links(c, False))

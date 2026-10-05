@@ -151,6 +151,20 @@ def aggregate(R, staff_ips=(), monitor_keys=()):
         default='')
     V['group'] = grp
     V['subgroup'] = sub
+    return regroup(V)
+
+
+def regroup(V):
+    """Группы без смешения: «Свои» — только сотрудники; системы мониторинга (по имени или по ритму) — своя группа:
+    не факт, что они наши; утилиты (curl, wget, Python, PHP, Go, headless, без User-Agent) — своя группа: за ними может стоять
+    и разработчик с консоли, и интеграция, и сканер — это решают улики, а не имя. Повторный вызов ничего не меняет."""
+    V = V.copy()
+    mon = (V['subgroup'] == 'мониторинги') | ((V['fam'] != '') & (V['fam_cat'] == 'Мониторинг') & (V['group'] == 'Роботы'))
+    V.loc[mon, 'group'] = 'Системы мониторинга'
+    V.loc[mon, 'subgroup'] = np.where(V.loc[mon, 'subgroup'] == 'мониторинги', 'по ритму', 'по имени')
+    ut = (V['fam'] != '') & (V['fam_cat'] == 'Скрипты/библиотеки') & (V['group'] == 'Роботы')
+    V.loc[ut, 'group'] = 'Утилиты'
+    V.loc[ut, 'subgroup'] = V.loc[ut, 'fam'].astype(str)
     return V
 
 

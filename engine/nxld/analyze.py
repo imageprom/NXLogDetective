@@ -58,6 +58,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     from . import classify
     form_ = np.array([classify.form_of(p_)[0] for p_ in R['base'].cat.categories.astype(str)])
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
+    V = visits.regroup(V)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
@@ -152,8 +153,9 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             linked = set(Sr_.loc[Sr_['вид'].isin(['страницы сайта', 'реклама', 'сайты', 'поиск']), 'b']) if Sr_ is not None and len(Sr_) else set()
             OPT_ = r'^/(llms(-full)?\.txt|ai\.txt|ads\.txt|app-ads\.txt|humans\.txt|security\.txt|\.well-known/security\.txt|apple-touch-icon[\w.-]*\.png|browserconfig\.xml|manifest\.json|site\.webmanifest)$'
             A_c = c.addr
-            opt = {b for b in fb - linked if re.search(OPT_, str(A_c['адрес'].values[b]))}
-            eb = fb & linked
+            from_site = set(Sr_.loc[Sr_['вид'] == 'страницы сайта', 'b']) if Sr_ is not None and len(Sr_) else set()
+            opt = {b for b in fb - from_site if re.search(OPT_, str(A_c['адрес'].values[b]))}   # нужны не сайту, а роботам и нейросетям
+            eb = (fb & linked) - opt
             res['files_optional'] = sorted(str(A_c['адрес'].values[b]) for b in opt)
             Rm = np.isin(R['base'].cat.codes.values, list(eb))
             res['files_errors'] = recon.files_inventory(R[Rm], min_req=1, T=T_, addr=c.addr, people=(c.human | np.asarray(c.rg == 'Свои'))[Rm]).to_dict('records')

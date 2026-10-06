@@ -855,7 +855,7 @@ def load_security(c, F):
             vv = [verdict(b_) for b_ in gg['base']]
             gg['получили_свои'] = [v[0] for v in vv]; gg['получили_чужие'] = [v[1] for v in vv]
             gg['размер_у_чужих'] = [v[2] for v in vv]; gg['вывод'] = [v[3] for v in vv]
-            real = gg[gg['вывод'].str.startswith('ПРОВЕРИТЬ')]
+            real = gg[gg['вывод'].astype(str).str.startswith('ПРОВЕРИТЬ')]   # пустая выборка — колонка не строковая
             c.leaks = real   # утечки — для «Файлов» и «Анатомии» в Overview
             if len(real):
                 # только утечки: служебные файлы, которые сервер отдал посторонним; заглушки и ответы своим сюда не входят

@@ -124,7 +124,7 @@ def link(V, spam_ips, human_direct_max=5):
     P = (E.sort_values('_s').groupby(['IP_A', 'IP_B'], sort=False)
          .agg(сила=('сила', 'first'), _s=('_s', 'first'), улика=('улика', lambda x: '; '.join(dict.fromkeys(x))),
               доказательство=('доказательство', 'first')).reset_index())
-    P['_same'] = [find(a) == find(b) for a, b in zip(P['IP_A'], P['IP_B'])]
+    P['_same'] = pd.Series([find(a) == find(b) for a, b in zip(P['IP_A'], P['IP_B'])], index=P.index, dtype=bool)   # bool и на пустой таблице: иначе P[P['_same']] — выбор колонок
     tree, par = [], {}
     def f2(x):
         par.setdefault(x, x)

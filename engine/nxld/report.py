@@ -259,6 +259,15 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
+    stix_bundle = None
+    if res.get('profiles'):   # STIX 2.1: сигнатуры, дела, адреса и связи — один пакет в архиве (ТЗ 10.5); сводка — для Обзоров 01 и 04
+        try:
+            from . import stix
+            from .prepare import VERSION
+            stix_bundle, sm_ = stix.build(res, site, VERSION)
+            res['stix'] = dict(sm_, файл=f'{stem}.stix.json')
+        except Exception:
+            import traceback; traceback.print_exc(); res['stix'] = None
     file_names = {b: f'NXLD_{FILES[b]}.xlsx' for b in FILES}
     from . import snapshot as snapshot_
     snap = snapshot_.build(res, site, edits)   # NXLD-snapshot/2 (совместим с /1)
@@ -382,6 +391,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     sp = os.path.join(outdir, f'{stem}.snapshot.json')
     open(sp, 'w', encoding='utf-8').write(snap_json)
     written += [tx, sp]
+    if stix_bundle is not None:
+        stp = os.path.join(outdir, f'{stem}.stix.json')
+        open(stp, 'w', encoding='utf-8').write(json.dumps(stix_bundle, ensure_ascii=False, separators=(',', ':')))
+        written.append(stp)
     for extra in res.get('extra_files', []):
         written.append(extra)
     zp = os.path.join(outdir, f'{stem}.zip')

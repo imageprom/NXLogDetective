@@ -197,9 +197,10 @@ def build(res, site, version='0.2.0'):
         seen_.add(o['id']); uniq.append(o)
     objs = uniq
     bundle = {'type': 'bundle', 'id': sid('bundle', f"{site}:{p0}:{p1}"), 'objects': objs}
-    n_rules = len({o['external_references'][0]['external_id'] for o in objs if o['type'] == 'indicator' and o.get('pattern_type') == 'sigma'})
+    sig_ids = sorted({o['external_references'][0]['external_id'] for o in objs if o['type'] == 'indicator' and o.get('pattern_type') == 'sigma'})
+    n_rules = len(sig_ids)
     summary = {'объектов': len(objs), 'сигнатур': n_rules, 'сигнатур_всего': int(len(Sg)) if Sg is not None else 0, 'индикаторов': n_ind, 'IP': n_ip,
-               'дел': sum(1 for x in D if x['важность'] in CASES)}
+               'дел': sum(1 for x in D if x['важность'] in CASES), 'сигнатуры_в_пакете': sig_ids}
     return bundle, summary
 
 

@@ -8,6 +8,85 @@ import numpy as np, pandas as pd
 AD_DIMS = (('кампания', 'Кампании'), ('фраза', 'Фразы'), ('source', 'Площадки'), ('aid', 'Объявления'), ('region', 'Регионы'), ('device', 'Устройства (метка)'))
 
 
+_REG = None
+
+
+def regions():
+    """Справочник регионов Яндекса (data/reference/regions_yandex.json): код → название, родитель, уровень."""
+    global _REG
+    if _REG is None:
+        import json, os
+        p = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'regions_yandex.json')
+        try: _REG = json.load(open(p, encoding='utf-8')).get('регионы', {})
+        except Exception: _REG = {}
+    return _REG
+
+
+def region_of(code):
+    """Код региона из рекламной метки → (название, область). Неизвестный код — (None, None): на листе остаётся кодом."""
+    R = regions()
+    x = R.get(str(code).strip())
+    if not x: return None, None
+    area, cur, seen = None, x, set()
+    while cur is not None and id(cur) not in seen:   # область — ближайший предок второго уровня (субъект РФ, область страны)
+        seen.add(id(cur))
+        if cur.get('уровень') == 2: area = cur['название']; break
+        cur = R.get(str(cur.get('родитель'))) if cur.get('родитель') else None
+    return x['название'], (area if area != x['название'] else None)
+
+
+PHRASE = {'---autotargeting': 'автотаргетинг', '': '(фраза не передана)'}
+
+
+def phrase_label(v):
+    """Фраза из метки utm_term: «---autotargeting» — автотаргетинг Директа, пустая — фраза не передана."""
+    v = '' if v is None or str(v) == 'nan' else str(v).strip()
+    if v.lower().startswith('---autotargeting'): return 'автотаргетинг'   # бывает с хвостом «|20559»
+    if v.startswith('{') and v.endswith('}'): return '(макрос не подставлен)'   # {keyword} — шаблон отслеживания не сработал
+    return PHRASE.get(v.lower(), v)
+
+
+def label_ads(S, B):
+    """Подписи рекламных срезов — в движке: фразы по-человечески, регионы — названием и областью по справочнику."""
+    for T in (S.get('Реклама: Фразы'), (B or {}).get('Фразы')):
+        if T is not None and len(T) and 'фраза' in T: T['фраза'] = T['фраза'].map(phrase_label)
+    P = S.get('Реклама: Фразы')   # разные метки с одной подписью («---autotargeting» и «---autotargeting|20559») — одной строкой
+    if P is not None and len(P) and P['фраза'].duplicated().any():
+        w = P['визитов'].clip(lower=0)
+        agg = P.assign(**{f'_{c}': P[c] * w for c in ('страниц_на_визит', 'мгновенный_уход_%', 'смотрели_каталог_%') if c in P}).groupby('фраза', as_index=False).sum(numeric_only=True)
+        for c in ('страниц_на_визит', 'мгновенный_уход_%', 'смотрели_каталог_%'):
+            if f'_{c}' in agg: agg[c] = (agg[f'_{c}'] / agg['визитов'].clip(lower=1)).round(2 if c == 'страниц_на_визит' else 1)
+        agg['конверсия_%'] = (agg['принято'] / agg['визитов'].clip(lower=1) * 100).round(3)
+        S['Реклама: Фразы'] = agg[[c for c in P.columns if c in agg]].sort_values('визитов', ascending=False)
+    Bp = (B or {}).get('Фразы')
+    if Bp is not None and len(Bp) and Bp['фраза'].duplicated().any():
+        g = Bp.groupby('фраза', as_index=False).sum(numeric_only=True)
+        g['доля_ботов_%'] = (g['ботов'] / g['визитов_всех'].clip(lower=1) * 100).round(1)
+        B['Фразы'] = g
+    for T in (S.get('Реклама: Регионы'), (B or {}).get('Регионы')):
+        if T is not None and len(T) and 'region' in T:
+            rr = [region_of(c) for c in T['region']]
+            T['регион'] = [a or '' for a, _ in rr]; T['область'] = [b or '' for _, b in rr]
+
+
+
+def ad_tops(S, B):
+    """Сводки для Обзора 05: фразы по кликам (10), фразы с заявками (5), регионы по кликам (5) — клики всех, люди, впустую, заявки."""
+    out = {}
+    for name, col, key in (('Фразы', 'фраза', 'фразы'), ('Регионы', 'region', 'регионы')):
+        Bt, P = (B or {}).get(name), S.get(f'Реклама: {name}')
+        if Bt is None or P is None or not len(Bt): continue
+        M = Bt.merge(P[[col, 'визитов', 'принято']], on=col, how='left').fillna({'визитов': 0, 'принято': 0})
+        M['конверсия_%'] = (M['принято'] / M['визитов'].clip(lower=1) * 100).round(2)
+        M = M.sort_values('визитов_всех', ascending=False)
+        if key == 'фразы':
+            out['фразы_топ'] = M.head(10).reset_index(drop=True)
+            out['фразы_с_заявками'] = M[M['принято'] > 0].sort_values(['принято', 'визитов_всех'], ascending=False).head(5).reset_index(drop=True)
+        else:
+            out['регионы_топ'] = M.head(5).reset_index(drop=True)
+    return out
+
+
 def metrics(df):
     """Метрика визитов людей — одна на все срезы 05 (каналы, реклама, аудитория, страницы входа)."""
     return pd.Series({'визитов': len(df), 'IP': df['ip'].nunique(), 'страниц_на_визит': round(df['n_pages'].mean(), 2) if len(df) else 0,
@@ -107,6 +186,8 @@ def build(c, res):
                     ('Визиты из рекламы', 'Люди, пришедшие по рекламным ссылкам', heat_week(AH) if len(AH) else None),
                     ('Принятые заявки', 'Заявки людей, принятые сайтом', heat_week(H, 'n_conv'))]
     out['реклама_боты'] = ad_bots(A)
+    label_ads((res.get('sheets') or {}).get('Маркетинг', {}), out['реклама_боты'])   # подписи фраз и регионов — общий уровень, не оформление
+    out.update(ad_tops((res.get('sheets') or {}).get('Маркетинг', {}), out['реклама_боты']))
     if len(A):
         g = A.groupby('channel_sub')
         out['реклама_итог'] = {'кликов': int(len(A)), 'людей': int((A['group'] == 'Люди').sum()), 'ботов': int((A['group'] == 'Боты').sum()),

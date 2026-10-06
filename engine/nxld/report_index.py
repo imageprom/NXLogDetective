@@ -174,7 +174,7 @@ class Sheet:
                 isnum, sev = i in num, (fills or {}).get((k, i))
                 fill = sev or body or F_CARD
                 if i == 0 and not sev: font = Font(name='Arial', size=sz, bold=True, color='000000')
-                else: font = Font(name='Arial', size=sz, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
+                else: font = Font(name='Arial', size=sz, bold=bool(sev), color='FFFFFF' if sev in (ORANGE, 'C00000') else DARK)
                 al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
                                indent=0 if i in center else 1)   # отступ от края и у чисел
                 c = put(i, v, font, fill, al, Border(bottom=SEP))
@@ -466,6 +466,11 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         rows.append((f, FILE_NOTES.get(b, ''), f))
     rows += [('NXLD_Redmine.textile', 'связный отчёт Детектива для задачи в Redmine', None),
              ('*.snapshot.json', 'снимок проверки — понадобится для повторной проверки', None)]
+    st_ = res.get('stix') or {}
+    if st_:
+        rows.append(('*.stix.json', f"выгрузка STIX 2.1: {st_.get('сигнатур', 0)} сигнатур, {st_.get('дел', 0)} дел, {st_.get('IP', 0)} IP и связи между ними. "
+                                   'STIX — открытый стандарт OASIS для обмена данными об угрозах: файл принимают платформы анализа угроз (OpenCTI, MISP и другие), '
+                                   'открыть его можно и в текстовом редакторе. Документация: https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html', None))
     listing(rows)
     # печать
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0

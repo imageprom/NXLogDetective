@@ -396,7 +396,8 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
                         else {'Кто забирает': _who(f.get('кто_забирает', ''))}),
                      'Со страниц сайта': int(f.get('со_страниц') or 0), 'Напрямую': int(f.get('напрямую') or 0),
                      'Другие сайты': _who(f.get('другие_сайты', '')) if f.get('другие_сайты') else '',
-                     'Первый': day('первый_день'), 'Последний': day('последний_день'), '_leak': str(f.get('адрес', '')) in leaked, '_last': str(f.get('последний_день') or '')})
+                     'Первый': day('первый_день'), 'Последний': day('последний_день'), '_leak': str(f.get('адрес', '')) in leaked, '_last': str(f.get('последний_день') or ''),
+                     '_crit': f.get('критично'), '_act': f.get('актуально')})
     d = pd.DataFrame(rows)
     if not len(d): return None
     if 'со_страниц' not in (sf[0] if sf and isinstance(sf[0], dict) else {}) or (d['Со страниц сайта'].sum() == 0 and not d['Другие сайты'].astype(bool).any()):   # старый анализ или в логе нет Referer
@@ -409,12 +410,14 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
         recent = errors_mode if isinstance(errors_mode, str) else ''
         own = (d['Со страниц сайта'] > 0) if 'Со страниц сайта' in d else (d['_err'] > 0)
         act = pd.Series([str(x) >= recent for x in d['_last']], index=d.index)
+        if '_crit' in d and d['_crit'].notna().all():   # критичность и актуальность — из движка (derive)
+            act = d['_act'].astype(bool); own = d['_crit'].astype(bool)
         fills_ = [F_NOTE if o and a else None for o, a in zip(own, act)]
         fonts_ = [None if a else GREY for a in act]
         kpi = [('Файлов', int(d['Файлов'].sum())), ('Ошибок', int(d['_err'].sum())), ('Критично', int((own & act).sum()))]
     else:
         fills_ = [F_NOTE if b_ else None for b_ in ((d['_err'] > 0) | d['_leak'])]   # ошибки и утечки — персиковым
-    d = d.drop(columns=['_err', '_leak', '_last'])
+    d = d.drop(columns=['_err', '_leak', '_last', '_crit', '_act'])
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
     missing = [nm for nm in ('Документы', 'Видео и звук') if nm not in set(d['Группа'])] if res.get('files') is not None and not errors_mode else []   # заметные отсутствия
     links = links if links is not None else [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]

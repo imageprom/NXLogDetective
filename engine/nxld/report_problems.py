@@ -16,7 +16,7 @@ from .findings_text import GRADE
 STATUS_STYLE = {'стала хуже': (ORANGE, True, None), 'новая': (ORANGE, False, None), 'исправлена частично': (DARK, False, F_NOTE), 'сохраняется': (DARK, False, None)}
 
 
-PLAQUE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('666666', 'FFFFFF'), 'Замечание': ('EFEFEF', '404040')}   # самый тёмный серый фирменного образца, белый текст
+PLAQUE = {'Тревога': ('C00000', 'FFFFFF'), 'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, '000000'), 'К сведению': ('666666', 'FFFFFF'), 'Замечание': ('EFEFEF', '404040')}   # самый тёмный серый фирменного образца, белый текст
 OLINE = Side(style='thin', color=ORANGE)
 F_LIGHT = 'F7F7F7'   # блок «Расследование и улики» — светлее основных строк карточки
 
@@ -58,9 +58,9 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     ws.merge_cells('B2:F2')
     S.cell('B', 'ПРОБЛЕМЫ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     act = [x for x in items if x.get('статус_вид') != 'исправлена' and x.get('статус') != 'отмечено как норма']
-    cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению', 'Замечание')}
+    cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Тревога', 'Срочно', 'Важно', 'К сведению', 'Замечание')}
     ws.merge_cells('B3:F3')
-    sub = f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}" + (f" · Замечания — {cnt['Замечание']}" if cnt['Замечание'] else '')
+    sub = (f"Тревога — {cnt['Тревога']} · " if cnt['Тревога'] else '') + f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}" + (f" · Замечания — {cnt['Замечание']}" if cnt['Замечание'] else '')
     if not with_block: sub = f"Блок «{items[0]['блок'] if items else ''}» · " + sub
     S.cell('B', sub, Font(name='Comfortaa', size=11, bold=True, color=GREY), row=3)   # подзаголовок — как на обзоре
     ws.row_dimensions[3].height = 20
@@ -68,7 +68,7 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     order = list(BLOCK_FILES)
     key = lambda x: (SEV_ORDER[x['важность']], order.index(x['блок']) if x['блок'] in order else 9)
     n = 0
-    for sev in ('Срочно', 'Важно'):
+    for sev in ('Тревога', 'Срочно', 'Важно'):
         xs = sorted([x for x in act if x['важность'] == sev], key=key)
         if not xs: continue
         plaque(S, sev, len(xs), xs, fixed=sum(1 for x in items if x.get('статус_вид') == 'исправлена' and x['важность'] == sev))
@@ -105,16 +105,20 @@ def card(S, x, n, sev, here_file, with_block, short=False):
     ws = S.ws
     title = f"{n}. {cap(x.get('заголовок') or x['что_происходит'])}"
     ws.merge_cells(f'B{S.r}:E{S.r}')
-    S.cell('B', title, Font(name='Arial', size=12, bold=True, color=ORANGE), None, Alignment(vertical='center', wrap_text=True))
+    alarm = sev == 'Тревога'   # тревога — белым на красном по всей строке заголовка
+    S.cell('B', title, Font(name='Arial', size=12, bold=True, color='FFFFFF' if alarm else ORANGE), 'C00000' if alarm else None, Alignment(vertical='center', wrap_text=True, indent=1 if alarm else 0))
+    if alarm:
+        for col in 'CDEF': ws[f'{col}{S.r}'].fill = PatternFill('solid', fgColor='C00000')
     st_kind = x.get('статус_вид')
     right = x.get('тема') or ''
     if st_kind: right = f"{right} · {cap(x.get('статус'))}"
-    S.cell('F', right, Font(name='Arial', size=10, bold=True, color=ORANGE if st_kind in ('стала хуже', 'новая') else INK), None,
+    S.cell('F', right, Font(name='Arial', size=10, bold=True, color='FFFFFF' if alarm else (ORANGE if st_kind in ('стала хуже', 'новая') else INK)), 'C00000' if alarm else None,
            Alignment(horizontal='right', vertical='center', wrap_text=True))
     for col in 'BCDEF':
         ws[f'{col}{S.r}'].border = Border(bottom=OLINE)
     ws.row_dimensions[S.r].height = max(26, row_height(title, 78) + 4)
     S.r += 1
+    if x.get('почему_тревога'): S.pair('Почему тревога', cap(x['почему_тревога']))
     S.pair('Из показаний', cap(x.get('факт') or x.get('факты') or ''))
     todo = cap(x.get('что_сделать') or '')
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"

@@ -654,6 +654,7 @@ def errors(c, F):
 
 # ======================= НАГРУЗКА И БЕЗОПАСНОСТЬ =======================
 ATTACK = r"(?i)(union(\s|%20|\+)+select|'(\s|%20|\+)*or(\s|%20|\+)*'?1'?=|sleep\(|benchmark\(|<script|%3Cscript|javascript:|\.\./|%2e%2e%2f|\$\{jndi:|/etc/passwd|cmd=|exec\(|base64_decode|wget(\s|%20)http|curl(\s|%20)http)"
+FAM_LABEL = {'Превью: прочие': 'превью ссылки в мессенджере'}   # как семейства роботов называются в отчёте, где их имя непонятно читателю
 TARGETS = [('WordPress', r'wp-|xmlrpc'), ('Утечки конфигов (.env, .git, ключи)', r'\.env|\.git|\.aws|\.ssh|\.svn|config\.|credentials'), ('Бэкапы и дампы', r'backup|\.(sql|sqlite|sqlitedb|db|dump|bak|old|tar|tgz|zip|rar|bz2|xz|lz)(\.|$)'),
            ('Панели БД и админки', r'phpmyadmin|pma|adminer|/admin'), ('Отладка и фреймворки', r'phpinfo|actuator|telescope|_profiler|debug|console|phpunit'),
            ('Установщики Битрикс', r'restore\.php|bitrixsetup|install\.php|setup\.php'), ('Роутеры/IoT/почта', r'boaform|HNAP|owa|autodiscover|cgi-bin'), ('Прочее', r'.')]
@@ -783,14 +784,15 @@ def load_security(c, F):
                              отпечаток_формы_байт=round(fp), POST_входов=len(pr), неудачных=len(fail), адресов_вошло=len(logged),
                              форма_входа='да' if len(pr) else 'не видно', внутренних_без_входа=len(inner_open), адресов_без_входа=inner_open['ip'].nunique(),
                              страницы_без_входа=', '.join(sorted(inner_open['base'].unique())[:5]),
-                             кто_без_входа=', '.join(f"{k} — {v}" for k, v in inner_open['fam'].astype(str).replace('', 'не робот').value_counts().head(4).items()), подбор_IP=fail['ip'].nunique(), последний=g['day'].max(),
-                             запросов=len(g), коды=', '.join(f'{k}:{v}' for k, v in g['status'].value_counts().items()), первый=g['day'].min()))
+                             кто_без_входа=', '.join(f"{FAM_LABEL.get(k, k)} ({v})" for k, v in inner_open['fam'].astype(str).replace('', 'не робот').value_counts().head(4).items()), подбор_IP=fail['ip'].nunique(), последний=g['day'].max(),
+                             запросов=len(g), коды=', '.join(f'{k}:{v}' for k, v in g['status'].value_counts().items()), первый=g['day'].min(),
+                             без_входа_байт=int(inner_open['bytes'].sum())))
         sec = pd.DataFrame(rows)
         S['Открытые служебные разделы'] = sec
         for _, r in sec[sec['IP'] >= 5].iterrows():
             nm = r['раздел']
             if r['адресов_без_входа'] >= 3:
-                F.add('Нагрузка и безопасность', 'Важно', 'open_section', nm, f"Страницы раздела {nm} отдаются без входа",
+                F.add('Нагрузка и безопасность', 'Срочно', 'open_section', nm, f"Страницы раздела {nm} отдаются без входа",
                       f"{int(r['внутренних_без_входа'])} ответов 200 для {int(r['адресов_без_входа'])} адресов, которые не входили; кто: {r['кто_без_входа']}; страницы: {r['страницы_без_входа']}",
                       'nginx / настройки доступа', 'Проверить, должны ли эти страницы быть доступны без входа; если нет — закрыть', int(r['адресов_без_входа']), 'Открытые служебные разделы')
             if r['подбор_IP'] >= 10:

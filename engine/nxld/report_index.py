@@ -78,7 +78,7 @@ def plural(n, one, few, many):
 
 LINE = Side(style='thin', color='000000')       # сетка таблиц, как в фирменном образце
 SEP = Side(style='thin', color='BFBFBF')        # разделитель строк в карточках
-SEV_STYLE = {'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, DARK), 'К сведению': ('F3F3F3', DARK), 'Замечание': ('F3F3F3', DARK)}
+SEV_STYLE = {'Тревога': ('C00000', 'FFFFFF'), 'Срочно': (ORANGE, 'FFFFFF'), 'Важно': (F_NOTE, DARK), 'К сведению': ('F3F3F3', DARK), 'Замечание': ('F3F3F3', DARK)}
 SPANS = {'B': 'B', 'C': 'C', 'D': 'D', 'E': 'E', 'F': 'F'}
 
 
@@ -277,6 +277,19 @@ class Wide(Sheet):
         self.ws.row_dimensions[self.r].height = 20
         self.r += 1
 
+    def alarm(self, n, names=None):
+        """Плашка «Тревога» под шапкой Обзора: сколько тревог в этом файле и ссылка на карточки. Нет тревог — нет плашки."""
+        if not n: return
+        self.r += 1
+        self.ws.merge_cells(f'B{self.r}:I{self.r}')
+        for col in WIDE_COLS: self.ws[f'{col}{self.r}'].fill = PatternFill('solid', fgColor='C00000')
+        word = 'тревога' if n % 10 == 1 and n % 100 != 11 else ('тревоги' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'тревог')
+        c = self.cell('B', f'{n} {word}: подтверждённый вред, который идёт сейчас. Карточки — первыми на листе «Проблемы» →',
+                      Font(name='Arial', size=11, bold=True, color='FFFFFF'), 'C00000', Alignment(vertical='center', indent=1))
+        c.hyperlink = "#'Проблемы'!A1"
+        self.ws.row_dimensions[self.r].height = 24
+        self.r += 1
+
     def kpis(self, items):
         """Строка ключевых цифр: подпись мелко, число крупно — до восьми, по колонкам B:I."""
         cols = WIDE_COLS[:len(items)]
@@ -383,11 +396,11 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     # --- проблемы: три строки-карточки со счётчиками и ссылка под ними (без шапки)
     S.section('Проблемы', 'Сколько проблем найдено и насколько они важны. Каждая расписана на листе «Проблемы».')
     act = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
-    cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению', 'Замечание')}
+    cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Тревога', 'Срочно', 'Важно', 'К сведению', 'Замечание')}
     pr = sheet_names.get('Проблемы', 'Проблемы')
-    for k, color in (('Срочно', ORANGE), ('Важно', DARK), ('К сведению', DARK), ('Замечание', DARK)):
+    for k, color in ((('Тревога', 'C00000'),) if cnt['Тревога'] else ()) + (('Срочно', ORANGE), ('Важно', DARK), ('К сведению', DARK), ('Замечание', DARK)):
         if k == 'Замечание' and not cnt[k]: continue
-        label = {'Срочно': 'Приоритетные', 'Важно': 'Важные', 'К сведению': 'Остальные', 'Замечание': 'Замечания'}[k]
+        label = {'Тревога': 'Тревога', 'Срочно': 'Приоритетные', 'Важно': 'Важные', 'К сведению': 'Остальные', 'Замечание': 'Замечания'}[k]
         S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
         S.cell('B', label, Font(name='Arial', size=11, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
         S.cell('C', cnt[k], Font(name='Arial', size=12 if k == 'Срочно' else 11, bold=(k == 'Срочно'), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))

@@ -436,7 +436,7 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
         w = cnt[qs]; tot_ = w.sum(); c_ = {}
         for q_, w_ in zip(qs, w):
             for kk in qkeys[q_]: c_[kk] = c_.get(kk, 0) + w_
-        return sorted([kk for kk, v in c_.items() if kk != k and v >= 0.9 * tot_], key=lambda kk: -c_[kk])
+        return sorted([kk for kk, v in c_.items() if kk != k and v >= 0.9 * tot_], key=lambda kk: (-c_[kk], kk))   # при равенстве — по имени: порядок не плавает от запуска к запуску
 
     form_rx = next((rx for nm, rx in groups if nm == 'Данные форм'), r'^form')
 

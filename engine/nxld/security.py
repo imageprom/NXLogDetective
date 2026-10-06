@@ -560,7 +560,8 @@ def leaks(c, S, checks=None):
         if len(D) and D.iloc[-1]: hist = hist.replace('отдаётся с', 'отдавался с', 1) if 'запросов не было' in hist else hist
         last = int(st[-1]) if len(st) else None
         ch = checks.get(f) or {}
-        rows.append({'файл': f, 'отдан_раз': int(r['ответов_200']), 'IP': int(r['IP']), 'размер': int(round(r['размер_у_чужих'] if pd.notna(r.get('размер_у_чужих')) else r['размер'])),
+        open_now = bool(len(st)) and bool(served[-1]) and str(d[-1]) >= common_recent(days_all)   # последний ответ посторонним — содержимое, и это последние дни лога
+        rows.append({'файл': f, 'открыт_сейчас': open_now, 'отдан_раз': int(r['ответов_200']), 'IP': int(r['IP']), 'размер': int(round(r['размер_у_чужих'] if pd.notna(r.get('размер_у_чужих')) else r['размер'])),
                      'история': hist, 'последний_ответ': last, 'первый': r['первый'], 'последний': r['последний'],
                      'проверка': ch.get('итог', 'не проверено'), 'проверено': ch.get('когда', ''), 'внутри': ch.get('внутри', ''), 'тревога': bool(ch.get('тревога'))})
     return pd.DataFrame(rows)
@@ -597,6 +598,11 @@ def journal(c, res):
     return D
 
 
+def common_recent(days_all):
+    """С какого дня «сейчас»: последние 2 дня лога или 10% периода — как у адресов в 02 (errors.recent_day)."""
+    return days_all[max(0, len(days_all) - max(2, int(round(len(days_all) * 0.1))))] if days_all else ''
+
+
 def build(c, res, S):
     """Все срезы 03 одним словарём (res['security'])."""
     out = {}
@@ -627,6 +633,24 @@ def findings(res, items):
                           факты='; '.join(f"{r['адрес']} — {r['вариантов']} вариантов; виновники: {r['виновники']}; обходят: {r['фигуранты']}".replace('\n', ', ') for _, r in top.iterrows()),
                           где_править='robots.txt, rel=canonical, шаблоны ссылок', что_сделать='; '.join(sorted(set(top['меры']))),
                           главная_цифра=int(P['вариантов'].sum()), лист='Паразитные адреса', также_в='', статус=''))
+    items[:] = [x for x in items if x['key'] not in ('Нагрузка и безопасность:attack_odd_200:params', 'Нагрузка и безопасность:odd_method_accepted:site')]
+    At = X.get('атаки')
+    if At is not None and len(At) and At['подозрительно'].any():
+        a_ = At[At['подозрительно']]
+        items.append(dict(key='Нагрузка и безопасность:attack_odd_200:params', блок='Нагрузка и безопасность', важность='Срочно',
+                          что_происходит=f'Атака получила необычный ответ сервера ({len(a_)} адресов)',
+                          факты='; '.join(f"{r['адрес']} — {r['вид'].lower()}, {r['необычных']} раз; ответ {r['размер_200']} байт, обычно {r['обычный_размер']} байт" for _, r in a_.head(5).iterrows()),
+                          где_править='код сайта', что_сделать='Открыть адреса из примеров и проверить, что сервер вернул: обычную страницу или содержимое файла',
+                          главная_цифра=int(a_['необычных'].sum()), лист='Атаки в параметрах', также_в='', статус=''))
+    M = X.get('методы')
+    if M is not None and M[0] is not None and len(M[0]):
+        m_ = M[0][~M[0]['метод'].isin(['GET', 'POST', 'HEAD']) & (M[0]['принято'] > 0)]
+        if len(m_):
+            items.append(dict(key='Нагрузка и безопасность:odd_method_accepted:site', блок='Нагрузка и безопасность', важность='Срочно',
+                              что_происходит='Сервер принимает необычные методы запросов',
+                              факты='; '.join(f"{r['метод']} — принято {r['принято']} раз; куда: {r['куда']}" for _, r in m_.iterrows()),
+                              где_править='nginx', что_сделать='Принимать только GET, POST и HEAD; остальное — отказ (444)',
+                              главная_цифра=int(m_['принято'].sum()), лист='Методы и протоколы', также_в='', статус=''))
     B = X.get('всплески')
     if B is not None and len(B):
         dd = B[B['картина'].str.startswith('распределённая')]

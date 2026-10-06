@@ -243,6 +243,9 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['bots_extra'] = profiles.extras(c, res)
     except Exception:
         import traceback; traceback.print_exc(); res['profiles'], res['bots_extra'] = None, None
+    from . import alarms, derive
+    alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
+    derive.build(res)   # признаки и сводки для оформления, выжимки и снимка
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')

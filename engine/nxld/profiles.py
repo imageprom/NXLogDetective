@@ -254,6 +254,10 @@ def build(c, res):
         ch.sort(key=lambda x: -x[0]['вес'])
         top = ch[0][0]
         sev = 'Срочно' if top['вес'] >= 85 else ('Важно' if top['вес'] >= 45 else 'К сведению')
+        from . import alarms
+        op_ = set(alarms.leaks_open(res))
+        if (agg.get('leaks') and op_ and any(f_ in str(ctx.get('top_leaks', '')) for f_ in op_)) or any('продолжается' in str(o_) for o_ in outages_hit):
+            sev = 'Тревога'   # получил файл, который отдаётся и сейчас, или причастен к сбою, который не закончился
         # состав
         nets = pd.Series([subnet(ip) for ip in g.index]).value_counts()
         req_by_net = g['req'].groupby([subnet(ip) for ip in g.index]).sum()
@@ -304,7 +308,7 @@ def build(c, res):
                                       сети=orgs.value_counts().head(4).to_dict(), страны=countries.head(5).to_dict(), роли=roles.head(4).to_dict()),
                           активность=act, сбои=outages_hit, всплески=bursts_hit, ущерб='; '.join(dmg), меры=measures(ch, fam, nets, false_, key),
                           ips=list(g.index), t0=t0, t1=t1, запросов=int(agg['req'])))
-    cases.sort(key=lambda x: (-x['вес'], -x['запросов']))
+    cases.sort(key=lambda x: (x['важность'] != 'Тревога', -x['вес'], -x['запросов']))
     # сообщники: общие подсети и слабые связи операторов
     net_of = {}
     for x in cases:

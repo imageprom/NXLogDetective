@@ -3,6 +3,7 @@
 Обзор → Проблемы → Статистика → Разыскиваются (карточки дел) → Сигнатуры → Состав дел → листы по видам ботов →
 подробные списки в конце. Данные — profiles.build и profiles.extras (дела, сигнатуры, журнал, расписание, реклама),
 листы расчёта блока «Боты» и реестр обращающихся (actors)."""
+from . import sheets
 import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, Side
 from .report_index import Sheet, Wide, brand_header, ORANGE, ORANGE2, GREY, INK, F_NOTE, F_CARD, row_height, cap
@@ -10,12 +11,8 @@ from .report_tables import data_sheet, journal_sheet, legend, heat_sheet, extra_
 from .report_problems import plaque, OLINE, F_LIGHT
 
 F_GREY = 'EFEFEF'
-ORDER = ['Обзор', 'Проблемы', 'Статистика', 'Разыскиваются', 'Подозреваемые', 'Сигнатуры', 'Состав дел', 'Меры по IP', 'Операторы', 'Спам форм', 'Подделки',
-         'Виды ботов', 'Боты в рекламе', 'Расписание ботов', 'Роботы', 'Системы мониторинга', 'Утилиты', 'ИИ-роботы', 'Сети ботов', 'IP сканеров']
-LINK = {'Роботы: семейства': 'Роботы', 'Роботы — семейства': 'Роботы', 'Роботы: сети': 'Роботы', 'Явные боты': 'Виды ботов', 'Боты: классы': 'Виды ботов',
-        'Боты — классы': 'Виды ботов', 'Спам форм: визиты': 'Спам форм', 'Спам форм — визиты': 'Спам форм', 'Операторы: улики': 'Операторы',
-        'Операторы — улики': 'Операторы', 'Бот-сети': 'Сети ботов', 'ИИ: страницы по запросам людей': 'ИИ-роботы', 'Сводка': 'Обзор', 'О данных': 'Обзор',
-        'IP': 'Меры по IP', 'Проверка IP': 'Подозреваемые', 'Сканеры — все IP': 'IP сканеров'}
+ORDER = sheets.ORDER_04
+LINK = sheets.LINK_04
 KEEP = ('IP',)
 
 
@@ -90,12 +87,12 @@ def wanted(wb, Pf):
     S.r = 2
     ws.merge_cells('B2:F2')
     S.cell('B', 'РАЗЫСКИВАЮТСЯ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
-    cnt = {k: sum(1 for x in D if x['важность'] == k) for k in ('Срочно', 'Важно', 'К сведению')}
+    cnt = {k: sum(1 for x in D if x['важность'] == k) for k in ('Тревога', 'Срочно', 'Важно', 'К сведению')}
     ws.merge_cells('B3:F3')
-    S.cell('B', f"Атакующие профили: в чём обвиняем, как узнать и что делать · Срочно — {cnt['Срочно']} · Важно — {cnt['Важно']} · К сведению — {cnt['К сведению']}",
+    S.cell('B', "Атакующие профили: в чём обвиняем, как узнать и что делать · " + (f"Тревога — {cnt['Тревога']} · " if cnt['Тревога'] else '') + f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}",
            Font(name='Comfortaa', size=11, bold=True, color=GREY), row=3)
     S.r = 4
-    for sev in ('Срочно', 'Важно', 'К сведению'):
+    for sev in ('Тревога', 'Срочно', 'Важно', 'К сведению'):
         xs = [x for x in D if x['важность'] == sev]
         if not xs: continue
         plaque(S, sev, len(xs), [])
@@ -308,10 +305,12 @@ def overview(wb, res, site):
     brand_header(ws, W, res, f'NX LOG DETECTIVE — БОТЫ НА САЙТЕ {site.upper()}', 'Кто атакует сайт, в чём мы его обвиняем и как его узнать', last='I')
     names = set(wb.sheetnames)
     D = Pf.get('дела') or []
+    from . import alarms
+    W.alarm(alarms.count(res, 'Боты'))
     W.r += 1
     W.kpis([('Визитов ботов', int(sm.get('Визитов ботов', 0))), ('IP ботов', int(sm.get('IP ботов', 0))), ('Дел', len(D)),
             ('Срочных', sum(1 for x in D if x['важность'] == 'Срочно')), ('Подделок (IP)', int(sm.get('Подделок роботов (IP)', 0))),
-            ('Принято заявок от ботов', int(S.get('Спам форм: визиты')['n_conv'].sum()) if S.get('Спам форм: визиты') is not None else 0)])   # тот же источник, что журнал и карточки
+            ('Принято заявок от ботов', int((res.get('сводки') or {}).get('принято_от_ботов', 0)))])   # тот же источник, что журнал и карточки (derive)
     if D:
         W.section('Разыскиваются', 'Самые серьёзные дела: главное обвинение, состав и ссылка на карточку.')
         top = D[:10]
@@ -331,7 +330,8 @@ def overview(wb, res, site):
     FK = S.get('Подделки')
     if FK is not None and len(FK):
         W.section('Подделки', 'Называют себя известными роботами, а приходят не из их сетей.')
-        g = FK.groupby('представлялся').agg(IP=('ip', 'nunique'), запросов=('запросов', 'sum')).sort_values('запросов', ascending=False).reset_index()
+        g = (res.get('сводки') or {}).get('подделки_по_имени')
+        if g is None: g = FK.groupby('представлялся').agg(IP=('ip', 'nunique'), запросов=('запросов', 'sum')).sort_values('запросов', ascending=False).reset_index()
         W.table(['Представлялся', 'Уникальных IP', 'Запросов'], [[r['представлялся'], int(r['IP']), int(r['запросов'])] for _, r in g.head(6).iterrows()], ['BC', 'D', 'E'], num=(1, 2))
         W.link('Все подделки', 'Подделки', names)
     O = S.get('Операторы')
@@ -343,7 +343,8 @@ def overview(wb, res, site):
     AD = EX.get('реклама')
     if AD is not None and len(AD):
         W.section('Боты в рекламе', 'Визиты ботов по рекламным ссылкам — клики, за которые заплачено.')
-        g = AD.groupby('channel_sub').agg(визитов=('визитов', 'sum'), IP=('IP', 'sum')).sort_values('визитов', ascending=False).reset_index()
+        g = (res.get('сводки') or {}).get('реклама_по_системам')
+        if g is None: g = AD.groupby('channel_sub').agg(визитов=('визитов', 'sum'), IP=('IP', 'sum')).sort_values('визитов', ascending=False).reset_index()
         W.table(['Реклама', 'Визитов ботов', 'Уникальных IP'], [[r['channel_sub'], int(r['визитов']), int(r['IP'])] for _, r in g.head(6).iterrows()], ['BC', 'D', 'E'], num=(1, 2))
         W.link('Подробно', 'Боты в рекламе', names)
     AI = S.get('ИИ-роботы')

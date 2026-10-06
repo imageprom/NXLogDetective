@@ -84,7 +84,8 @@ def fit_header(ws, H, cols, X=1, first=None):
     import math
     lines = 1
     for j, c in enumerate(cols):
-        w = ws.column_dimensions[ws.cell(H, (first or (1 + X)) + j).column_letter].width or 10
+        from openpyxl.utils import get_column_letter as L_
+        w = ws.column_dimensions[L_((first or (1 + X)) + j)].width or 10
         for word_line in str(c).split('\n'):
             lines = max(lines, math.ceil(len(word_line) * 1.15 / max(4, w - 1)) + str(c).count('\n'))
     ws.row_dimensions[H].height = max(20, 13 * lines + 8)
@@ -765,7 +766,7 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
     return ws
 
 
-def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, size=9, at=None, red=('Ошибки',), font_rule=None):
+def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, size=9, at=None, red=('Ошибки',), font_rule=None, groups=None):
     """Вторая таблица на листе — под первой (после ссылок и заметок): заголовок, подпись, оранжевая шапка, строки.
     at — буквы колонок листа для каждой колонки таблицы (широкие колонки — на широкие места первой таблицы)."""
     from openpyxl.utils import column_index_from_string as ci_
@@ -775,7 +776,29 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
         ws.cell(r, 2, note).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
     cols = list(df.columns)
     pos = [ci_(x) for x in at] if at else [2 + j for j in range(len(cols))]
+    if groups:   # шапка в два уровня: верх — над своими колонками, остальные колонки — одной ячейкой на два уровня
+        inner = {c: top for top, cs in groups.items() for c in cs}
+        merges = []
+        for j, c in enumerate(cols):   # сначала значения и оформление, объединение — после: в объединённую ячейку писать нельзя
+            top = inner.get(c)
+            cell = ws.cell(r, pos[j], top if top else c)
+            for rr in (r, r + 1):
+                ws.cell(rr, pos[j]).fill = PatternFill('solid', fgColor=ORANGE); ws.cell(rr, pos[j]).border = Border(left=WHITE, right=WHITE, bottom=WHITE)
+            cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF'); cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            if not top: merges.append((r, pos[j], r + 1, pos[j]))
+        for top in groups:
+            js = [pos[k] for k, c2 in enumerate(cols) if inner.get(c2) == top]
+            if len(js) > 1:
+                for jj in js[1:]: ws.cell(r, jj).value = None
+                merges.append((r, min(js), r, max(js)))
+        r += 1
+        for j, c in enumerate(cols):
+            if c in inner:
+                cell = ws.cell(r, pos[j], c); cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF')
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        for a, b_, c_, d_ in merges: ws.merge_cells(start_row=a, start_column=b_, end_row=c_, end_column=d_)
     for j, c in enumerate(cols):
+        if groups: break   # шапка в два уровня уже записана
         cell = ws.cell(r, pos[j], c); cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF'); cell.fill = PatternFill('solid', fgColor=ORANGE)
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True); cell.border = Border(left=WHITE, right=WHITE)
     fit_header(ws, r, cols, first=pos[0]) if not at else None

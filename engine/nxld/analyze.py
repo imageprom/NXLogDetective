@@ -61,6 +61,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
+    V, server_ips = visits.own_server(V, R)   # сервер сайта проверяет сам себя — его IP «Свои — сервер сайта»
+    m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
     c = blocks.Ctx(R, V, E, T, m, inv, G)

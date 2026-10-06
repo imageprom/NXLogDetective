@@ -27,7 +27,7 @@ def ip_profile(c):
     P = pd.DataFrame({'группа': top['group'], 'подгруппа': top['subgroup'].astype(str), 'имя': top['fam'].astype(str),
                       'сеть': top['nettype'].astype(str), 'страна': top['cc'].astype(str)})
     P['организация'] = T['org'].reindex(P.index).astype(str).replace({'nan': '', 'None': ''}).values if 'org' in T else ''
-    P['живой'] = P['группа'].isin(LIVE)
+    P['живой'] = P['группа'].isin(LIVE) & (P['подгруппа'] != 'сервер сайта')   # сервер сайта — «Свои», но не человек
     P['кто'] = [label(g, s, f) for g, s, f in zip(P['группа'], P['подгруппа'], P['имя'])]
     P['групп'] = groups.groupby('ip')['group'].nunique().reindex(P.index).fillna(1).astype(int)
     c._ip_profile = P
@@ -38,7 +38,7 @@ def label(group, sub, fam=''):
     """Подпись обращающегося одной строкой: «Боты — подделка Googlebot», «Роботы — YandexBot», «Люди»."""
     sub = str(sub or '')
     if group == 'Люди': return 'Люди'
-    if group == 'Свои': return 'Свои — сотрудник'
+    if group == 'Свои': return 'Свои — сервер сайта' if sub == 'сервер сайта' else 'Свои — сотрудник'
     if group == 'Роботы': return f'Роботы — {fam}' if fam else 'Роботы'
     if group == 'Боты':
         if sub == 'подделки роботов': return f'Боты — подделка {fam}' if fam else 'Боты — подделка робота'

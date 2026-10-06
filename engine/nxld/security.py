@@ -292,8 +292,9 @@ def embedding(c, res, S):
     for _, r in H.iterrows():
         h = str(r['ref_host'])
         sub = X[X['h'] == h]
-        files = ', '.join(f"{bc[k_]} ({v})" for k_, v in sub['b'].value_counts().head(3).items())
+        files = '\n'.join(f"{bc[k_]} ({v})" for k_, v in sub['b'].value_counts().head(3).items())
         if h in known: why = known[h]
+        elif h in set(c.m.get('server_ips', [])): why = 'лежит на нашем сервере (IP сервера сайта)'
         elif re.fullmatch(r'[\d.]+', h): why = 'IP без домена'
         elif re.search(r'dev|test|stage|staging|demo|local', h): why = 'похоже на тестовую копию — сверить IP с нашим сервером'
         else: why = 'чужой сайт'
@@ -314,8 +315,8 @@ def admin(c, S):
     D['ip'] = D['ip'].astype(str)
     D['первый'] = D['ip'].map(X['min']).map(lambda v: dmy(v) if pd.notna(v) else '')
     D['последний'] = D['ip'].map(X['max']).map(lambda v: dmy(v) if pd.notna(v) else '')
-    D['кто'] = np.where(D['сотрудник'], 'Свои — сотрудник', D['ip'].map(P['кто']).fillna(''))
     D['живой'] = D['сотрудник'] | D['ip'].map(P['живой']).fillna(False).astype(bool)
+    D['кто'] = np.where(D['сотрудник'], 'Сотрудник', np.where(D['живой'], 'Неизвестный', D['ip'].map(P['кто']).fillna('')))   # посторонний человек — «Неизвестный»
     D['чужой'] = ~D['сотрудник']
     D = D.sort_values(['живой', 'запросов'], ascending=[False, False]).reset_index(drop=True)
     return D
@@ -554,6 +555,9 @@ def leaks(c, S, checks=None):
         served = (st == 200) & (by > 0)
         D = pd.DataFrame({'d': d, 's': served}).groupby('d')['s'].any()
         hist = common.day_runs(D.index, D.values, days_all, {True: 'отдаётся', False: 'закрыт'})
+        if len(D) and D.index.max() < days_all[-1]:   # после последнего запроса лог молчит: что с файлом сейчас — по логу не видно
+            hist += f"; после {pd.Timestamp(D.index.max()).strftime('%d.%m')} запросов не было"
+        if len(D) and D.iloc[-1]: hist = hist.replace('отдаётся с', 'отдавался с', 1) if 'запросов не было' in hist else hist
         last = int(st[-1]) if len(st) else None
         ch = checks.get(f) or {}
         rows.append({'файл': f, 'отдан_раз': int(r['ответов_200']), 'IP': int(r['IP']), 'размер': int(round(r['размер_у_чужих'] if pd.notna(r.get('размер_у_чужих')) else r['размер'])),

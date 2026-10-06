@@ -220,6 +220,23 @@ def reverify(R, V):
     return R, V
 
 
+SELF_CHECK = r'^/bitrix/admin/site_checker\.php$|^/bitrix/site_check_exec\.php$|^/bitrix/tools/check_|^/wp-cron\.php$'
+
+
+def own_server(V, R):
+    """IP сервера сайта: он сам себя проверяет — «Проверка системы» Битрикса (site_checker) или wp-cron, без User-Agent.
+    Его обращения — «Свои», подгруппа «сервер сайта». Возвращает (V, список IP)."""
+    cats = R['base'].cat.categories.to_series().astype(str)
+    hit = cats.str.contains(SELF_CHECK, regex=True).values[R['base'].cat.codes.values]
+    noua = R['ua'].astype(str).isin(['', '-']).values
+    ips = sorted(set(R.loc[hit & noua, 'ip'].astype(str)))
+    if ips:
+        V = V.copy()
+        m = V['ip'].astype(str).isin(ips) & (V['group'] != 'Свои')
+        V.loc[m, 'group'] = 'Свои'; V.loc[m, 'subgroup'] = 'сервер сайта'
+    return V, ips
+
+
 def regroup(V, R=None):
     """Группы без смешения. «Свои» — только люди-сотрудники.
     Системы мониторинга — по имени (справочник) или ритму, и только если поведение мониторинговое: мало адресов. Имя есть,

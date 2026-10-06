@@ -256,7 +256,10 @@ def build(c, res):
         sev = 'Срочно' if top['вес'] >= 85 else ('Важно' if top['вес'] >= 45 else 'К сведению')
         from . import alarms
         op_ = set(alarms.leaks_open(res))
-        if (agg.get('leaks') and op_ and any(f_ in str(ctx.get('top_leaks', '')) for f_ in op_)) or any('продолжается' in str(o_) for o_ in outages_hit):
+        sev0 = sev
+        leak_hit = [f_ for f_ in (op_ if agg.get('leaks') else ()) if f_ in str(ctx.get('top_leaks', ''))]
+        out_hit = any('продолжается' in str(o_) for o_ in outages_hit)
+        if leak_hit or out_hit:
             sev = 'Тревога'   # получил файл, который отдаётся и сейчас, или причастен к сбою, который не закончился
         # состав
         nets = pd.Series([subnet(ip) for ip in g.index]).value_counts()
@@ -301,7 +304,7 @@ def build(c, res):
         if agg.get('ad_visits'): dmg.append(f"{int(agg['ad_visits'])} визитов по оплаченной рекламе")
         dmg.append(f"трафик {nf(agg['bytes'] / 1024 ** 2)} МБ")
         if agg.get('e5'): dmg.append(f"{int(agg['e5'])} ответов 5xx")
-        cases.append(dict(дело=case_id, ключ=key, кличка=nickname(key, org), вид=top['статья'], важность=sev, вес=top['вес'],
+        cases.append(dict(дело=case_id, ключ=key, кличка=nickname(key, org), вид=top['статья'], важность=sev, важность_без_тревоги=sev0, тревога_по=dict(файлы=sorted(leak_hit), сбой=out_hit), вес=top['вес'],
                           обвинения=[dict(статья=r_['статья'], что=t_, сила=r_['сила'], id=r_['id']) for r_, t_ in ch],
                           приметы=signs(key, P, g, sub, fam, ctx), сигнатура=dict(id=sig_id, правило=sig_text, проверка=check, ложных=false_, rule=rule),
                           состав=dict(IP=len(g), подсети=[(k_, int(v), int(req_by_net.get(k_, 0))) for k_, v in nets.head(8).items()], подсетей=len(nets),

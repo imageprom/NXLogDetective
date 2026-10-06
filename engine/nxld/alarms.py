@@ -28,7 +28,10 @@ def leaks_open(res):
     for _, r in L.iterrows():
         chk = str(r.get('проверка', '') or '')
         if chk.startswith('закрыт'): continue
-        if chk.startswith('открыт') or bool(r.get('открыт_сейчас')): out.append(str(r['файл']))
+        if chk.startswith('открыт'):   # проверено из сети: тревога — только если внутри существенное (пароли, ключи, доступ к базе)
+            if bool(r.get('тревога')): out.append(str(r['файл']))
+            continue
+        if bool(r.get('открыт_сейчас')): out.append(str(r['файл']))   # не проверено: по логу открыт — тревога, пока не проверят
     return out
 
 
@@ -67,3 +70,16 @@ def apply(res, items=None):
 
 def count(res, block=None):
     return sum(1 for x in res.get('findings') or [] if x.get('важность') == 'Тревога' and (block is None or x.get('блок') == block))
+
+
+def recheck_cases(res):
+    """Дела в 04 после проверок из сети: «Тревога» по утечке остаётся, только если файл всё ещё тревожный (leaks_open)."""
+    D = (res.get('profiles') or {}).get('дела') or []
+    if not D: return
+    op_ = set(leaks_open(res))
+    for x in D:
+        why = x.get('тревога_по') or {}
+        if not why or 'важность_без_тревоги' not in x: continue
+        alarm = why.get('сбой') or any(f_ in op_ for f_ in why.get('файлы') or [])
+        x['важность'] = 'Тревога' if alarm else x['важность_без_тревоги']
+    D.sort(key=lambda x: (x['важность'] != 'Тревога', -x.get('вес', 0), -x.get('запросов', 0)))

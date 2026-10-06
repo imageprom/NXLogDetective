@@ -51,6 +51,8 @@ def apply(res, edits):
     if edits.get('встраивание') and X_.get('встраивание') is not None and len(X_['встраивание']):   # скил сверил IP сайтов с нашим сервером
         Em_ = X_['встраивание']
         for h_, why in edits['встраивание'].items(): Em_.loc[Em_['сайт'] == h_, 'вывод'] = why
+    if edits.get('проверка_сайта'):   # скил открыл адреса сайта из сети: robots.txt, карта сайта, главная (SKILL.md, раздел 4)
+        res['проверка_сайта'] = dict(edits['проверка_сайта'])
     if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
         res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res

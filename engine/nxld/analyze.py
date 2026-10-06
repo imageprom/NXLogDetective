@@ -243,6 +243,11 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['bots_extra'] = profiles.extras(c, res)
     except Exception:
         import traceback; traceback.print_exc(); res['profiles'], res['bots_extra'] = None, None
+    if 'Маркетинг' in selected:   # 05: журнал, карты по времени, качество каналов, боты в рекламе
+        from . import marketing
+        try: res['marketing'] = marketing.build(c, res)
+        except Exception:
+            import traceback; traceback.print_exc(); res['marketing'] = None
     from . import alarms, derive
     alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
     derive.build(res)   # признаки и сводки для оформления, выжимки и снимка

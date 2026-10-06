@@ -178,6 +178,7 @@ def overview(c, F):
     P['принята'] = np.where(P['goal_success'], 'да', 'нет')
     P['статус'] = lead_status(P, R, c.m)
     S['Конверсии'] = P[['время', 'ip', 'goal', 'status', 'принята', 'статус', 'группа', 'подгруппа', 'канал', 'страниц_до', 'ресурсов_грузил', 'сек_от_входа', 'вход', 'вход_реферер', 'сеть']].rename(columns={'goal': 'цель', 'status': 'код'})
+    S['Конверсии']['форма'] = form_name(S['Конверсии']['цель'])   # имя формы — движок, а не оформление: одно для 01 и 05
     # GET-отправки персональных данных
     G_ = c.G[c.G['query'].astype(str).map(recon.has_pd)] if c.G is not None and len(c.G) else None
     if G_ is not None and len(G_):
@@ -1043,7 +1044,9 @@ def parse_ad(q):
         if '=' in kv:
             k, v = kv.split('=', 1)
             d[k.lower()] = v
-    out = {'utm_source': d.get('utm_source', ''), 'utm_medium': d.get('utm_medium', ''), 'кампания': d.get('utm_campaign', ''), 'фраза': d.get('utm_term', '')}
+    from urllib.parse import unquote_plus
+    out = {'utm_source': d.get('utm_source', ''), 'utm_medium': d.get('utm_medium', ''), 'кампания': unquote_plus(d.get('utm_campaign', ''), errors='replace'),
+           'фраза': unquote_plus(d.get('utm_term', ''), errors='replace')}   # фразы и кампании — читаемым текстом, не %D0%BA…
     uc = d.get('utm_content', '')
     for part in re.split(r'\||%7C', uc):
         if '.' in part:
@@ -1073,14 +1076,16 @@ def placement_type(src, system_source):
     return 'РСЯ: сторонние приложения'
 
 
+def form_name(goals):
+    """Человеческое имя формы по адресу обработчика (справочник anatomy.FORM_NAME)."""
+    from .anatomy import name_of, FORM_NAME
+    return goals.astype(str).map(lambda g: (name_of(g, FORM_NAME) or ('общий обработчик форм' if re.search(r'/form\.php$', g) else 'форма')).capitalize())
+
+
 def marketing(c, F):
     R, V, H = c.R, c.V, c.H
     S = {}
-    # каналы подробно (люди)
-    def stats(df):
-        return pd.Series({'визитов': len(df), 'IP': df['ip'].nunique(), 'страниц_на_визит': round(df['n_pages'].mean(), 2),
-                          'мгновенный_уход_%': round(((df['n_pages'] <= 1) & (df['dur'] < 10)).mean() * 100, 1), 'смотрели_каталог_%': round((df['n_catalog'] > 0).mean() * 100, 1),
-                          'отправок': int(df['n_goal'].sum()), 'принято': int(df['n_conv'].sum()), 'конверсия_%': round(df['n_conv'].sum() / max(1, len(df)) * 100, 3)})
+    from .marketing import metrics as stats   # одна метрика визитов на все срезы 05
     S['Каналы подробно'] = H.groupby(['channel', 'channel_sub']).apply(stats).reset_index().sort_values('визитов', ascending=False).rename(columns={'channel': 'канал', 'channel_sub': 'источник'})
     # воронки по целям
     gp = (R['goal'] != '').values

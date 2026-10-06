@@ -1,6 +1,6 @@
 """NXLD: простые листы-таблицы в общем стиле (заголовок, пояснение, оранжевая шапка, фильтр, закреплённая шапка)."""
 import numbers
-import pandas as pd
+import numpy as np, pandas as pd
 from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
 from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT, RED
 
@@ -183,7 +183,7 @@ def conversions(wb, C, name='Конверсии'):
         'Время': pd.to_datetime(C['время']).dt.strftime('%d.%m.%Y %H:%M'),
         '_t': pd.to_datetime(C['время']),
         'Кто': C['группа'].astype(str),
-        'Форма': C['цель'].astype(str).map(lambda g: (name_of(g, FORM_NAME) or ('общий обработчик форм' if re.search(r'/form\.php$', g) else 'форма')).capitalize()),
+        'Форма': C['форма'] if 'форма' in C else C['цель'].astype(str).map(lambda g: (name_of(g, FORM_NAME) or ('общий обработчик форм' if re.search(r'/form\.php$', g) else 'форма')).capitalize()),   # имя — из движка (blocks.form_name)
         'Принята': C['принята'].astype(str),
         'Статус': C['статус'].astype(str) if 'статус' in C else '',
         'Код ответа': pd.to_numeric(C['код'], errors='coerce').astype('Int64'),
@@ -744,22 +744,23 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
         ws.cell(r, 2, bt.upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.row_dimensions[r].height = 22; r += 1
         if bn:
             ws.cell(r, 2, bn).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
-        hdr = ['День', 'Дата'] + [f'{h:02d}' for h in range(24)] + ([] if fmt_ else ['Всего'])
+        hdr = ['День', '' if len(P) and isinstance(P.index[0], (int, np.integer)) else 'Дата'] + [f'{h:02d}' for h in range(24)] + ([] if fmt_ else ['Всего'])
         for j, v in enumerate(hdr):
             c_ = ws.cell(r, 2 + j, v); c_.font = Font(name='Arial', size=9, bold=True, color='FFFFFF'); c_.fill = PatternFill('solid', fgColor=ORANGE)
             c_.alignment = Alignment(horizontal='center', vertical='center'); c_.border = Border(left=WHITE, right=WHITE)
         r += 1; r0 = r
         for day, row in P.iterrows():
-            d_ = pd.Timestamp(day)
-            ws.cell(r, 2, WEEKDAY[d_.weekday()]).alignment = Alignment(horizontal='center')
-            ws.cell(r, 3, d_.strftime('%d.%m')).alignment = Alignment(horizontal='center')
+            wk = isinstance(day, (int, np.integer))   # карта «день недели × час» (05): строка — день недели 0..6, без даты
+            wd = int(day) if wk else pd.Timestamp(day).weekday()
+            ws.cell(r, 2, WEEKDAY[wd]).alignment = Alignment(horizontal='center')
+            ws.cell(r, 3, '' if wk else pd.Timestamp(day).strftime('%d.%m')).alignment = Alignment(horizontal='center')
             for h in range(24):
                 v_ = row.get(h)
                 v_ = None if v_ is None or pd.isna(v_) else (float(v_) if fmt_ else int(v_))
                 c_ = ws.cell(r, 4 + h, v_); c_.number_format = fmt_ or NUM_FMT; c_.font = Font(name='Arial', size=8)
             if not fmt_:
                 c_ = ws.cell(r, 28, int(row.fillna(0).sum())); c_.number_format = NUM_FMT; c_.font = Font(name='Arial', size=9, bold=True)
-            for q in (2, 3): ws.cell(r, q).font = Font(name='Arial', size=9, color='000000' if d_.weekday() < 5 else GREY)
+            for q in (2, 3): ws.cell(r, q).font = Font(name='Arial', size=9, color='000000' if wd < 5 else GREY)
             r += 1
         ws.conditional_formatting.add(f'D{r0}:AA{r - 1}', ColorScaleRule(start_type='min', start_color='FFFFFF', mid_type='percentile', mid_value=50,
                                                                         mid_color='FCD9C4', end_type='max', end_color='E8541C'))

@@ -24,11 +24,17 @@ def main():
         return
     tags = [(r.get('tag_name'), r.get('html_url')) for r in rel if not r.get('draft')]
     tags = [(t, u) for t, u in tags if _key(t)]
+    try:   # версия в ветке main и архив в папке releases/ — на случай, если релиз на GitHub не создан
+        src = urllib.request.urlopen(urllib.request.Request(f'https://raw.githubusercontent.com/{REPO}/main/engine/nxld/prepare.py', headers={'User-Agent': 'nxld'}), timeout=5).read().decode('utf-8', 'replace')
+        m = re.search(r"VERSION\s*=\s*['\"]([^'\"]+)", src)
+        if m and _key(m.group(1)): tags.append((m.group(1), f'https://github.com/{REPO}/tree/main/releases'))
+    except Exception:
+        pass
     if not tags:
-        print(f'NXLD {VERSION}: релизов на GitHub нет'); return
+        print(f'NXLD {VERSION}: проверка обновлений пропущена (на GitHub нет данных о версиях)'); return
     t, u = max(tags, key=lambda x: _key(x[0]))
     if _key(t) > _key(VERSION):
-        print(f'NXLD {VERSION}: есть новая версия {t} — {u}. Скачайте архив скилла из релиза и загрузите его в настройках скиллов вместо текущего.')
+        print(f'NXLD {VERSION}: есть новая версия {t} — {u}. Скачайте архив скилла (релиз или папка releases/) и загрузите его в настройках скиллов вместо текущего.')
     else:
         print(f'NXLD {VERSION}: версия актуальная')
 

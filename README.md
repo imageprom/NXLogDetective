@@ -10,9 +10,9 @@
 
 ## Установка и обновление скилла
 
-1. Скачайте `nx-log-detective-<версия>.zip` из последнего [релиза](https://github.com/imageprom/NXLogDetective/releases).
+1. Скачайте `nx-log-detective-<версия>.zip` из папки [releases/](https://github.com/imageprom/NXLogDetective/tree/main/releases) (или из [релиза](https://github.com/imageprom/NXLogDetective/releases), если он создан). Собрать архив самому: `python3 tools/build_skill.py`.
 2. В Claude: настройки → скиллы → загрузить архив. Внутри одна папка `nx-log-detective/`: SKILL.md, references/, движок, базы и инструменты.
-3. Обновление — так же: новый архив из релиза загружается вместо старого. В начале работы Детектив сам проверяет, нет ли версии новее (`tools/check_update.py`), и только сообщает об этом.
+3. Обновление — так же: новый архив из releases/ загружается вместо старого. В начале работы Детектив сам проверяет, нет ли версии новее (`tools/check_update.py`), и только сообщает об этом.
 
 Собрать архив из репозитория: `python3 tools/build_skill.py --out dist`. ТЗ — `docs/TZ_NXLD_1.0.md` (выгрузка из Claude Docs).
 

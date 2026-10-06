@@ -46,6 +46,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
         for j, v in enumerate(row, 1):
             if isinstance(v, float) and pd.isna(v): v = None
             if hasattr(v, 'item'): v = v.item()
+            if isinstance(v, float) and v.is_integer() and abs(v) >= 1000: v = int(v)   # целые в дробном виде — как целые, с разрядами
             if isinstance(v, str): v = ILLEGAL.sub('�', v)   # управляющие символы из адресов сканеров Excel не принимает
             cell = ws.cell(i, j + X, v)
             col = cols[j - 1]
@@ -54,12 +55,14 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             hz = 'center' if col in center else ('right' if isnum else 'left')
             cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
+            elif isnum and isinstance(v, float): cell.number_format = '# ##0.0#' if abs(v) >= 1000 else '0.0#'
             cell.border = Border(bottom=SEP)
             f = rf or (fill_rule(col, v) if fill_rule else None)
             if f: cell.fill = PatternFill('solid', fgColor=f)
     for j, c in enumerate(cols, 1):
         letter = ws.cell(H, j + X).column_letter
         ws.column_dimensions[letter].width = (widths or {}).get(c) or min(45, max(10, len(str(c)) + 2, int(df[c].astype(str).str.len().quantile(0.9)) + 2 if len(df) else 10))
+    fit_header(ws, H, cols, X)
     r_ = H + len(df) + 2   # ссылки — под таблицей, как на других листах
     for text, target in links:
         if isinstance(target, tuple):   # лист другого файла отчёта
@@ -74,6 +77,57 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             c_ = cols.index(sort_by) + 1 + X
             ws.auto_filter.add_sort_condition(f"{ws.cell(H + 1, c_).coordinate}:{ws.cell(H + len(df), c_).coordinate}")
     return ws
+
+
+def fit_header(ws, H, cols, X=1, first=None):
+    """Высота шапки — по самому длинному названию колонки при её ширине, чтобы ничего не обрезалось."""
+    import math
+    lines = 1
+    for j, c in enumerate(cols):
+        w = ws.column_dimensions[ws.cell(H, (first or (1 + X)) + j).column_letter].width or 10
+        for word_line in str(c).split('\n'):
+            lines = max(lines, math.ceil(len(word_line) * 1.15 / max(4, w - 1)) + str(c).count('\n'))
+    ws.row_dimensions[H].height = max(20, 13 * lines + 8)
+
+
+def header_groups(ws, groups, H=4, X=1):
+    """Двухуровневая шапка для листа data_sheet: groups — {верх: [колонки]}. Верх — в строке над шапкой, объединённой по своим колонкам;
+    колонки без верха — одной ячейкой на два уровня."""
+    cols = {ws.cell(H, j).value: j for j in range(1 + X, ws.max_column + 1) if ws.cell(H, j).value}
+    inner = {c for v in groups.values() for c in v}
+    for top, cs in groups.items():
+        js = sorted(cols[c] for c in cs if c in cols)
+        if not js: continue
+        c_ = ws.cell(H - 1, js[0], top)
+        c_.font = Font(name='Arial', size=9, bold=True, color='FFFFFF'); c_.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        for j in range(js[0], js[-1] + 1):
+            ws.cell(H - 1, j).fill = PatternFill('solid', fgColor=ORANGE); ws.cell(H - 1, j).border = Border(left=WHITE, right=WHITE, bottom=WHITE)
+        if len(js) > 1: ws.merge_cells(start_row=H - 1, start_column=js[0], end_row=H - 1, end_column=js[-1])
+    for c, j in cols.items():
+        if c in inner: continue
+        ws.cell(H - 1, j).fill = PatternFill('solid', fgColor=ORANGE)
+        v = ws.cell(H, j).value
+        ws.cell(H, j).value = None
+        ws.cell(H - 1, j).value = v
+        ws.cell(H - 1, j).font = Font(name='Arial', size=9, bold=True, color='FFFFFF')
+        ws.cell(H - 1, j).alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.merge_cells(start_row=H - 1, start_column=j, end_row=H, end_column=j)
+    ws.row_dimensions[H - 1].height = 20
+
+
+def fit_widths(ws, start_row=4, lo=9, hi=44, skip=()):
+    """Ширины колонок по содержимому всех таблиц листа — для листов, где таблиц несколько."""
+    from openpyxl.utils import get_column_letter as L_
+    best = {}
+    for row in ws.iter_rows(min_row=start_row):
+        if sum(c.value is not None for c in row) < 3: continue   # заметки, ссылки и заголовки таблиц — одна ячейка, на ширину не влияют
+        for c in row:
+            if c.value is None or c.column == 1 or c.coordinate in ws.merged_cells: continue
+            n = max(len(x) for x in str(c.value).split('\n'))
+            best[c.column] = max(best.get(c.column, 0), n)
+    for j, n in best.items():
+        if L_(j) in skip: continue
+        ws.column_dimensions[L_(j)].width = max(lo, min(hi, n * 0.9 + 2))
 
 
 LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «Почему важно»'), 'обычно': ('FFFFFF', None, 'Ошибка есть, не критична'),
@@ -92,9 +146,12 @@ LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «По�
           'всплеск': (F_NOTE, None, 'Всплеск от программ, похожий на DDoS, или с последствиями для людей'),
           'подозрительно': (F_NOTE, None, 'Сервер ответил 200, и ответ не похож на обычную страницу — проверить'),
           'посторонние': (F_NOTE, None, 'Адрес с токеном видели посторонние'), 'свои_норма': ('EFEFEF', None, 'Видели только свои — норма'),
-          'ловушка': (F_NOTE, None, 'По вариантам ходят в основном роботы и боты'),
+          'ловушка': (F_NOTE, None, 'Больше 1 000 вариантов адреса'),
           'принято': (F_NOTE, None, 'Сервер принял необычный метод (ответ 2xx)'),
-          'утечка': (F_NOTE, None, 'Файл отдаётся посторонним сейчас или не проверен'), 'закрыт': ('FFFFFF', GREY, 'Закрыт: больше не отдаётся'),
+          'утечка': (F_NOTE, None, 'Утечка: содержимое файла отдано постороннему'),
+          'сотрудник': ('EFEFEF', None, 'Сотрудник — норма'), 'посторонний': (F_NOTE, None, 'Посторонний человек в админке'),
+          'ответ_200': ('EFEFEF', None, 'Сервер ответил 200, но это не улика: обычные страницы, заглушки, формы входа'), 'закрыт': ('FFFFFF', GREY, 'Закрыт: больше не отдаётся'),
+          'опасная_точка': (F_NOTE, None, 'Загрузка файлов посторонними или персональные данные в адресе'), 'сканер_точка': ('EFEFEF', None, 'Сканер: адреса на сайте нет'),
           'массовые_люди': ('FFFFFF', GREY, 'Люди и свои: проверить, не общий ли это IP (офис, мобильный оператор)')}
 
 
@@ -146,77 +203,7 @@ def conversions(wb, C, name='Конверсии'):
 
 
 # ---- точки приёма данных и POST-отправки ----
-SITE_KINDS = ('Заявка', 'Заявка?', 'Вход', 'Обмен с 1С', 'API', 'Вебхук', 'Фильтр каталога', 'Поиск по сайту', 'Форма (GET)', 'Пагинация', 'Тип отображения', 'Сортировка', 'Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов')
-
-
-def _codes(s):
-    import re
-    return {int(k): int(v) for k, v in re.findall(r'(\d{3}):\s*(\d+)', str(s))}
-
-
-def classify_post(r, login_roots, engine, ev=None, prof=None):
-    """Что это за адрес и почему — человеческим языком."""
-    import re
-    a, out = str(r['адрес']), str(r.get('вывод', ''))
-    cd = _codes(r.get('коды'))
-    tot = max(1, sum(cd.values()))
-    ok = sum(v for k, v in cd.items() if 200 <= k < 400 and k not in (301,)) / tot
-    if out.startswith('цель'):
-        e = (ev or {}).get(a)
-        if e and e['редиректов']:
-            how = ', '.join(f"{k} — {v}" for k, v in sorted(e['как'].items(), key=lambda x: -x[1]))
-            if e['подтверждено'] == e['редиректов']:
-                return 'Заявка', f"после отправки — переадресация (302), затем {how}: подтверждено {e['подтверждено']} из {e['редиректов']}"
-            if e['подтверждено']:
-                return 'Заявка', f"после отправки — переадресация (302), затем {how}: подтверждено {e['подтверждено']} из {e['редиректов']}; остальные не приняты"
-            return 'Заявка', f"переадресация (302) есть, но подтверждения успеха нет ни в одном из {e['редиректов']} случаев — заявки не приняты"
-        return 'Заявка', ('переадресация после отправки (3xx)' if '3xx' in out else 'успех по коду ответа не виден (всегда 200) — не подтверждено')
-    if any(a == root or a.startswith(root) and a.rstrip('/') == root.rstrip('/') for root in login_roots) or (a in login_roots):
-        return 'Вход', 'форма входа: неудачный вход возвращает ту же страницу, удачный — другую'
-    if re.search(r'/bitrix/admin/|/wp-admin/|/administrator/', a):
-        return 'Админка', 'запросы из админки движка (работа сотрудников)'
-    if re.search(r'/wp-|wordpress|xmlrpc|^/wp/', a) and engine != 'WordPress':
-        return 'Сканер', 'адрес WordPress, а сайт на другом движке'
-    bad = cd.get(404, 0) + cd.get(405, 0) + cd.get(301, 0) + cd.get(302, 0)
-    if cd and cd.get(404, 0) + cd.get(405, 0) >= 0.8 * tot:
-        return 'Сканер', 'такой страницы нет на сайте (404)'
-    if cd and bad >= 0.8 * tot:
-        return 'Сканер', 'страницы нет (404) или перенаправление (301) — форму не принимает'
-    if cd and cd.get(403, 0) >= 0.5 * tot:
-        return 'Сканер', 'защита отказала (403)'
-    if 'upload' in a:
-        return 'Загрузка файлов', 'загрузка файлов на сервер'
-    if any(a.startswith(root) for root in login_roots):
-        return 'Служебный скрипт', 'скрипт внутри закрытого раздела'
-    if re.search(r'ajax|/tools/|/services/|autosave|\.php$', a) and a not in ('/index.php',) and ok >= 0.5:
-        return 'Служебный скрипт', 'скрипт сайта: подгружает данные, не заявка'
-    p = (prof or {}).get(a, {})
-    if p.get('свои', 0) >= 0.8:
-        return 'Подгрузка на странице', f"POST шлют браузеры посетителей, которые уже на сайте ({int(p['свои'] * 100)}%) — страница подгружает данные (список, форму)"
-    if p:
-        tail = f", например параметр «{p['параметр']}»" if p.get('параметр') else ''
-        return 'Сканер', f"POST на обычную страницу без перехода с сайта ({int((1 - p.get('свои', 0)) * 100)}% запросов){tail} — боты и сканеры"
-    if ok >= 0.5:
-        return 'Подгрузка на странице', 'обычная страница отвечает на POST'
-    return 'Сканер', 'обычная страница, форму не принимает — отправляют боты и сканеры'
-
-
-def _post_rows(res):
-    m = res.get('site_map') or {}
-    F = m.get('forms') or []
-    if isinstance(F, str):
-        try: F = eval(F)
-        except Exception: F = []
-    OS = res.get('sheets', {}).get('Нагрузка и безопасность', {}).get('Открытые служебные разделы', pd.DataFrame())
-    roots = set(OS.loc[OS['форма_входа'] == 'да', 'раздел'].astype(str)) if len(OS) and 'форма_входа' in OS else set()
-    engine = ((m.get('engines') or [{}])[0] or {}).get('движок', '')
-    rows = []
-    for f in F:
-        if not isinstance(f, dict): continue
-        kind, why = classify_post(f, roots, engine, res.get('form_evidence'), (res.get('anatomy') or {}).get('post_pages'))
-        rows.append({'Адрес точки': f['адрес'], 'Метод': 'POST', 'Опознано как': kind, 'Запросов': int(f.get('отправок') or 0), 'Уникальных IP': int(f.get('IP') or 0), 'Улики': why,
-                     'Коды ответа': str(f.get('коды', '')), '_t0': pd.to_datetime(f.get('первый')), '_t1': pd.to_datetime(f.get('последний'))})
-    return rows
+from .intake import SITE_KINDS, _codes, classify_post, post_rows as _post_rows   # реестр точек приёма — в движке (intake.py)
 
 
 def _finish(rows):
@@ -236,10 +223,13 @@ WIDTHS = {'Адрес точки': 55, 'Метод': 8, 'Опознано как
 
 def intake(wb, res, name='Точки приёма данных', before='Конверсии'):
     """Overview: только то, что сайт реально принимает — заявки, вход, фильтры и поиск, свои скрипты, админка."""
-    rows = [r for r in _post_rows(res) if r['Опознано как'] != 'Сканер']
-    for g in (res.get('anatomy') or {}).get('api', []) + (res.get('anatomy') or {}).get('get_приём', []):
-        rows.append({'Адрес точки': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Запросов': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
-                     'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
+    if res.get('intake') is not None:   # реестр точек приёма (intake.py): здесь — то, что сайт принимает на самом деле
+        rows = [dict(r) for r in res['intake'] if r['Опознано как'] != 'Сканер' and r.get('источник') != 'скрипт']
+    else:   # старый анализ без реестра
+        rows = [r for r in _post_rows(res) if r['Опознано как'] != 'Сканер']
+        for g in (res.get('anatomy') or {}).get('api', []) + (res.get('anatomy') or {}).get('get_приём', []):
+            rows.append({'Адрес точки': g['адрес'], 'Метод': 'GET', 'Опознано как': g['что'], 'Запросов': g['отправок'], 'Уникальных IP': g['IP'], 'Улики': g['почему'],
+                         'Коды ответа': g['коды'], '_t0': pd.to_datetime(g['первый']), '_t1': pd.to_datetime(g['последний'])})
     d = _finish(rows)
     if not len(d): return
     if name not in wb.sheetnames: wb.create_sheet(name, wb.sheetnames.index(before) if before in wb.sheetnames else len(wb.sheetnames))
@@ -267,23 +257,45 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
         c.font = Font(name='Arial', size=10, italic=True, color=INK)
 
 
-def post_all(wb, res, name='POST-отправки', after='GET-отправки'):
-    """03 Безопасность: все POST-отправки, включая сканеры."""
-    d = _finish(_post_rows(res))
-    if not len(d): return
-    d = d.drop(columns=['Метод'])
+def method_all(wb, res, method='POST', name=None, after=None):
+    """03: все точки приёма одного метода из реестра (intake.py), вместе со сканерами; опознание — колонкой, отбор — фильтром."""
+    name = name or method
+    rows = [dict(r) for r in (res.get('intake') if res.get('intake') is not None else _post_rows(res)) if r['Метод'] == method]
+    if not rows: return None
+    d = _finish(rows)
+    extra = pd.DataFrame(rows).sort_values('Запросов', ascending=False)
+    pos_ = list(d.columns).index('Уникальных IP') + 1
+    if 'свои' in extra:   # у сводных строк «Анатомии» (/projects/* — …) разбивки нет — пусто
+        iv = lambda col: pd.Series([None if v is None or pd.isna(v) else int(v) for v in extra[col]], dtype=object, index=d.index)
+        d.insert(pos_, 'Свои', iv('свои')); d.insert(pos_ + 1, 'Посторонние', iv('посторонние'))
+    if method == 'GET' and 'пд' in extra and extra['пд'].fillna(0).astype(int).any():
+        d.insert(pos_ + 2, 'Персональные данные', extra['пд'].fillna(0).astype(int).values)
+    d = d.drop(columns=['Метод']).rename(columns={'Адрес точки': 'Адрес', 'Опознано как': 'Опознание'})
     if name not in wb.sheetnames:
         pos = wb.sheetnames.index(after) + 1 if after in wb.sheetnames else len(wb.sheetnames)
         wb.create_sheet(name, pos)
-    sc = d[d['Опознано как'] == 'Сканер']
+    sc = d[d['Опознание'] == 'Сканер']
     kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Запросов сканеров', int(sc['Запросов'].sum()))]
-    row_rule = lambda r: F_NOTE if r.get('Опознано как') == 'Сканер' else None
-    data_sheet(wb, name, d, name, 'Все адреса, куда за период отправляли данные методом POST, — и сайт, и сканеры', WIDTHS,
-               wrap=('Улики', 'Адрес точки', 'Ответы', 'Ошибки'), center=(), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
-    ws = wb[name]   # ссылка на другой файл
+    up = list(((d['Опознание'] == 'Загрузка файлов') & (d.get('Посторонние', 0).fillna(0) > 0)) | (d.get('Персональные данные', pd.Series(0, index=d.index)).fillna(0) > 0))
+    fills = [F_NOTE if u else ('EFEFEF' if o == 'Сканер' else None) for u, o in zip(up, d['Опознание'])]
+    sub = {'POST': 'Все адреса, на которые за период отправляли данные методом POST: и сайт, и сканеры',
+           'GET': 'Где сайт принимает данные в адресе (GET): фильтры, поиск, API и скрипты — и обращения сканеров'}[method]
+    w = dict(WIDTHS, **{'Адрес': 55, 'Опознание': 22, 'Свои': 9, 'Посторонние': 11, 'Персональные данные': 12})
+    data_sheet(wb, name, d, name, sub, w, wrap=('Улики', 'Адрес', 'Ответы', 'Ошибки'), kpi=kpi, kpi_col='Опознание',
+               row_rule=lambda r, _it=iter(fills): next(_it), red=('Ошибки',))
+    ws = wb[name]
     r_ = ws.max_row + 2
-    c = ws.cell(r_, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')
+    for t_ in ['Опознание — что это за адрес: заявка, вход, фильтр, служебный скрипт, загрузка файлов, API или сканер; отбор — фильтром по колонке.',
+               'Свои — запросы сотрудников; посторонние — все остальные.' + (' Персональные данные — запросы, в адресе которых телефон, почта или ФИО (в отчёте — маскированно).' if method == 'GET' else '')]:
+        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+    c = ws.cell(r_ + 1, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')
     c.hyperlink = "NXLD_01_Overview.xlsx#'Точки приёма данных'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
+    legend(ws, ['опасная_точка', 'сканер_точка'])
+    return ws
+
+
+def post_all(wb, res, name='POST', after=None):
+    return method_all(wb, res, 'POST', name, after)
 
 
 def split_codes(s):
@@ -368,7 +380,7 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
         err = sum(v for k, v in cd.items() if 400 <= k and k != 499)
         from urllib.parse import unquote
         a = unquote(str(f.get('адрес', '')), errors='replace') + (f"\n{f['внутри']}" if f.get('внутри') else '')
-        if str(f.get('адрес', '')) in leaked: a += '\nотдан посторонним — см. NXLD_03, «Утечки служебных файлов»'
+        if str(f.get('адрес', '')) in leaked: a += '\nотдан посторонним — см. NXLD_03, «Служебные данные»'
         day = lambda k: pd.to_datetime(f.get(k)).strftime('%d.%m.%Y') if f.get(k) else ''
         rows.append({'Файл': a, 'Размер, КБ': float(f.get('средний_размер_КБ') or 0), 'Группа': f.get('группа', 'Прочие'),
                      'Файлов': int(f.get('файлов') or 1), 'Запросов': int(f.get('запросов') or 0),
@@ -696,7 +708,7 @@ def redden_codes(wb, skip=('_snapshot',), only=None, rx=r'код|ответ'):
                     cell.value = CellRichText(parts)
 
 
-def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='Запросов за час'):
+def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='Запросов за час', foot=None):
     """Тепловые карты «день × час» друг под другом на одном листе: blocks — [(заголовок, подпись, DataFrame день × 0..23)].
     Перед картами — заметка, куда смотреть (intro). Общий для «Нагрузки по часам» (03) и «Признаков торможения» (02)."""
     from openpyxl.formatting.rule import ColorScaleRule
@@ -715,12 +727,14 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
         ws.row_dimensions[r].height = 15 * (len(t_) // 170 + 1) + 10
         r += 1
     r += 1
-    for bt, bn, P in blocks:
+    for blk in blocks:
+        bt, bn, P = blk[:3]
+        fmt_ = blk[3] if len(blk) > 3 else None   # формат чисел карты: None — целые с разрядами, иначе строка формата Excel
         if P is None or not len(P): continue
         ws.cell(r, 2, bt.upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.row_dimensions[r].height = 22; r += 1
         if bn:
             ws.cell(r, 2, bn).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
-        hdr = ['День', 'Дата'] + [f'{h:02d}' for h in range(24)] + ['Всего']
+        hdr = ['День', 'Дата'] + [f'{h:02d}' for h in range(24)] + ([] if fmt_ else ['Всего'])
         for j, v in enumerate(hdr):
             c_ = ws.cell(r, 2 + j, v); c_.font = Font(name='Arial', size=9, bold=True, color='FFFFFF'); c_.fill = PatternFill('solid', fgColor=ORANGE)
             c_.alignment = Alignment(horizontal='center', vertical='center'); c_.border = Border(left=WHITE, right=WHITE)
@@ -730,8 +744,11 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
             ws.cell(r, 2, WEEKDAY[d_.weekday()]).alignment = Alignment(horizontal='center')
             ws.cell(r, 3, d_.strftime('%d.%m')).alignment = Alignment(horizontal='center')
             for h in range(24):
-                c_ = ws.cell(r, 4 + h, int(row.get(h, 0))); c_.number_format = NUM_FMT; c_.font = Font(name='Arial', size=8)
-            c_ = ws.cell(r, 28, int(row.sum())); c_.number_format = NUM_FMT; c_.font = Font(name='Arial', size=9, bold=True)
+                v_ = row.get(h)
+                v_ = None if v_ is None or pd.isna(v_) else (float(v_) if fmt_ else int(v_))
+                c_ = ws.cell(r, 4 + h, v_); c_.number_format = fmt_ or NUM_FMT; c_.font = Font(name='Arial', size=8)
+            if not fmt_:
+                c_ = ws.cell(r, 28, int(row.fillna(0).sum())); c_.number_format = NUM_FMT; c_.font = Font(name='Arial', size=9, bold=True)
             for q in (2, 3): ws.cell(r, q).font = Font(name='Arial', size=9, color='000000' if d_.weekday() < 5 else GREY)
             r += 1
         ws.conditional_formatting.add(f'D{r0}:AA{r - 1}', ColorScaleRule(start_type='min', start_color='FFFFFF', mid_type='percentile', mid_value=50,
@@ -742,13 +759,13 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
     ws.column_dimensions['AB'].width = 10
     for text, target in links:
         c = ws.cell(r, 2, f'{text}: лист «{target}» →'); c.hyperlink = f"#'{target}'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single'); r += 1
-    c_ = ws.cell(r + 1, 2, f'{unit}. Цвет — от белого (меньше всего) до тёмно-оранжевого (больше всего) в каждой карте отдельно. Выходные — серой датой.')
+    c_ = ws.cell(r + 1, 2, foot or f'{unit}. Цвет — от белого (меньше всего) до тёмно-оранжевого (больше всего) в каждой карте отдельно. Выходные — серой датой.')
     c_.font = Font(name='Arial', size=9, italic=True, color=GREY)
     ws.page_setup.orientation = 'landscape'; ws.sheet_properties.pageSetUpPr.fitToPage = True; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     return ws
 
 
-def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, size=9, at=None):
+def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, size=9, at=None, red=('Ошибки',), font_rule=None):
     """Вторая таблица на листе — под первой (после ссылок и заметок): заголовок, подпись, оранжевая шапка, строки.
     at — буквы колонок листа для каждой колонки таблицы (широкие колонки — на широкие места первой таблицы)."""
     from openpyxl.utils import column_index_from_string as ci_
@@ -761,7 +778,7 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
     for j, c in enumerate(cols):
         cell = ws.cell(r, pos[j], c); cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF'); cell.fill = PatternFill('solid', fgColor=ORANGE)
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True); cell.border = Border(left=WHITE, right=WHITE)
-    ws.row_dimensions[r].height = 32
+    fit_header(ws, r, cols, first=pos[0]) if not at else None
     for row in df.itertuples(index=False):
         r += 1
         rf = row_rule(dict(zip(cols, row))) if row_rule else None
@@ -771,9 +788,32 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
             if isinstance(v, str): v = ILLEGAL.sub('�', v)
             cell = ws.cell(r, pos[j], v)
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
-            cell.font = Font(name='Arial', size=size)
+            ff = font_rule(dict(zip(cols, row))) if font_rule else None
+            cell.font = Font(name='Arial', size=size, color=ff or (RED if cols[j] in red else '000000'))
             cell.alignment = Alignment(horizontal='right' if isnum else 'left', vertical='top', wrap_text=cols[j] in wrap, indent=1)
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
             cell.border = Border(bottom=SEP)
             if rf: cell.fill = PatternFill('solid', fgColor=rf)
     return ws
+
+
+
+def mask_pd_cells(wb, skip=('_snapshot',)):
+    """Во всех листах: персональные данные (телефоны, почты, ФИО) в адресах и параметрах — маскированно, по общему правилу recon.has_pd / mask_pd.
+    Смотрятся только ячейки, похожие на адрес с параметрами (есть «=»), — числа с разрядами и даты не трогаются."""
+    from .recon import has_pd, mask_pd
+    import re
+    for ws in wb.worksheets:
+        if ws.title in skip: continue
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if not isinstance(v, str) or '=' not in v: continue
+                parts = re.split(r'(\s+)', v)
+                out, hit = [], False
+                for p_ in parts:
+                    q = p_.split('?', 1)[1] if '?' in p_ else p_
+                    if '=' in q and has_pd(q):
+                        out.append(p_[:len(p_) - len(q)] + mask_pd(q)); hit = True
+                    else: out.append(p_)
+                if hit: c.value = ''.join(out)

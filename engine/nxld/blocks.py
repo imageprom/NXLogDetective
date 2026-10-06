@@ -186,10 +186,10 @@ def overview(c, F):
         g['время'] = dt(g['ts'])
         S['GET-отправки'] = g[['время', 'ip', 'base', 'запрос', 'status', 'fam']].head(2000).rename(columns={'base': 'адрес', 'status': 'код', 'fam': 'робот'})
         ppl = g[g['fam'].astype(str) == '']
-        if len(ppl) >= 5:
-            F.add('Нагрузка и безопасность', 'Важно', 'pd_in_get', 'forms', 'Персональные данные уходят в адресе страницы (GET)',
+        if len(ppl):   # даже один телефон или почта в адресе — уже утечка: адрес оседает в логах, истории и у сервисов аналитики
+            F.add('Нагрузка и безопасность', 'Срочно' if len(ppl) >= 5 else 'Важно', 'pd_in_get', 'forms', 'Персональные данные уходят в адресе страницы (GET)',
                   f"{len(ppl)} запросов с {ppl['ip'].nunique()} адресов; адреса: {', '.join(ppl['base'].astype(str).value_counts().index[:3])}",
-                  'код форм сайта', 'Отправлять формы методом POST; убрать данные из адресов и из логов', len(ppl), 'GET-отправки')
+                  'код форм сайта', 'Отправлять формы методом POST; убрать данные из адресов и из логов', len(ppl), 'GET')
     # сводка
     hv = len(H)
     acc = P[P['goal_success']]
@@ -834,6 +834,14 @@ def load_security(c, F):
                 med = float(np.median(out_sz))
                 if any(abs(med - f) <= max(200, 0.1 * f) for f in freq):
                     return n_staff, len(out_sz), med, 'чужим отдана страница входа/заглушка (как у соседних адресов)'
+                # утечка подтверждается логом, только если отдано содержимое: ответ не почти пустой, всегда одного размера,
+                # и это не исполняемый файл (сервер выполняет .php и исходник не показывает — пустой ответ значит, что файл закрыт)
+                if re.search(r'\.(php\d?|phtml|asp|aspx|jsp|cgi|pl)$', str(path), re.I):
+                    return n_staff, len(out_sz), med, 'не утечка: исполняемый файл, сервер его выполнил, исходник не отдан'
+                if med < 100:
+                    return n_staff, len(out_sz), med, 'не утечка: почти пустой ответ'
+                if np.max(out_sz) - np.min(out_sz) > max(50, 0.02 * med):
+                    return n_staff, len(out_sz), med, 'не утечка: размер ответа меняется — это страница, а не файл'
                 return n_staff, len(out_sz), med, 'ПРОВЕРИТЬ: чужим отдан ответ, не похожий на соседние'
             vv = [verdict(b_) for b_ in gg['base']]
             gg['получили_свои'] = [v[0] for v in vv]; gg['получили_чужие'] = [v[1] for v in vv]

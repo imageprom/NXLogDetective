@@ -58,6 +58,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     from . import classify
     form_ = np.array([classify.form_of(p_)[0] for p_ in R['base'].cat.categories.astype(str)])
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
+    R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V = visits.mark_form_spam(V, R)
@@ -226,10 +227,12 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:
         import traceback; traceback.print_exc(); res['params'] = None
+    from . import intake
+    res['intake'] = intake.build(c, res)   # реестр точек приёма данных — один для 01, 03 и (позже) 05
+    intake.findings(res, F.items)
     if 'Нагрузка и безопасность' in selected:   # срезы 03 на общих расчётах (common): после реестров, ошибок и параметров
         from . import security
         if os.environ.get('NXLD_DUMP_CTX'): pickle.dump((c, res), open(os.environ['NXLD_DUMP_CTX'], 'wb'), protocol=4)   # отладка срезов 03 без полного пересчёта
-        if os.environ.get('NXLD_DUMP_CTX'): pickle.dump((c, res), open(os.environ['NXLD_DUMP_CTX'], 'wb'), protocol=4)   # для отладки срезов без полного пересчёта
         res['security'] = security.build(c, res, res['sheets'].get('Нагрузка и безопасность', {}))
         security.findings(res, F.items)
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))

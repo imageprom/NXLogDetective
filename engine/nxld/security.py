@@ -6,10 +6,18 @@ import re
 import numpy as np
 import pandas as pd
 from . import common
-from .common import ip_profile, codes_text, dmy, episode_id, who_text
+from .common import ip_profile, codes_text, split_codes_arr, dmy, episode_id, who_text
 
 GROUPS_HEAT = ('Все', 'Люди', 'Роботы', 'Боты')
 GB = 1024 ** 3
+
+
+def _sv(R, col, idx):
+    """Строковые значения колонки R только для выбранных строк — без перевода в строки всех миллионов запросов."""
+    x = R[col]
+    if str(x.dtype) == 'category':
+        return x.cat.categories.astype(str).values[x.cat.codes.values[idx]]
+    return x.values[idx].astype(str)
 
 
 def _cat(R, col):
@@ -76,7 +84,7 @@ def bursts(c, OUT=None, k=3.0, add=500, gap=10, min_excess=2000):
         prot = int(np.isin(st_, (403, 429, 444)).sum())
         hum = c.human[sl]
         h499 = float(((st_ == 499) & hum).sum() / max(1, hum.sum()))
-        fam = pd.Series(R['fam'].astype(str).values[sl]); fam = fam[fam != '']
+        fam = pd.Series(_sv(R, 'fam', sl)); fam = fam[fam != '']
         if top_share >= 0.6: pic = f"массовые запросы с одного IP: {top_ip} ({P['кто'].get(top_ip, '')})"
         elif grp.get('Роботы', 0) / len(st_) >= 0.6: pic = f"обход робота: {fam.value_counts().index[0] if len(fam) else 'робот'}"
         elif grp.get('Люди', 0) / len(st_) >= 0.6:
@@ -93,7 +101,7 @@ def bursts(c, OUT=None, k=3.0, add=500, gap=10, min_excess=2000):
                      'пик_в_минуту': int(n_.max()), 'в_норме': int(round(float(nm_.mean()))), 'IP': int(len(ips)), 'сетей': int(pd.Series(nets).nunique()),
                      'главный_IP': f"{top_ip} — {top_share * 100:.0f}%", 'кто_главный': P['кто'].get(top_ip, ''),
                      'что_били': ', '.join(f"{bc[k_]} ({v:,})".replace(',', ' ') for k_, v in pd.Series(bcode[sl]).value_counts().head(3).items()),
-                     'ответы': codes_text(st_), 'защита': f'{prot:,}'.replace(',', ' ') if prot else 'нет', 'последствия': '; '.join(cons) or 'не видно',
+                     'ответы': split_codes_arr(st_)[0], 'ошибки': split_codes_arr(st_)[1], 'отказы': prot, 'последствия': '; '.join(cons) or 'не видно',
                      'картина': pic, 'кто': who_text(grp), '_excess': excess, '_t0': a * 60})
     return pd.DataFrame(rows)
 
@@ -120,8 +128,9 @@ def mass_requests(c, per_min=30):
     S_ = pd.DataFrame({'ip': ipcode[sel], 'st': st[sel]})
     tot = S_.groupby('ip').size()
     D['запросов'] = tot.reindex(D.index).values
-    D['ответы'] = S_.groupby('ip')['st'].agg(codes_text).reindex(D.index).values
-    D['защита'] = S_.assign(p=np.isin(S_['st'], (403, 429, 444))).groupby('ip')['p'].sum().reindex(D.index).astype(int).values
+    sp = S_.groupby('ip')['st'].agg(split_codes_arr).reindex(D.index)
+    D['ответы'] = sp.str[0].values; D['ошибки'] = sp.str[1].values
+    D['отказы'] = S_.assign(p=np.isin(S_['st'], (403, 429, 444))).groupby('ip')['p'].sum().reindex(D.index).astype(int).values
     D['кто'] = D['ip'].map(P['кто']).fillna('')
     D['сеть'] = D['ip'].map(P['организация']).fillna('')
     D['страна'] = D['ip'].map(P['страна']).fillna('')
@@ -131,27 +140,50 @@ def mass_requests(c, per_min=30):
 
 # ---------- источники нагрузки ----------
 def sources(c):
-    """Категория (группа) · Тип (подгруппа) · Подозреваемый (кто именно) — запросы, страницы, трафик, максимум за минуту."""
+    """Категория (группа) · Тип (подгруппа) · Подозреваемый (кто именно) — запросы, страницы, трафик, максимум за минуту.
+    Считается по кодам категорий, без строк на каждый запрос: в логе миллионы строк."""
+    R = c.R
+    gc, sc = np.asarray(c.rg.codes), np.asarray(c.rsub.codes)
+    gn, sn = list(c.rg.categories), list(c.rsub.categories)
+    fc = R['fam'].cat.codes.values
+    fn = R['fam'].cat.categories.astype(str)
+    ipc = R['ip'].cat.codes.values
+    gi = {g: i for i, g in enumerate(gn)}
+    kind = np.full(len(R), 2, dtype=np.int8)   # 0 — имя робота, 1 — IP сотрудника, 2 — подгруппа, 3 — без подозреваемого
+    code = sc.astype(np.int64).copy()
+    if 'Роботы' in gi:
+        m = gc == gi['Роботы']; kind[m] = 0; code[m] = fc[m]
+    if 'Свои' in gi:
+        m = gc == gi['Свои']; kind[m] = 1; code[m] = ipc[m]
+    if 'Боты' in gi:
+        m = gc == gi['Боты']; named = m & (fn.values[fc] != '') if len(fn) else m & False
+        kind[m] = 3; kind[named] = 0; code[m] = -1; code[named] = fc[named]
+    if 'Люди' in gi:
+        m = gc == gi['Люди']; kind[m] = 3; code[m] = -1
+    D = pd.DataFrame({'g': gc, 's': sc, 'k': kind, 'c': code, 'b': R['bytes'].values, 'p': ~R['is_static'].values, 'm': R['ts'].values // 60})
+    key = ['g', 's', 'k', 'c']
+    g = D.groupby(key).agg(запросов=('b', 'size'), страниц=('p', 'sum'), байт=('b', 'sum'))
+    g['максимум'] = D.groupby(key + ['m']).size().groupby(level=[0, 1, 2, 3]).max()
+    del D
+    g = g.reset_index()
+    ipn = R['ip'].cat.categories.astype(str)
+    g['категория'] = [gn[i] for i in g['g']]
+    g['тип'] = ['посетители' if gn[gg] == 'Люди' else (sn[ss] if ss >= 0 else '') for gg, ss in zip(g['g'], g['s'])]
+    g['подозреваемый'] = [fn[cc] if kk == 0 else (ipn[cc] if kk == 1 else (sn[cc] if kk == 2 and cc >= 0 else '—')) for kk, cc in zip(g['k'], g['c'])]
+    g['трафик_%'] = g['байт'] / max(1, R['bytes'].values.sum()) * 100
+    return g.drop(columns=key).sort_values('запросов', ascending=False).reset_index(drop=True)
+
+
+def sources_channels(c):
+    """Нагрузка от людей по каналам: откуда пришли — запросы, страницы, трафик, максимум страниц за минуту."""
     R, V = c.R, c.V
-    rg, rs = np.asarray(c.rg).astype(object), np.asarray(c.rsub).astype(object)
-    fam = R['fam'].astype(str).values
-    ch = V['channel'].astype(str).reindex(R['vid'].values).values if 'channel' in V else np.full(len(R), '')
-    ip = R['ip'].astype(str).values
-    rs = np.where(rg == 'Люди', ch, rs)
-    who = np.where(np.isin(rg, ('Роботы',)), fam,
-          np.where(rg == 'Люди', '—',
-          np.where(rg == 'Свои', ip,
-          np.where(rg == 'Боты', np.where(fam != '', fam, '—'), rs))))
-    by = R['bytes'].values
-    K = pd.DataFrame({'категория': pd.Categorical(rg), 'тип': pd.Categorical(rs), 'подозреваемый': pd.Categorical(who.astype(str))})
-    kc = K.groupby(['категория', 'тип', 'подозреваемый'], observed=True).ngroup().values
-    D = pd.DataFrame({'k': kc, 'b': by, 'p': ~R['is_static'].values})
-    g = D.groupby('k').agg(запросов=('b', 'size'), страниц=('p', 'sum'), байт=('b', 'sum'))
-    g['максимум'] = pd.DataFrame({'k': kc, 'm': R['ts'].values // 60}).groupby(['k', 'm']).size().groupby(level=0).max().reindex(g.index).values
-    first = pd.DataFrame({'k': kc}).reset_index().drop_duplicates('k').set_index('k')['index']
-    for col in ('категория', 'тип', 'подозреваемый'): g[col] = K[col].astype(str).values[first.reindex(g.index).values]
-    g['трафик_%'] = g['байт'] / max(1, by.sum()) * 100
-    return g.sort_values('запросов', ascending=False).reset_index(drop=True)
+    h = c.human
+    ch = V['channel'].astype(str).reindex(R['vid'].values[h]).values
+    X = pd.DataFrame({'ch': ch, 'b': R['bytes'].values[h], 'p': R['is_page'].values[h], 'm': R['ts'].values[h] // 60})
+    g = X.groupby('ch').agg(запросов=('b', 'size'), страниц=('p', 'sum'), байт=('b', 'sum'))
+    g['макс'] = X[X['p']].groupby(['ch', 'm']).size().groupby(level=0).max().reindex(g.index).fillna(0).astype(int)
+    g['трафик_%'] = g['байт'] / max(1, R['bytes'].values.sum()) * 100
+    return g.sort_values('запросов', ascending=False).reset_index().rename(columns={'ch': 'канал'})
 
 
 # ---------- файлы ----------
@@ -175,7 +207,7 @@ def heavy_files(c, top=200):
     st = R['status'].values
     m = R['is_static'].values & (st == 200)
     bc, bcode = _cat(R, 'base')
-    X = pd.DataFrame({'b': bcode[m], 'by': R['bytes'].values[m], 'ri': R['ref_internal'].values[m].astype(bool), 'g': np.asarray(c.rg).astype(object)[m], 'd': R['day'].astype(str).values[m]})
+    X = pd.DataFrame({'b': bcode[m], 'by': R['bytes'].values[m], 'ri': R['ref_internal'].values[m].astype(bool), 'g': np.asarray(c.rg).astype(object)[m], 'd': _sv(R, 'day', m)})
     g = X.groupby('b').agg(запросов=('by', 'size'), байт=('by', 'sum'), средний=('by', 'mean'), с_сайта=('ri', 'sum'), первый=('d', 'min'), последний=('d', 'max'))
     g = g.sort_values('байт', ascending=False).head(top)
     sub = X[X['b'].isin(g.index)]
@@ -216,13 +248,13 @@ def _kind(key, group):
     return 'прочие параметры'
 
 
-def parasites(c, res, min_variants=500):
+def parasites(c, res, min_variants=300):
     """Паразитные адреса: базовый адрес страницы, у которого из-за параметров тысячи вариантов; кто по ним ходит и какие параметры виноваты."""
     R = c.R
-    pg = R['is_page'].values
+    pg = R['is_page'].values & c.search_ok   # только поисковые роботы: человек по ссылке с меткой — норма, обход вариантов роботом — нет
     qc, qcode = _cat(R, 'query')
     tc, tcode = _cat(R, 'tpl')
-    X = pd.DataFrame({'t': tcode[pg], 'q': qcode[pg], 'g': np.asarray(c.rg).astype(object)[pg], 'v': R['vid'].values[pg]})
+    X = pd.DataFrame({'t': tcode[pg], 'q': qcode[pg], 'g': _sv(R, 'fam', pg), 'v': R['vid'].values[pg]})
     var = X.groupby('t')['q'].nunique()
     var = var[var >= min_variants].sort_values(ascending=False)
     if not len(var): return pd.DataFrame()
@@ -239,11 +271,10 @@ def parasites(c, res, min_variants=500):
         top = sorted(((k_, len(v)) for k_, v in cnt.items()), key=lambda x: -x[1])[:3]
         kinds = [_kind(k_, pgroup(k_)) for k_, _ in top]
         kind = kinds[0] if kinds else 'прочие параметры'
-        grp = sub.groupby('g')['v'].nunique()
-        prog = grp.drop(labels=[x for x in ('Люди', 'Свои') if x in grp.index]).sum()
-        rows.append({'адрес': tc[t], 'вариантов': int(n), 'запросов': int(len(sub)), 'фигуранты': who_text(grp, 3) + ' визитов',
-                     'виновники': ', '.join(f"{k_} ({v:,})".replace(',', ' ') for k_, v in top), 'вид': kind, 'меры': MEASURES[kind],
-                     'программы_доля': float(prog / max(1, grp.sum()))})
+        grp = sub['g'].value_counts()
+        nb = lambda k_, v: f"{k_} ({v:,})".replace(',', '\u00a0')
+        rows.append({'адрес': tc[t], 'вариантов': int(n), 'запросов': int(len(sub)), 'фигуранты': '\n'.join(nb(k_, v) for k_, v in grp.head(3).items()),
+                     'виновники': '\n'.join(nb(k_, v) for k_, v in top), 'вид': kind, 'меры': MEASURES[kind]})
     return pd.DataFrame(rows)
 
 
@@ -257,7 +288,7 @@ def embedding(c, res, S):
     hosts = set(H['ref_host'].astype(str))
     m = R['ref_host'].astype(str).isin(hosts).values & R['is_static'].values & ~R['ref_internal'].values
     bc, bcode = _cat(R, 'base')
-    X = pd.DataFrame({'h': R['ref_host'].astype(str).values[m], 'b': bcode[m], 'd': R['day'].astype(str).values[m]})
+    X = pd.DataFrame({'h': _sv(R, 'ref_host', m), 'b': bcode[m], 'd': _sv(R, 'day', m)})
     for _, r in H.iterrows():
         h = str(r['ref_host'])
         sub = X[X['h'] == h]
@@ -278,7 +309,7 @@ def admin(c, S):
     R = c.R
     P = ip_profile(c)
     m = R['is_admin'].values
-    X = pd.DataFrame({'ip': R['ip'].astype(str).values[m], 'ts': R['ts'].values[m]}).groupby('ip')['ts'].agg(['min', 'max'])
+    X = pd.DataFrame({'ip': _sv(R, 'ip', m), 'ts': R['ts'].values[m]}).groupby('ip')['ts'].agg(['min', 'max'])
     D = A.copy()
     D['ip'] = D['ip'].astype(str)
     D['первый'] = D['ip'].map(X['min']).map(lambda v: dmy(v) if pd.notna(v) else '')
@@ -328,7 +359,7 @@ def scanners(c, S):
         tgt[names.str.contains(SCAN_EXTRA[1][1], regex=True, case=False).values & (tgt == 'Прочее')] = SCAN_EXTRA[1][0]
     real = common.real_addresses(c)
     X = pd.DataFrame({'t': tgt[bb], 'b': bb, 'st': st, 'ip': R['ip'].cat.codes.values[vm], 'own': real[bb], 'by': by,
-                      'd': R['day'].astype(str).values[vm]})
+                      'd': _sv(R, 'day', vm)})
     lk = getattr(c, 'leaks', None)   # находка — то, что проверка утечек признала настоящим содержимым (blocks: размер не как у заглушки)
     leak_codes = set(np.where(np.isin(bc, list(lk['base'].astype(str))))[0]) if lk is not None and len(lk) else set()
     X['leak'] = X['b'].isin(leak_codes)
@@ -336,9 +367,10 @@ def scanners(c, S):
     for t, g in X.groupby('t'):
         ok = g[(g['st'] == 200) & (g['by'] > 0)]
         found = ok[ok['leak']]
-        what = ', '.join(f"{bc[k_]} ({v:,})".replace(',', ' ') for k_, v in found['b'].value_counts().head(4).items())
+        what = '\n'.join(f"{bc[k_]} ({v:,})".replace(',', ' ') for k_, v in found['b'].value_counts().head(4).items())
         rows.append({'цель': t, 'запросов': len(g), 'IP': g['ip'].nunique(), 'IP_с_200': ok['ip'].nunique(), 'отдано_200': len(ok), 'страницы_сайта': int(ok['own'].sum()),
-                     'заглушки': int(len(ok) - ok['own'].sum() - len(found)), 'находки': len(found), 'что_отдано': what, 'ответы': codes_text(g['st'])})
+                     'заглушки': int(len(ok) - ok['own'].sum() - len(found)), 'находки': len(found), 'что_отдано': what,
+                     'ответы': split_codes_arr(g['st'])[0], 'ошибки': split_codes_arr(g['st'])[1]})
     T = pd.DataFrame(rows).sort_values('запросов', ascending=False).reset_index(drop=True)
     P = ip_profile(c)
     ipc = R['ip'].cat.categories.astype(str)
@@ -356,7 +388,7 @@ METHOD_NOTES = [
     (r'^OPTIONS$', 'разведка: какие методы и CORS принимает сервер'), (r'^CONNECT$', 'ищут открытый прокси'),
     (r'^(PUT|PATCH|DELETE)$', 'REST API: изменение и удаление данных'), (r'^(PROPFIND|PROPPATCH|MKCOL|COPY|MOVE|LOCK|UNLOCK|SEARCH)$', 'WebDAV: доступ к файлам сервера'),
     (r'^TRACE$', 'отладочный метод: отражение запроса'), (r'^PRI$', 'HTTP/2 по старому протоколу: сканер или ошибка клиента'),
-    (r'^-$', 'пустой запрос: проверка открытого порта'), (r'^\\x16\\x03', 'TLS (https) на обычный порт: сканер портов'),
+    (r'^-$', 'пустой запрос: соединение открыли и закрыли, ничего не отправив, — проверка открытого порта'), (r'^\\x16\\x03', 'TLS (https) на обычный порт: сканер портов'),
     (r'^\\x03\\x00\\x00', 'RDP: ищут удалённый рабочий стол Windows'), (r'^SSTP', 'SSTP: ищут VPN'), (r'^t3', 'T3: ищут сервер WebLogic'),
     (r'(?i)wget|curl|%20', 'попытка внедрить команду'), (r'^REQMOD|^RESPMOD', 'ICAP: ищут прокси-фильтр')]
 
@@ -364,7 +396,7 @@ METHOD_NOTES = [
 def method_note(m):
     for rx, t in METHOD_NOTES:
         if re.search(rx, m): return t
-    return 'неизвестный метод или мусор: сканер другого протокола'
+    return 'случайный метод: сканер проверяет, как ответит сервер'
 
 
 def method_kind(m):
@@ -376,29 +408,34 @@ def method_kind(m):
 def methods(c):
     """Сводка по методам: что это, сколько, кто, куда, что ответил сервер. Сырые строки необычных методов — отдельно."""
     R = c.R
-    mc, mcode = _cat(R, 'method') if str(R['method'].dtype) == 'category' else (None, None)
-    meth = R['method'].astype(str).values
+    if str(R['method'].dtype) == 'category':
+        mc, mcode = _cat(R, 'method')
+    else:
+        cat_ = pd.Categorical(R['method'].astype(str)); mc, mcode = cat_.categories.astype(str), cat_.codes
     st = R['status'].values
-    U = pd.Series(meth).value_counts()
+    kinds = np.array([method_kind(m) for m in mc], dtype=object)
+    Kc = pd.Categorical(kinds)
+    Kcode = Kc.codes[mcode]
     rows = []
-    kinds = {m: method_kind(m) for m in U.index}
-    K = pd.Series(meth).map(kinds).values
-    for k in pd.unique(K):
-        m = K == k
-        ips = R['ip'].values[m]
-        bb = R['base'].astype(str).values[m]
+    for ki, k in enumerate(Kc.categories):
+        m = Kcode == ki
+        if not m.any(): continue
+        ips = R['ip'].cat.codes.values[m]
+        bcats = R['base'].cat.categories.astype(str)
+        bb = pd.Series(R['base'].cat.codes.values[m]).value_counts().index[:3]
         ts = R['ts'].values[m]
-        orig = sorted(set(meth[m]))
-        rows.append({'метод': k, 'что': method_note(orig[0]) if len(orig) == 1 else (method_note(orig[0]) if k == 'TLS на HTTP-порт' else 'разное: ' + ', '.join(orig[:6])),
-                     'запросов': int(m.sum()), 'IP': int(pd.Series(ips).nunique()), 'куда': ', '.join(pd.Series(bb).value_counts().index[:3]),
-                     'ответы': codes_text(st[m]) if m.sum() < 5e6 else '', 'принято': int(((st[m] >= 200) & (st[m] < 300)).sum()),
+        orig = sorted(set(mc[np.unique(mcode[m])]))
+        rows.append({'метод': k, 'что': method_note(orig[0]) if len(orig) == 1 or k == 'TLS на HTTP-порт' else 'случайные методы и обрывки чужих протоколов: сканеры проверяют, как ответит сервер',
+                     'запросов': int(m.sum()), 'IP': int(pd.Series(ips).nunique()), 'куда': ', '.join(bcats[bb]),
+                     'ответы': split_codes_arr(st[m])[0], 'ошибки': split_codes_arr(st[m])[1], 'принято': int(((st[m] >= 200) & (st[m] < 300)).sum()),
                      'первый': dmy(ts.min()), 'последний': dmy(ts.max())})
     T = pd.DataFrame(rows).sort_values('запросов', ascending=False).reset_index(drop=True)
-    odd = ~np.isin(meth, ('GET', 'POST', 'HEAD'))
-    Raw = pd.DataFrame({'время': [dmy(x) for x in R['ts'].values[odd]], 'ip': R['ip'].astype(str).values[odd], 'метод': meth[odd],
-                        'адрес': R['base'].astype(str).values[odd], 'код': st[odd], 'user_agent': R['ua'].astype(str).values[odd]})
+    odd = ~np.isin(mc.values[mcode], ('GET', 'POST', 'HEAD'))
+    Raw = pd.DataFrame({'время': [dmy(x) for x in R['ts'].values[odd]], 'ip': _sv(R, 'ip', odd), 'метод': mc.values[mcode[odd]],
+                        'адрес': _sv(R, 'base', odd), 'код': st[odd], 'user_agent': _sv(R, 'ua', odd)})
     P = ip_profile(c)
     Raw['кто'] = Raw['ip'].map(P['кто']).fillna('')
+    Raw['опознание'] = Raw['метод'].map(method_note)
     return T, Raw
 
 
@@ -428,22 +465,33 @@ def attacks(c):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
             kind[pd.Series(full).str.contains(rx, regex=True).values] = nm
-    X = pd.DataFrame({'b': bcode[am], 'k': kind, 'st': st[am], 'by': by[am], 'ip': R['ip'].astype(str).values[am], 'q': qc[qcode[am]], 'ts': R['ts'].values[am]})
-    # обычный размер страницы: медиана ответов 200 этого адреса без атаки
+    X = pd.DataFrame({'b': bcode[am], 'k': kind, 'st': st[am], 'by': by[am], 'ip': _sv(R, 'ip', am), 'q': qc[qcode[am]], 'ts': R['ts'].values[am]})
+    # обычные размеры страницы: все ответы 200 этого адреса без атаки. Атака проигнорирована, если её ответ по размеру (±2%)
+    # совпадает хоть с одним обычным ответом: сайт показал свою обычную страницу.
     norm_m = ~am & (st == 200)
-    NS = pd.Series(by[norm_m]).groupby(bcode[norm_m]).median()
+    NB = pd.DataFrame({'b': bcode[norm_m], 'by': by[norm_m]})
+    NB = NB[NB['b'].isin(set(X['b']))]
+    NS = {b: np.sort(g['by'].values) for b, g in NB.groupby('b')}
+    def matches(b, size_):
+        arr = NS.get(b)
+        if arr is None or not len(arr): return False
+        i = np.searchsorted(arr, size_)
+        near = [arr[j] for j in (i - 1, i) if 0 <= j < len(arr)]
+        return any(abs(v - size_) <= max(200, 0.02 * size_) for v in near)
     rows = []
     P = ip_profile(c)
     for (b, k), g in X.groupby(['b', 'k']):
         ips = g['ip'].value_counts()
         ok = g[g['st'] == 200]
-        ns = NS.get(b)
+        arr = NS.get(b)
+        odd = [int(v) for v in ok['by'] if not matches(b, v)]
+        st_ok, st_bad = split_codes_arr(g['st'])
         rows.append({'адрес': bc[b], 'вид': k, 'запросов': len(g), 'IP': len(ips), 'главный_IP': f"{ips.index[0]} ({ips.iloc[0]})", 'кто': P['кто'].get(ips.index[0], ''),
-                     'ответы': codes_text(g['st']), 'отдано_200': len(ok), 'размер_200': int(ok['by'].median()) if len(ok) else None,
-                     'обычный_размер': int(ns) if ns is not None and not pd.isna(ns) else None, 'пример': str(g['q'].iloc[0])[:200],
-                     'первый': dmy(g['ts'].min()), 'последний': dmy(g['ts'].max())})
+                     'ответы': st_ok, 'ошибки': st_bad, 'отдано_200': len(ok), 'размер_200': int(ok['by'].median()) if len(ok) else None,
+                     'обычный_размер': (f"{int(arr.min()):,}–{int(arr.max()):,}".replace(',', '\u00a0') if arr is not None and len(arr) else '—'),
+                     'необычных': len(odd), 'пример': str(g['q'].iloc[0])[:200], 'первый': dmy(g['ts'].min()), 'последний': dmy(g['ts'].max())})
     D = pd.DataFrame(rows)
-    D['подозрительно'] = (D['отдано_200'] > 0) & ((D['обычный_размер'].isna()) | ((D['размер_200'] - D['обычный_размер']).abs() > (0.1 * D['обычный_размер']).clip(lower=300)))
+    D['подозрительно'] = D['необычных'] > 0
     return D.sort_values('запросов', ascending=False).reset_index(drop=True)
 
 
@@ -459,7 +507,7 @@ def tokens(c):
     m = t[qcode]
     if not m.any(): return pd.DataFrame()
     rg = np.asarray(c.rg).astype(object)[m]
-    X = pd.DataFrame({'b': R['base'].astype(str).values[m], 'p': pd.Series(qc[qcode[m]]).str.extract(rx)[0].str.lower().values,
+    X = pd.DataFrame({'b': _sv(R, 'base', m), 'p': pd.Series(qc[qcode[m]]).str.extract(rx)[0].str.lower().values,
                       'g': rg, 'se': c.search_ok[m], 'ts': R['ts'].values[m]})
     D = X.groupby(['b', 'p']).agg(запросов=('g', 'size'), свои=('g', lambda s: int((s == 'Свои').sum())), посторонние=('g', lambda s: int((~s.isin(['Свои'])).sum())),
                                   поисковики=('se', 'sum'), t0=('ts', 'min'), t1=('ts', 'max')).reset_index()
@@ -502,7 +550,7 @@ def leaks(c, S, checks=None):
         f = str(r['файл'])
         pc = np.where(bc == f)[0]
         m = np.isin(bcode, pc) & ~R['ip'].astype(str).isin(staff).values
-        st = R['status'].values[m]; by = R['bytes'].values[m]; d = R['day'].astype(str).values[m]
+        st = R['status'].values[m]; by = R['bytes'].values[m]; d = _sv(R, 'day', m)
         served = (st == 200) & (by > 0)
         D = pd.DataFrame({'d': d, 's': served}).groupby('d')['s'].any()
         hist = common.day_runs(D.index, D.values, days_all, {True: 'отдаётся', False: 'закрыт'})
@@ -549,7 +597,7 @@ def build(c, res, S):
     """Все срезы 03 одним словарём (res['security'])."""
     out = {}
     OUT = (res.get('errors') or {}).get('сбои')
-    steps = [('часы', lambda: heat(c)), ('всплески', lambda: bursts(c, OUT)), ('массовые', lambda: mass_requests(c)), ('источники', lambda: sources(c)),
+    steps = [('часы', lambda: heat(c)), ('всплески', lambda: bursts(c, OUT)), ('массовые', lambda: mass_requests(c)), ('источники', lambda: sources(c)), ('каналы', lambda: sources_channels(c)),
              ('типы_файлов', lambda: file_types(c)), ('тяжёлые', lambda: heavy_files(c)), ('паразиты', lambda: parasites(c, res)),
              ('встраивание', lambda: embedding(c, res, S)), ('админка', lambda: admin(c, S)), ('разделы', lambda: sections(S)),
              ('сканеры', lambda: scanners(c, S)), ('методы', lambda: methods(c)), ('атаки', lambda: attacks(c)), ('токены', lambda: tokens(c)),
@@ -568,12 +616,11 @@ def findings(res, items):
     P = X.get('паразиты')
     if P is not None and len(P):
         items[:] = [x for x in items if ':trap:' not in x['key']]
-        hot = P[P['программы_доля'] >= 0.5]
-        sev = 'Важно' if len(hot) else 'К сведению'
-        top = (hot if len(hot) else P).head(5)
+        sev = 'Важно' if (P['вариантов'] >= 1000).any() else 'К сведению'
+        top = P.head(5)
         items.append(dict(key='Нагрузка и безопасность:parasites:site', блок='Нагрузка и безопасность', важность=sev,
-                          что_происходит=f'Паразитные адреса: у {len(P)} страниц тысячи вариантов адреса из-за параметров — ловушка для роботов',
-                          факты='; '.join(f"{r['адрес']} — {r['вариантов']:,} вариантов, виновники: {r['виновники']}; ходят: {r['фигуранты']}".replace(',', ' ') for _, r in top.iterrows()),
+                          что_происходит=f'Паразитные адреса: поисковые роботы обходят тысячи вариантов {len(P)} страниц из-за меток и фильтров',
+                          факты='; '.join(f"{r['адрес']} — {r['вариантов']} вариантов; виновники: {r['виновники']}; обходят: {r['фигуранты']}".replace('\n', ', ') for _, r in top.iterrows()),
                           где_править='robots.txt, rel=canonical, шаблоны ссылок', что_сделать='; '.join(sorted(set(top['меры']))),
                           главная_цифра=int(P['вариантов'].sum()), лист='Паразитные адреса', также_в='', статус=''))
     B = X.get('всплески')

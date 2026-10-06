@@ -427,6 +427,37 @@ def summary(c, T, Sr=None):
     return out
 
 
+TIMEOUT_RX = r'timed out|upstream prematurely closed|no live upstreams|Connection reset by peer|Resource temporarily unavailable'
+
+
+def slowness(c):
+    """Признаки торможения по часам: доля обрывов 499 у людей, ошибки шлюза 502 и 504, таймауты в error-логе;
+    если в логе есть время ответа ($request_time) — медиана по часам. Таблицы «день × час»."""
+    R = c.R
+    day, hr, st = R['day'].astype(str).values, R['hour'].values.astype(int), R['status'].values
+    hum = c.human
+    X = pd.DataFrame({'d': day[hum], 'h': hr[hum], 'w': st[hum] == 499})
+    g = X.groupby(['d', 'h'])
+    n, w = g.size(), g['w'].sum()
+    share = (w / n.clip(lower=1) * 100).where(n >= 50)   # мало запросов — доля ничего не значит
+    out = {'499': share.unstack().reindex(columns=range(24)).round(1),
+           '_499_n': n.unstack().reindex(columns=range(24)).fillna(0)}
+    gw = np.isin(st, (502, 504))
+    out['шлюз'] = pd.DataFrame({'d': day[gw], 'h': hr[gw]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
+    E = c.E
+    if E is not None and len(E) and 'msg' in E:
+        m = E['msg'].astype(str).str.contains(TIMEOUT_RX, regex=True, case=False).values
+        t = pd.to_datetime(E['ts'].values[m].astype('int64'), unit='s')
+        out['таймауты'] = pd.DataFrame({'d': t.strftime('%Y-%m-%d'), 'h': t.hour}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
+    if 'rt' in R:
+        Y = pd.DataFrame({'d': day[hum], 'h': hr[hum], 'rt': R['rt'].values[hum]})
+        out['время'] = Y.groupby(['d', 'h'])['rt'].median().unstack().reindex(columns=range(24)).round(2)
+    S_ = share.dropna().sort_values(ascending=False)
+    out['_худшие'] = [(d, h, float(v)) for (d, h), v in S_.head(3).items()]
+    out['_обычно'] = float(w.sum() / max(1, n.sum()) * 100)
+    return out
+
+
 def build(c, outage_rows=None):
     T = codes_table(c)
     OUT = outages(c, outage_rows)
@@ -443,5 +474,5 @@ def build(c, outage_rows=None):
         WHY = criticality(T, Sr, int((c.V['group'] == 'Люди').sum()))
         T['почему'] = T['b'].map(lambda b: WHY.get(int(b), ''))
         T['критично'] = T['актуально'] & (T['почему'] != '') & (T['зонд'] == '')
-    return dict(с_дня=recent_day(c.R), сбои=OUT, коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
+    return dict(с_дня=recent_day(c.R), сбои=OUT, торможение=slowness(c), коды=T, источники=Sr, журнал=journal(c), сводка=summary(c, T, Sr), нерабочие=broken(T, Sr),
                 битые_внутренние=broken_links(c, True), битые_внешние=broken_links(c, False))

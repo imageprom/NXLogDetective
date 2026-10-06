@@ -111,6 +111,13 @@ def codes_text(st):
     return ', '.join(f"{int(k)} ({int(v):,})".replace(',', ' ') for k, v in s.items())
 
 
+def split_codes_arr(st):
+    """Коды ответа (массив) → («200 (15), 301 (3)», «404 (33)»): ответы и ошибки (4xx и 5xx, кроме 499 — посетитель ушёл сам)."""
+    s = pd.Series(np.asarray(st)).value_counts()
+    f = lambda k, v: f"{int(k)} ({int(v):,})".replace(',', '\u00a0')
+    return ', '.join(f(k, v) for k, v in s.items() if not (k >= 400 and k != 499)), ', '.join(f(k, v) for k, v in s.items() if k >= 400 and k != 499)
+
+
 def dmy(ts):
     """Секунды эпохи → «16.09.2026 14:08»."""
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m.%Y %H:%M')

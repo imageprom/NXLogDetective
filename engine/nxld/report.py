@@ -386,6 +386,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             wb._sheets = head_ + [w for w in wb._sheets if w not in head_ and w not in tail_] + tail_
             report_index.build_index(wb, res, names)
         report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
+        report_tables.mask_pd_cells(wb)  # персональные данные в адресах — маскированно на всех листах
         if b not in ('Ошибки', 'Нагрузка и безопасность'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
         wb.save(path)
         written.append(path)

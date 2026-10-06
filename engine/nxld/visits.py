@@ -202,6 +202,24 @@ def learn_monitors(items, site=''):
     return ok
 
 
+def reverify(R, V):
+    """Подлинность объявленных роботов — заново по справочнику сетей (ipdb.VERIFIED), если он изменился после подготовки логов.
+    Визит робота, который пришёл не из своей сети, — подделка: группа «Боты», подгруппа «подделки роботов»."""
+    from . import ipdb
+    fam = R['fam'].astype(str).values
+    ver = R['fam_verified'].astype(str).values.copy()
+    for f, allowed in ipdb.VERIFIED.items():
+        m = fam == f
+        if m.any(): ver[m] = np.where(np.isin(R['asn'].values[m], list(allowed)), 'да', 'нет')
+    R['fam_verified'] = pd.Categorical(ver)
+    first = pd.Series(ver).groupby(R['vid'].values).first()
+    V = V.copy()
+    V['fam_verified'] = first.reindex(V.index).fillna('').values
+    fake = (V['fam_verified'] == 'нет') & (V['fam'] != '') & V['group'].isin(['Роботы', 'Люди'])
+    V.loc[fake, 'group'] = 'Боты'; V.loc[fake, 'subgroup'] = 'подделки роботов'
+    return R, V
+
+
 def regroup(V, R=None):
     """Группы без смешения. «Свои» — только люди-сотрудники.
     Системы мониторинга — по имени (справочник) или ритму, и только если поведение мониторинговое: мало адресов. Имя есть,

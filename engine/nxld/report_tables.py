@@ -34,6 +34,8 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             a = ws.cell(1, c0 + k, lab); a.font = Font(name='Arial', size=9, color=INK); a.alignment = Alignment(horizontal='center', vertical='bottom', wrap_text=True)
             b = ws.cell(2, c0 + k, val); b.font = Font(name='Arial', size=14, bold=True, color='000000'); b.alignment = Alignment(horizontal='center', vertical='center')
             if isinstance(val, int) and val >= 1000: b.number_format = NUM_FMT
+            cw = ws.column_dimensions[L_(c0 + k)].width or 10
+            if isinstance(val, str) and len(val) * 1.5 + 2 > cw: ws.column_dimensions[L_(c0 + k)].width = len(val) * 1.5 + 2   # «Пн 28.09» и другие подписи-значения — целиком
     H = 4
     for j, c in enumerate(cols, 1):
         cell = ws.cell(H, j + X, c)
@@ -65,6 +67,8 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     for j, c in enumerate(cols, 1):
         letter = ws.cell(H, j + X).column_letter
         ws.column_dimensions[letter].width = (widths or {}).get(c) or min(45, max(10, len(str(c)) + 2, int(df[c].astype(str).str.len().quantile(0.9)) + 2 if len(df) else 10))
+        lw = max((len(w_) for w_ in str(c).split()), default=0) * 1.1 * size / 9 + 1.5   # слово шапки не рвётся посередине
+        if ws.column_dimensions[letter].width < lw: ws.column_dimensions[letter].width = lw
     fit_header(ws, H, cols, X)
     if kpi: put_kpi()
     r_ = H + len(df) + 2   # ссылки — под таблицей, как на других листах
@@ -130,9 +134,15 @@ def fit_widths(ws, start_row=4, lo=9, hi=44, skip=()):
             if c.value is None or c.column == 1 or c.coordinate in ws.merged_cells: continue
             n = max(len(x) for x in str(c.value).split('\n'))
             best[c.column] = max(best.get(c.column, 0), n)
+    hw = {}   # шапки таблиц (оранжевая заливка): слово названия не рвётся посередине
+    for row in ws.iter_rows(min_row=3):
+        for c in row:
+            if isinstance(c.value, str) and c.fill is not None and c.fill.fgColor is not None and str(c.fill.fgColor.rgb)[-6:] == ORANGE[-6:] \
+                    and c.coordinate not in ws.merged_cells:
+                hw[c.column] = max(hw.get(c.column, 0), max((len(w_) for w_ in c.value.split()), default=0) * 1.1 + 1.5)
     for j, n in best.items():
         if L_(j) in skip: continue
-        ws.column_dimensions[L_(j)].width = max(lo, min(hi, n * 0.9 + 2))
+        ws.column_dimensions[L_(j)].width = max(lo, min(hi, n * 0.9 + 2), hw.get(j, 0))
 
 
 LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «Почему важно»'), 'обычно': ('FFFFFF', None, 'Ошибка есть, не критична'),
@@ -163,15 +173,75 @@ LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «По�
 
 
 def legend(ws, keys):
-    """Легенда цветов под таблицей: квадратик цвета и подпись. keys — какие цвета есть на этом листе (ключи LEGEND)."""
+    """Легенда цветов под таблицей: подпись прямо на образце цвета. Ширину образца по тексту подбирает sanitize перед сохранением."""
     r_ = ws.max_row + 2
+    rows = getattr(ws, '_nxld_legend', [])
     for k in keys:
         fill, font, text = LEGEND[k]
-        c0 = ws.cell(r_, 2, text)   # подпись прямо на образце цвета: залитая ячейка с текстом нужного цвета
+        c0 = ws.cell(r_, 2, text)
         c0.fill = PatternFill('solid', fgColor=fill); c0.border = Border(left=SEP, right=SEP, top=SEP, bottom=SEP)
         c0.font = Font(name='Arial', size=9, color=font or '000000')
         c0.alignment = Alignment(vertical='center', indent=1)
+        rows.append((r_, fill))
         r_ += 1
+    ws._nxld_legend = rows
+
+
+def _w(ws, j):
+    from openpyxl.utils import get_column_letter as L_
+    return ws.column_dimensions[L_(j)].width or 8.43
+
+
+def _shown(v, fmt):
+    """Как число выглядит в ячейке: разряды пробелом, дробная часть по формату."""
+    if isinstance(v, float) and not float(v).is_integer():
+        d = len(fmt.split('.')[-1].replace('#', '0')) if '.' in (fmt or '') else 2
+        t = f'{v:,.{min(d, 3)}f}'
+    else:
+        t = f'{int(v):,}'
+    return t.replace(',', ' ')
+
+
+def sanitize(wb):
+    """Последний проход перед сохранением, общий для всех файлов:
+    — представление листа без закрепления не ссылается на области закрепления (иначе Excel «восстанавливает» файл);
+    — легенды: образец цвета — на ширину текста (ячейки объединяются);
+    — числа не превращаются в ##### : колонка (или последняя колонка объединения) расширяется под число в его виде."""
+    from openpyxl.worksheet.views import Selection
+    from openpyxl.utils import get_column_letter as L_
+    for ws in wb.worksheets:
+        sv = ws.sheet_view
+        if sv.pane is None or ws.freeze_panes is None:
+            sv.pane = None
+            sv.selection = [Selection(activeCell='A1', sqref='A1')]
+        merged = {}
+        for m in ws.merged_cells.ranges:
+            merged[(m.min_row, m.min_col)] = m
+        for r_, fill in getattr(ws, '_nxld_legend', []):
+            c0 = ws.cell(r_, 2)
+            if not c0.value or (r_, 2) in merged: continue
+            need = len(str(c0.value)) * 0.95 + 3
+            j, tot = 2, _w(ws, 2)
+            while tot < need and j < 30:
+                j += 1; tot += _w(ws, j)
+            for q in range(3, j + 1):
+                cq = ws.cell(r_, q); cq.fill = PatternFill('solid', fgColor=fill); cq.border = Border(top=SEP, bottom=SEP, right=SEP if q == j else None)
+            if j > 2:
+                ws.merge_cells(start_row=r_, start_column=2, end_row=r_, end_column=j)
+                merged[(r_, 2)] = None
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if not isinstance(v, numbers.Number) or isinstance(v, bool) or c.coordinate in ws.merged_cells and (c.row, c.column) not in merged: continue
+                sz = (c.font.sz or 11) if c.font else 11
+                need = len(_shown(v, c.number_format or '')) * sz / 10 * (1.12 if c.font and c.font.b else 1.0) + 2.2
+                m = merged.get((c.row, c.column))
+                cols_ = range(m.min_col, m.max_col + 1) if m is not None else [c.column]
+                have = sum(_w(ws, j) for j in cols_)
+                if have < need:
+                    last = list(cols_)[-1]
+                    ws.column_dimensions[L_(last)].width = round(_w(ws, last) + need - have, 1)
+    return wb
 
 
 def conversions(wb, C, name='Конверсии'):
@@ -311,6 +381,19 @@ def split_codes(s):
     for k, v in _codes(s).items():
         (bad if k >= 400 and k != 499 else ok).append(f"{k} ({int(v):,})".replace(',', '\u00a0'))
     return ', '.join(ok), ', '.join(bad)
+
+
+def nlist(s, sep=', '):
+    """«/projects/: 66119, /realty/: 34665» → по строке на значение: «/projects/ (66 119)». Общий формат «название (число)»."""
+    import re
+    out = []
+    for part in str(s or '').split(sep):
+        m_ = re.match(r'^(.*?):\s*([\d\s\u00a0]+)$', part.strip())
+        if m_:
+            n_ = int(re.sub(r'\D', '', m_.group(2)))
+            out.append(f"{m_.group(1)} ({n_:,})".replace(',', '\u00a0'))
+        else: out.append(part.strip())
+    return '\n'.join(x for x in out if x)
 
 
 def fmt_codes(s):
@@ -793,13 +876,17 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
         for j, c in enumerate(cols):
             need = 0
             if c in wrap and len(df):
-                need = min(60, df[c].astype(str).str.split('\n').map(lambda xs: max(len(x) for x in xs)).quantile(0.9) * 0.95 + 2)
+                need = min(60, df[c].astype(str).str.split('\n').map(lambda xs: max(len(x) for x in xs)).quantile(1.0 if len(df) <= 30 else 0.9) * 0.95 + 2)   # короткая таблица — по самой длинной строке
             n_, w_ = 1, (ws.column_dimensions[L_(cur)].width or 10)
             while need and w_ < need and n_ < 3:
                 w_ += ws.column_dimensions[L_(cur + n_)].width or 10; n_ += 1
             pos[j], span[j] = cur, n_
             cur += n_
     if groups:   # шапка в два уровня: верх — над своими колонками, остальные колонки — одной ячейкой на два уровня
+        from openpyxl.utils import get_column_letter as L_
+        for j, c in enumerate(cols):   # слово шапки не рвётся посередине
+            lw = max((len(w_) for w_ in str(c).split()), default=0) * 1.1 + 1.5
+            if (ws.column_dimensions[L_(pos[j])].width or 10) < lw: ws.column_dimensions[L_(pos[j])].width = lw
         inner = {c: top for top, cs in groups.items() for c in cs}
         merges = []
         for j, c in enumerate(cols):   # сначала значения и оформление, объединение — после: в объединённую ячейку писать нельзя
@@ -828,7 +915,18 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
     if not groups:
         for j in range(len(cols)):
             if span[j] > 1: ws.merge_cells(start_row=r, start_column=pos[j], end_row=r, end_column=pos[j] + span[j] - 1)
-    fit_header(ws, r, cols, first=pos[0]) if not at and max(span) == 1 else None
+    if not groups:   # высота шапки — по самому длинному названию при ширине его колонок (с учётом объединения)
+        import math
+        from openpyxl.utils import get_column_letter as L_
+        lines = 1
+        for j, c in enumerate(cols):
+            w_ = sum((ws.column_dimensions[L_(pos[j] + k_)].width or 10) for k_ in range(span[j]))
+            words = str(c).split()
+            if words and max(len(x) for x in words) * 1.1 > w_ - 1:   # слово не помещается — колонка шире
+                ws.column_dimensions[L_(pos[j] + span[j] - 1)].width = (ws.column_dimensions[L_(pos[j] + span[j] - 1)].width or 10) + max(len(x) for x in words) * 1.1 - w_ + 2
+                w_ = max(len(x) for x in words) * 1.1 + 1
+            lines = max(lines, math.ceil(len(str(c)) * 1.15 / max(4, w_ - 1)))
+        ws.row_dimensions[r].height = max(20, 13 * lines + 8)
     for row in df.itertuples(index=False):
         r += 1
         rf = row_rule(dict(zip(cols, row))) if row_rule else None

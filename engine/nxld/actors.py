@@ -99,7 +99,8 @@ def monitoring(c, top=10):
     if not m.any(): return pd.DataFrame()
     sub = V['subgroup'].reindex(R['vid'].values[m]).astype(str).values
     X = pd.DataFrame({'s': sub, 'ip': R['ip'].astype(str).values[m], 'ts': R['ts'].values[m], 'base': R['base'].astype(str).values[m],
-                      'st': R['status'].values[m], 'b': R['bytes'].values[m]})
+                      'st': R['status'].values[m], 'b': R['bytes'].values[m], 'ua': R['ua'].cat.categories.astype(str).values[R['ua'].cat.codes.values[m]]})
+    from .common import ua_text
     staff = set(str(x) for x in (c.m.get('staff_ips') or []))
     rows = []
     for nm, g in X.groupby('s'):
@@ -109,7 +110,7 @@ def monitoring(c, top=10):
             per_ip = [x for x in per_ip if x]
             rows.append(dict(система=(f"Неопознанный ({key})" + (' — IP сотрудника' if key in staff else '')) if unk else nm, как='по ритму' if unk else 'по имени и поведению',
                              проверяет=', '.join(gg['base'].value_counts().head(2).index), IP=int(gg['ip'].nunique()),
-                             интервал=int(np.median(per_ip)) if per_ip else None, запросов=len(gg), коды=topn(gg['st'], 4), байт=int(gg['b'].sum())))
+                             интервал=int(np.median(per_ip)) if per_ip else None, запросов=len(gg), коды=topn(gg['st'], 4), байт=int(gg['b'].sum()), ua=ua_text(gg['ua'])))
     d = pd.DataFrame(rows)
     return d.sort_values('запросов', ascending=False).head(top) if len(d) else d
 

@@ -193,8 +193,6 @@ def overview(wb, res, site):
     W = Wide(ws)
     brand_header(ws, W, res, f'NX LOG DETECTIVE — МАРКЕТИНГ {site.upper()}', 'Откуда приходят люди, сколько заявок даёт реклама и где деньги уходят впустую', last='I')
     names = set(wb.sheetnames)
-    from . import alarms
-    W.alarm(alarms.count(res, 'Маркетинг'))
     W.r += 1
     Q = MK.get('качество'); RI = MK.get('реклама_итог') or {}
     ppl = int(Q['людей'].sum()) if Q is not None else 0

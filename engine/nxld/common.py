@@ -27,6 +27,7 @@ def ip_profile(c):
     P = pd.DataFrame({'группа': top['group'], 'подгруппа': top['subgroup'].astype(str), 'имя': top['fam'].astype(str),
                       'сеть': top['nettype'].astype(str), 'страна': top['cc'].astype(str)})
     P['организация'] = T['org'].reindex(P.index).astype(str).replace({'nan': '', 'None': ''}).values if 'org' in T else ''
+    P['asn'] = pd.to_numeric(T['asn'].reindex(P.index), errors='coerce').fillna(0).astype(int).values if 'asn' in T else 0   # номер сети — для выгрузки STIX
     P['живой'] = P['группа'].isin(LIVE) & (P['подгруппа'] != 'сервер сайта')   # сервер сайта — «Свои», но не человек
     P['кто'] = [label(g, s, f) for g, s, f in zip(P['группа'], P['подгруппа'], P['имя'])]
     P['групп'] = groups.groupby('ip')['group'].nunique().reindex(P.index).fillna(1).astype(int)
@@ -126,3 +127,20 @@ def dmy(ts):
 def episode_id(ts):
     """Код эпизода по времени начала — как у сбоев: «27.09 22:25»."""
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m %H:%M')
+
+
+def ua_text(values, width=120):
+    """User-Agent для таблиц: самый частый (до width знаков) и «и ещё N» — сколько других вариантов."""
+    v = pd.Series(list(values)).astype(str)
+    v = v[(v != '') & (v != '-') & (v != 'nan')]
+    if not len(v): return ''
+    vc = v.value_counts()
+    top = vc.index[0]
+    top = top if len(top) <= width else top[:width - 1] + '…'
+    return top + (f'\nи ещё {len(vc) - 1}' if len(vc) > 1 else '')
+
+
+def ua_by_ip(V, ips):
+    """IP → User-Agent (самый частый и «и ещё N») — для подделок, сканеров и других таблиц по IP."""
+    X = V[V['ip'].astype(str).isin(set(map(str, ips)))]
+    return {str(ip): ua_text(g['ua']) for ip, g in X.groupby(X['ip'].astype(str))} if len(X) else {}

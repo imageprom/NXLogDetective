@@ -6,8 +6,8 @@
 from . import sheets
 import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, Side
-from .report_index import Sheet, Wide, brand_header, ORANGE, ORANGE2, GREY, INK, F_NOTE, F_CARD, row_height, cap
-from .report_tables import data_sheet, journal_sheet, legend, heat_sheet, extra_table, split_codes
+from .report_index import Sheet, Wide, brand_header, ORANGE, ORANGE2, GREY, INK, F_NOTE, F_CARD, row_height, cap, plural
+from .report_tables import data_sheet, journal_sheet, legend, heat_sheet, extra_table, split_codes, nlist
 from .report_problems import plaque, OLINE, F_LIGHT
 
 F_GREY = 'EFEFEF'
@@ -46,7 +46,7 @@ def case_card(S, x):
     ws = S.ws
     title = f"ДЕЛО {x['дело']} · {x['кличка']}"
     ws.merge_cells(f'B{S.r}:E{S.r}')
-    S.cell('B', title, Font(name='Arial', size=12, bold=True, color=ORANGE), None, Alignment(vertical='center', wrap_text=True))
+    S.cell('B', title, Font(name='Arial', size=11, bold=True, color=ORANGE), None, Alignment(vertical='center', wrap_text=True))
     S.cell('F', f"{x['вид']}", Font(name='Arial', size=10, bold=True, color=INK), None, Alignment(horizontal='right', vertical='center', wrap_text=True))
     for col in 'BCDEF': ws[f'{col}{S.r}'].border = Border(bottom=OLINE)
     ws.row_dimensions[S.r].height = max(26, row_height(title, 78) + 4)
@@ -58,14 +58,15 @@ def case_card(S, x):
     S.pair('Приметы', '\n'.join(cap(p_) for p_ in pr))
     sg = x['сигнатура']
     S.pair('Сигнатура', f"{sg['id']}: {sg['правило']}\nПроверка на логе: {sg['проверка']}", fill=F_LIGHT)
-    st = x['состав']
-    nets = '; '.join(f"{s_} — {n_} IP, {nf(r_)} запросов" for s_, n_, r_ in st['подсети'][:5]) + (f"; ещё {st['подсетей'] - 5} подсетей" if st['подсетей'] > 5 else '')
-    sost = (f"{st['IP']} IP в {st['подсетей']} подсетях: {nets}\nСети: " + ', '.join(f"{k} ({v})" for k, v in st['сети'].items()) +
-            '\nСтраны: ' + ', '.join(f"{k} ({v})" for k, v in st['страны'].items()) + '\nРоли: ' + ', '.join(f"{k} ({v})" for k, v in st['роли'].items()))
-    S.pair('Состав', sost)
+    st = x['состав']   # состав — как обвинения: подзаголовок и по строке на часть, внутри части — по строке на значение
+    S.pair('Состав', f"{st['IP']} IP в {st['подсетей']} {plural(st['подсетей'], 'подсети', 'подсетях', 'подсетях')}", fill=F_CARD)
+    S.pair('Подсети', '\n'.join(f"{s_} ({n_} IP, {nf(r_)} запросов)" for s_, n_, r_ in st['подсети'][:5]) + (f"\nи ещё {st['подсетей'] - 5}" if st['подсетей'] > 5 else ''), level=2, fill=F_LIGHT)
+    S.pair('Сети', '\n'.join(f"{k} ({nf(v)})" for k, v in list(st['сети'].items())[:6]) + (f"\nи ещё {len(st['сети']) - 6}" if len(st['сети']) > 6 else ''), level=2, fill=F_LIGHT)
+    S.pair('Страны', ', '.join(f"{k} ({nf(v)})" for k, v in st['страны'].items()), level=2, fill=F_LIGHT)
+    S.pair('Роли', '\n'.join(f"{k} ({nf(v)})" for k, v in st['роли'].items()), level=2, fill=F_LIGHT)
     if x.get('сообщники'):
         S.pair('Сообщники', '\n'.join(f"Дело {d} — {n}: {w}" for d, n, w in x['сообщники']), fill=F_LIGHT)
-    S.pair('Активность', x['активность'], fill=F_LIGHT)
+    S.pair('Активность', '\n'.join(cap(p_.strip()) for p_ in str(x['активность']).split(';') if p_.strip()), fill=F_LIGHT)   # период, объём, часы, пик — по строке
     if x.get('сбои') or x.get('всплески'):
         S.pair('Сбои и всплески', '\n'.join([f'Сбой {t}' for t in x.get('сбои', [])] + [f'Всплеск {t}' for t in x.get('всплески', [])[:6]]))
     S.pair('Ущерб', cap(x['ущерб']), fill=F_LIGHT)
@@ -82,6 +83,7 @@ def wanted(wb, Pf):
     if not D: return None
     ws = wb.create_sheet('Разыскиваются')
     S = Sheet(ws)
+    S.psize = 9   # карточек много — шрифт как в больших таблицах
     for col, w in zip('ABCDEFG', (2.5, 32, 18, 14, 16, 56, 2.5)): ws.column_dimensions[col].width = w
     ws.row_dimensions[1].height = 12
     S.r = 2
@@ -107,7 +109,7 @@ def ai_sheet(wb, AI, AP, nm='ИИ-роботы', title=None):
     if AI is None or not len(AI): return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
     d = pd.DataFrame({'Назначение': AI['назначение'], 'Робот': AI['робот'], 'Запросов': AI['запросов'].astype(int), 'Уникальных IP': AI['IP'].astype(int), 'Дней': AI['дней'].astype(int),
-                      'Трафик, МБ': AI['МБ'], 'Ошибок': AI['ошибок'].astype(int), 'Подлинных, %': AI['подлинных_%'], 'Что читал': AI['что_читал']})
+                      'Трафик, МБ': AI['МБ'], 'Ошибок': AI['ошибок'].astype(int), 'Подлинных, %': AI['подлинных_%'], 'Что читал': AI['что_читал'].map(nlist)})
     data_sheet(wb, nm, d, nm, title or 'Роботы нейросетей: обучение, поисковый индекс, ответы на запросы людей', {'Назначение': 24, 'Робот': 30, 'Что читал': 50}, wrap=('Назначение', 'Робот', 'Что читал'),
                kpi=[('Роботов', len(d)), ('Запросов', int(d['Запросов'].sum()))], kpi_col='Дней', red=())
     if AP is not None and len(AP):
@@ -155,7 +157,7 @@ def build_sheets(wb, res, S):
         if nm not in wb.sheetnames: wb.create_sheet(nm)
         d = pd.DataFrame({'Дело': Cm['дело'], 'Кличка': Cm['кличка'], 'IP': Cm['ip'], 'Подсеть': Cm['подсеть'], 'Сеть': Cm['сеть'], 'Страна': Cm['страна'], 'Роль': Cm['роль'],
                           'Запросов': Cm['запросов'].astype(int), 'Первый': Cm['первый'], 'Последний': Cm['последний']})
-        data_sheet(wb, nm, d, nm, 'Все IP каждого дела: фильтр по делу показывает всю группу, фильтр по подсети — каких дел она касается',
+        data_sheet(wb, nm, d, nm, 'Все IP каждого дела: роль, сеть и активность. Фильтр по делу покажет всю группу, фильтр по подсети — к каким делам она относится',
                    {'Кличка': 34, 'IP': 16, 'Подсеть': 18, 'Сеть': 30, 'Роль': 30, 'Первый': 16, 'Последний': 16}, wrap=('Кличка', 'Сеть', 'Роль'), center=('Страна',),
                    kpi=[('IP', len(d)), ('Дел', int(d['Дело'].nunique())), ('Подсетей', int(d['Подсеть'].nunique()))], kpi_col='Запросов', red=(), links=[('Карточки', 'Разыскиваются')])
     BS = S
@@ -191,9 +193,10 @@ def build_sheets(wb, res, S):
         nm = 'Подделки'
         if nm not in wb.sheetnames: wb.create_sheet(nm)
         d = pd.DataFrame({'IP': FK['ip'], 'Представлялся': FK['представлялся'], 'Запросов': FK['запросов'].astype(int), 'Визитов': FK['визитов'].astype(int),
-                          'Сеть': FK['org'].fillna('').astype(str), 'Тип сети': FK['сеть'], 'Страна': FK['страна'], 'Первый': FK['первый'].map(_d), 'Последний': FK['последний'].map(_d)})
-        data_sheet(wb, nm, d, nm, 'Называют себя поисковыми и другими роботами, а приходят не из их сетей', {'IP': 16, 'Представлялся': 24, 'Сеть': 32, 'Тип сети': 22},
-                   wrap=('Сеть',), center=('Страна',), kpi=[('IP', len(d)), ('Запросов', int(d['Запросов'].sum()))], kpi_col='Визитов', red=())
+                          'Сеть': FK['org'].fillna('').astype(str), 'Тип сети': FK['сеть'], 'Страна': FK['страна'], 'Первый': FK['первый'].map(_d), 'Последний': FK['последний'].map(_d),
+                          'User-Agent': FK['ip'].astype(str).map(res.get('ua_ip') or {}).fillna('')})   # чем именно бот притворяется
+        data_sheet(wb, nm, d, nm, 'Называют себя поисковыми и другими роботами, а приходят не из их сетей', {'IP': 16, 'Представлялся': 24, 'Сеть': 32, 'Тип сети': 22, 'User-Agent': 50},
+                   wrap=('Сеть', 'User-Agent'), center=('Страна',), kpi=[('IP', len(d)), ('Запросов', int(d['Запросов'].sum()))], kpi_col='Визитов', red=())
     # Виды ботов
     Sig = A.get('сигнатуры')
     if Sig is not None and len(Sig):
@@ -230,7 +233,7 @@ def build_sheets(wb, res, S):
         if nm not in wb.sheetnames: wb.create_sheet(nm)
         d = pd.DataFrame({'Робот': RF['семейство'], 'Категория': RF['категория'], 'Запросов': RF['запросов'].astype(int), 'Уникальных IP': RF['IP'].astype(int), 'Дней': RF['дней'].astype(int),
                           'Трафик, МБ': RF['МБ'], 'Ответов 200, %': RF['доля_200_%'], '404': RF['404'].astype(int), '5xx': RF['5xx'].astype(int),
-                          'Подлинных, %': RF['подлинных_%'], 'Что смотрел': RF['что_смотрел']})
+                          'Подлинных, %': RF['подлинных_%'], 'Что смотрел': RF['что_смотрел'].map(nlist)})
         data_sheet(wb, nm, d, nm, 'Роботы, которые честно себя называют: поисковики, сервисы, SEO-роботы', {'Робот': 30, 'Категория': 22, 'Что смотрел': 50}, wrap=('Робот', 'Что смотрел'),
                    kpi=[('Роботов', len(d)), ('Запросов', int(d['Запросов'].sum()))], kpi_col='Дней', red=())
         if RN is not None and len(RN):
@@ -243,9 +246,10 @@ def build_sheets(wb, res, S):
         if nm not in wb.sheetnames: wb.create_sheet(nm)
         sp = M['коды'].map(split_codes)
         d = pd.DataFrame({'Система': M['система'], 'Как опознана': M['как'], 'Что проверяет': M['проверяет'], 'Уникальных IP': M['IP'].astype(int),
-                          'Интервал, с': M['интервал'], 'Запросов': M['запросов'].astype(int), 'Ответы': sp.str[0], 'Ошибки': sp.str[1]})
-        data_sheet(wb, nm, d, nm, 'Сервисы, которые проверяют, работает ли сайт: по имени в User-Agent или по ритму', {'Система': 30, 'Как опознана': 20, 'Что проверяет': 40, 'Ответы': 26, 'Ошибки': 22},
-                   wrap=('Система', 'Что проверяет', 'Ответы', 'Ошибки'), kpi=[('Систем', len(d))], kpi_col='Запросов')
+                          'Интервал, с': M['интервал'], 'Запросов': M['запросов'].astype(int), 'Ответы': sp.str[0], 'Ошибки': sp.str[1],
+                          'User-Agent': M['ua'] if 'ua' in M else ''})   # по UA видно, чей это сервис
+        data_sheet(wb, nm, d, nm, 'Сервисы, которые проверяют, работает ли сайт: по имени в User-Agent или по ритму', {'Система': 30, 'Как опознана': 20, 'Что проверяет': 40, 'Ответы': 26, 'Ошибки': 22, 'User-Agent': 50},
+                   wrap=('Система', 'Что проверяет', 'Ответы', 'Ошибки', 'User-Agent'), kpi=[('Систем', len(d))], kpi_col='Запросов')
     U = A.get('утилиты')
     if U is not None and len(U):
         nm = 'Утилиты'
@@ -308,8 +312,6 @@ def overview(wb, res, site):
     brand_header(ws, W, res, f'NX LOG DETECTIVE — БОТЫ НА САЙТЕ {site.upper()}', 'Кто атакует сайт, в чём мы его обвиняем и как его узнать', last='I')
     names = set(wb.sheetnames)
     D = Pf.get('дела') or []
-    from . import alarms
-    W.alarm(alarms.count(res, 'Боты'))
     W.r += 1
     W.kpis([('Визитов ботов', int(sm.get('Визитов ботов', 0))), ('IP ботов', int(sm.get('IP ботов', 0))), ('Дел', len(D)),
             ('Срочных', sum(1 for x in D if x['важность'] == 'Срочно')), ('Подделок (IP)', int(sm.get('Подделок роботов (IP)', 0))),

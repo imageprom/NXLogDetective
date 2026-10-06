@@ -62,7 +62,7 @@ def ru_short(x):
 def row_height(text, chars):
     """Единая высота строк: 22 пт на одну строку текста, +15 пт на каждую следующую."""
     lines = sum(max(1, -(-len(part) // max(1, chars))) for part in str(text).split('\n'))
-    return 22 + 15 * (lines - 1)
+    return 22 + 15 * (lines - 1) + (5 if lines > 1 else 0)   # запас на многострочный текст: не упирается в границы
 
 
 def cap(t):
@@ -87,6 +87,8 @@ class Sheet:
     """Раскладка: A — поле, B — подписи / первая колонка таблиц, C:F — значения."""
     def __init__(self, ws):
         self.ws, self.r = ws, 1
+        self.psize = 11   # шрифт строк карточек (pair); 9 — когда карточек много (04 «Разыскиваются»)
+        self.tsize = 11   # шрифт таблиц; 9 — оформление большой таблицы (лист целиком или таблица, которая не влезает)
         for col, w in zip('ABCDEFG', (2.5, 34, 18, 14, 16, 44, 2.5)):
             ws.column_dimensions[col].width = w
         ws.sheet_view.showGridLines = True
@@ -123,13 +125,18 @@ class Sheet:
     def pair(self, label, value, fill=F_CARD, link=None, height=None, level=1):
         """Строка карточки: подпись слева, значение справа; тонкий разделитель снизу, текст не прилипает к линиям."""
         self._fill_row('BCDEF', fill, Border(bottom=SEP))
-        lf = Font(name='Arial', size=11, bold=(level == 1), color='000000')   # подпись не мельче значения; подуровень — обычным и с отступом
+        ps = self.psize
+        lf = Font(name='Arial', size=ps, bold=(level == 1), color='000000')   # подпись не мельче значения; подуровень — обычным и с отступом
         self.cell('B', label, lf, fill, Alignment(vertical='center', wrap_text=True, indent=1 if level == 1 else 3))
         self.ws.merge_cells(f'C{self.r}:F{self.r}')
-        c = self.cell('C', value, Font(name='Arial', size=11, color=DARK), fill, Alignment(vertical='center', wrap_text=True, indent=1))
+        c = self.cell('C', value, Font(name='Arial', size=ps, color=DARK), fill, Alignment(vertical='center', wrap_text=True, indent=1))
         if link:
-            c.hyperlink = link; c.font = Font(name='Arial', size=11, color=ORANGE2, underline='single')
-        self.ws.row_dimensions[self.r].height = height or row_height(str(value), 92)
+            c.hyperlink = link; c.font = Font(name='Arial', size=ps, color=ORANGE2, underline='single')
+        h_ = max(row_height(str(value), int(86 * 11 / ps)), row_height(str(label), int(30 * 11 / ps)))
+        if ps < 11:   # мелкий шрифт — и строки ниже: 12 пт на строку вместо 15
+            lines_ = (h_ - 22 - (5 if h_ > 22 else 0)) / 15 + 1
+            h_ = 18 + 12 * (lines_ - 1) + (4 if lines_ > 1 else 0)
+        self.ws.row_dimensions[self.r].height = height or h_
         self.r += 1
 
     def table(self, headers, rows, spans, num=(), links=None, fills=None, center=(), body=None, wrap=1.05):
@@ -145,27 +152,36 @@ class Sheet:
                 if fill: cc.fill = PatternFill('solid', fgColor=fill)
             return self.cell(cols[0], v, font, fill, al)
         white = Side(style='thin', color='FFFFFF')
+        width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * wrap
+        shown = lambda v: f'{v:.0%}' if isinstance(v, float) else (f'{v:,}' if isinstance(v, int) else str(v))
+        # не влезает (слово шапки шире колонки или ячейка больше чем в 3 строки) — оформление большой таблицы, шрифт 9
+        sz = self.tsize
+        if sz > 9:
+            longest = lambda t: max((len(w_) for w_ in str(t).replace('\n', ' ').split()), default=0)
+            tight = any(longest(h) * 1.1 > width(spans[i]) - 1 for i, h in enumerate(headers)) or \
+                    any(row_height(shown(v), int(width(spans[i])) - 3) > 22 + 15 * 2 + 5 for row in rows for i, v in enumerate(row))
+            if tight: sz = 9
+        k_ = 11 / sz   # во сколько раз больше знаков помещается при мелком шрифте
+        hh = max(row_height(str(h), int((width(spans[i]) - 2) * k_)) for i, h in enumerate(headers))   # шапка — по самому длинному названию
         for i, h in enumerate(headers):
-            put(i, h, Font(name='Arial', size=11, bold=True, color='FFFFFF'), ORANGE,
+            put(i, h, Font(name='Arial', size=sz, bold=True, color='FFFFFF'), ORANGE,
                 Alignment(horizontal='left' if i == 0 else 'center', vertical='center', wrap_text=True, indent=1 if i == 0 else 0),
                 Border(left=white, right=white))
-        self.ws.row_dimensions[self.r].height = 24
+        self.ws.row_dimensions[self.r].height = max(24, hh * sz / 11 + 4)
         self.r += 1
         for k, row in enumerate(rows):
             for i, v in enumerate(row):
                 isnum, sev = i in num, (fills or {}).get((k, i))
                 fill = sev or body or F_CARD
-                if i == 0 and not sev: font = Font(name='Arial', size=11, bold=True, color='000000')
-                else: font = Font(name='Arial', size=11, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
+                if i == 0 and not sev: font = Font(name='Arial', size=sz, bold=True, color='000000')
+                else: font = Font(name='Arial', size=sz, bold=bool(sev), color='FFFFFF' if sev == ORANGE else DARK)
                 al = Alignment(horizontal='center' if i in center else ('right' if isnum else 'left'), vertical='center', wrap_text=True,
                                indent=0 if i in center else 1)   # отступ от края и у чисел
                 c = put(i, v, font, fill, al, Border(bottom=SEP))
                 if isnum and isinstance(v, (int, float)) and not isinstance(v, bool): c.number_format = NUM_FMT if isinstance(v, int) or (hasattr(v, 'is_integer') and float(v).is_integer() and not isinstance(v, float)) else '0%'
                 if links and (k, i) in links:
-                    c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=11 if i else 10, bold=(i == 0), color=ORANGE2, underline='single')
-            width = lambda cols: sum(self.ws.column_dimensions[c].width for c in cols) * wrap
-            shown = lambda v: f'{v:.0%}' if isinstance(v, float) else (f'{v:,}' if isinstance(v, int) else str(v))
-            self.ws.row_dimensions[self.r].height = max(row_height(shown(v), int(width(spans[i])) - 3) for i, v in enumerate(row))
+                    c.hyperlink = links[(k, i)]; c.font = Font(name='Arial', size=sz if i else sz - 1, bold=(i == 0), color=ORANGE2, underline='single')
+            self.ws.row_dimensions[self.r].height = max(row_height(shown(v), int((width(spans[i]) - 3) * k_)) for i, v in enumerate(row)) * (1 if sz >= 11 else 0.85)
             self.r += 1
 
     def note(self, text):
@@ -185,7 +201,7 @@ def conditions(res):
         rows.append(('База сравнения', f"снимок прошлой проверки за {ru_date(res['prev_period'][0])} — {ru_date(res['prev_period'][1])}"))
     if res.get('check_ips'):
         n = len(res['check_ips'])
-        rows.append(('Присланные адреса', f"{n} {plural(n, 'IP проверен', 'IP проверены', 'IP проверены')} — результат на листе «Проверка IP» в NXLD_04_Bots.xlsx"))
+        rows.append(('Присланные адреса', f"{n} {plural(n, 'IP проверен', 'IP проверены', 'IP проверены')} — результат на листе «Подозреваемые» в NXLD_04_Bots.xlsx"))
     marked = sum(1 for x in res['findings'] if x.get('статус') == 'отмечено как норма')
     if marked: rows.append(('Отметки «это норма»', f'{marked} {plural(marked, "проблема отмечена", "проблемы отмечены", "проблем отмечено")} как норма и не считаются'))
     if res.get('signatures_note'): rows.append(('Чужие правила', res['signatures_note']))
@@ -262,7 +278,7 @@ class Wide(Sheet):
     def table(self, headers, rows, spans, **kw):
         h0 = self.r
         super().table(headers, rows, spans, **kw)
-        if any(len(h) > 11 for h in headers): self.ws.row_dimensions[h0].height = 32   # длинные названия колонок — в две строки
+        if any(len(h) > 11 for h in headers): self.ws.row_dimensions[h0].height = max(32, self.ws.row_dimensions[h0].height or 0)   # длинные названия — в две строки и больше
 
     def link(self, text, target, names=None):
         """Ссылка под блоком: на лист этого файла (строка) или на лист другого файла (кортеж «файл, лист»)."""
@@ -314,12 +330,12 @@ class Wide(Sheet):
         r = self.r - 1
         for col in WIDE_COLS[:n]:
             c = self.ws[f'{col}{r}']
-            c.font = Font(name='Arial', size=11, bold=True, color='000000'); c.fill = PatternFill('solid', fgColor=F_TOTAL)
+            c.font = Font(name='Arial', size=c.font.sz if c.font and c.font.sz else 11, bold=True, color='000000'); c.fill = PatternFill('solid', fgColor=F_TOTAL)
 
     def red(self, rows_from, col):
         for r in range(rows_from, self.r):
             c = self.ws[f'{col}{r}']
-            if c.value: c.font = Font(name='Arial', size=11, color=RED)
+            if c.value: c.font = Font(name='Arial', size=c.font.sz if c.font and c.font.sz else 11, color=RED)
 
 
 def build_index(wb, res, sheet_names, title='Обзор'):
@@ -412,7 +428,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         label = {'Тревога': 'Тревога', 'Срочно': 'Приоритетные', 'Важно': 'Важные', 'К сведению': 'Остальные', 'Замечание': 'Замечания'}[k]
         S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
         S.cell('B', label, Font(name='Arial', size=11, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
-        S.cell('C', cnt[k], Font(name='Arial', size=12 if k == 'Срочно' else 11, bold=(k == 'Срочно'), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
+        S.cell('C', cnt[k], Font(name='Arial', size=12 if k in ('Тревога', 'Срочно') else 11, bold=(k in ('Тревога', 'Срочно')), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
         ws.merge_cells(f'C{S.r}:F{S.r}')
         ws.row_dimensions[S.r].height = 22
         S.r += 1

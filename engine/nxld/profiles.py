@@ -345,7 +345,7 @@ def measures_by_ip(c, res, cases, P, F):
     T = c.T.drop_duplicates('ip').set_index('ip') if 'ip' in c.T else pd.DataFrame()
     rows = []
     def row(ip, дело, кличка, приговор, основание):
-        rows.append(dict(ip=ip, дело=дело, кличка=кличка, подсеть=subnet(ip), сеть=P['организация'].get(ip, ''), страна=P['страна'].get(ip, ''),
+        rows.append(dict(ip=ip, дело=дело, кличка=кличка, подсеть=subnet(ip), сеть=P['организация'].get(ip, ''), asn=int(P['asn'].get(ip, 0)) if 'asn' in P else 0, страна=P['страна'].get(ip, ''),
                          тип_сети=P['сеть'].get(ip, ''), визитов=int(vv['визитов'].get(ip, 0)), запросов=int(F['req'].get(ip, 0)) if ip in F.index else 0,
                          отправок=int(vv['отправок'].get(ip, 0)), приговор=приговор, основание=основание,
                          первый=common.dmy(F.at[ip, 't0']) if ip in F.index and pd.notna(F.at[ip, 't0']) else '',

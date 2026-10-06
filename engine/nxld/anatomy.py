@@ -208,10 +208,11 @@ def build(c, res):
         err = int(((g['st'] >= 400) & (g['st'] != 499)).sum())
         kinds = g.groupby('вид').size().sort_values(ascending=False)
         deep = g['p'][g['p'].str.strip('/').str.count('/') >= 2]   # подпапка — только настоящая папка, не файл в корне папки
-        sub = deep.map(lambda p: '/' + '/'.join(p.strip('/').split('/')[:2]) + '/').value_counts().head(3)
+        sub_all = deep.map(lambda p: '/' + '/'.join(p.strip('/').split('/')[:2]) + '/').value_counts()
+        sub = sub_all.head(3)
         media.append(dict(папка=f, запросов=len(g), ГБ=float(round(g.loc[ok, 'b'].sum() / 1024 ** 3, 1)), ошибок=err,
                           виды='; '.join(f"{k.lower()} — {int(n):,}".replace(',', ' ') for k, n in kinds.head(5).items()),
-                          подпапки=', '.join(sub.index), почти_ошибки=err > 0.5 * len(g)))
+                          подпапки=', '.join(sub.index), подпапок=int(len(sub_all)), почти_ошибки=err > 0.5 * len(g)))
     A['медиа'] = sorted(media, key=lambda x: -x['запросов'])
     # --- служебные файлы, подгружаемые блоки, параметры
     A['служебные'] = service_groups(m, res)

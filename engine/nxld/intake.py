@@ -14,7 +14,11 @@ SITE_KINDS = ('Заявка', 'Заявка?', 'Вход', 'Обмен с 1С', 
 
 def _codes(s):
     import re
-    return {int(k): int(v) for k, v in re.findall(r'(\d{3}):\s*(\d+)', str(s))}
+    t = str(s)
+    out = {int(k): int(v) for k, v in re.findall(r'(\d{3}):\s*(\d+)', t)}
+    for k, v in re.findall(r'(?<!\d)(\d{3})\s*\(([\d\s\u00a0]+)\)', t):   # и вид «404 (1 234)»
+        out[int(k)] = out.get(int(k), 0) + int(re.sub(r'\D', '', v))
+    return out
 
 
 def classify_post(r, login_roots, engine, ev=None, prof=None):

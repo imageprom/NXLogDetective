@@ -264,6 +264,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['bots_extra'] = profiles.extras(c, res)
     except Exception:
         import traceback; traceback.print_exc(); res['profiles'], res['bots_extra'] = None, None
+    try:   # User-Agent по IP — для подделок и сканеров (04): самый частый и сколько ещё вариантов
+        from .common import ua_by_ip
+        ips_ = set(res['sheets'].get('Боты', {}).get('Подделки', pd.DataFrame(columns=['ip']))['ip'].astype(str))
+        sc_ = (res.get('security') or {}).get('сканеры')
+        if isinstance(sc_, tuple) and len(sc_) > 1 and sc_[1] is not None and len(sc_[1]): ips_ |= set(sc_[1]['ip'].astype(str))
+        res['ua_ip'] = ua_by_ip(V, ips_)
+    except Exception:
+        import traceback; traceback.print_exc(); res['ua_ip'] = {}
     if 'Маркетинг' in selected:   # 05: журнал, карты по времени, качество каналов, боты в рекламе
         from . import marketing
         try: res['marketing'] = marketing.build(c, res)

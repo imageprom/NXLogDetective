@@ -174,6 +174,7 @@ def full_sheets(wb, S, recent='', OUT=None):
         act = list(B['актуально']) if 'актуально' in B else [str(v) >= recent for v in B.get('Последний', [''] * len(B))]   # признак — из движка (derive)
         B = B.drop(columns=[c_ for c_ in ('актуально',) if c_ in B])
         B = B.assign(Последний=B['Последний'].map(_d)) if 'Последний' in B else B
+        if 'Коды' in B: B = B.assign(Коды=B['Коды'].map(fmt_codes)).rename(columns={'Коды': 'Ошибки'})   # «404 (7)» — как везде, ошибки красным
         data_sheet(wb, 'Битые из скриптов', B, 'Битые из скриптов', 'Адреса, которые скрипты страниц собрали с ошибкой',
                    {'Адрес': 50, 'Страница-источник': 40}, wrap=('Адрес', 'Страница-источник'), red=(),
                    row_rule=lambda r, _it=iter(act): F_NOTE if next(_it) else None, font_rule=lambda r, _it=iter(act): None if next(_it) else T_GREY)
@@ -241,8 +242,6 @@ def overview(wb, res, S, site):
     W = Wide(ws)
     brand_header(ws, W, res, f'NX LOG DETECTIVE — ОШИБКИ САЙТА {site.upper()}', 'Что сломано на сайте, кто на это наткнулся и где это исправить', last='I')
     names = set(wb.sheetnames)
-    from . import alarms
-    W.alarm(alarms.count(res, 'Ошибки'))
     K = sm.get('коды')
     if K is not None and len(K):
         W.section('Ответы сервера', 'Все ответы за период — по тем, кто их получил. 499 — посетитель ушёл, не дождавшись ответа: это не ошибка, а признак медленной страницы.')
@@ -254,8 +253,8 @@ def overview(wb, res, S, site):
     if X is not None and len(X):
         W.section('Сбои', 'Периоды, когда сервер отвечал ошибками на многие страницы сразу. Статика при этом обычно отдаётся — падает динамика.')
         O = E.get('сбои') if E.get('сбои') is not None and len(E.get('сбои')) else X.assign(сбой='', запросов=0)
-        rows = [[r['сбой'], _t(r['конец']), int(r['минут_всего']), int(r['запросов']), int(r['обрывов_499']), int(r['страниц_с_5xx']), str(r.get('вероятная_причина', '')).split(';')[0]] for _, r in O.iterrows()]
-        W.table(['Сбой', 'Конец', 'Длительность (мин)', 'Запросов', 'Обрывов 499', 'Страниц с 5xx', 'Картина сбоя'], rows, ['B', 'C', 'DE', 'F', 'G', 'H', 'I'], num=(2, 3, 4, 5), wrap=0.95)
+        rows = [[r['сбой'], _t(r['конец']), int(r['минут_всего']), int(r['запросов']), int(r['обрывов_499']), int(r['страниц_с_5xx'])] for _, r in O.iterrows()]
+        W.table(['Сбой', 'Конец', 'Длительность (мин)', 'Запросов', 'Обрывов 499', 'Страниц с 5xx'], rows, ['B', 'C', 'D', 'EF', 'G', 'HI'], num=(2, 3, 4, 5), wrap=0.95)   # картина сбоя — на листе «Сбои»
         W.link('Все сбои', 'Сбои', names)
     P = sm.get('страницы')
     if P is not None and len(P):
@@ -270,7 +269,7 @@ def overview(wb, res, S, site):
         W.table(['Раздел', 'Страниц', 'Люди', 'Поисковики', 'Свои'], rows, ['BC', 'D', 'E', 'F', 'G'], num=(1, 2, 3, 4))
     Fe = res.get('files_errors') or []
     if Fe:
-        W.section('Ошибки файлов', 'Файлы, которые запрашивают страницы сайта, реклама, фиды и другие сайты, а сервер их не отдаёт.')
+        W.section('Файлы', 'Файлы, которые запрашивают страницы сайта, реклама, фиды и другие сайты, а сервер их не отдаёт.')
         fg = (res.get('сводки') or {}).get('ошибки_файлов_по_группам')
         if fg is None: fg = pd.DataFrame(Fe).groupby('группа').agg(файлов=('файлов', 'sum'), запросов=('запросов', 'sum'), примеры=('адрес', lambda s: list(s)[:2])).sort_values('запросов', ascending=False)
         rows = [[g, int(r['файлов']), int(r['запросов']), '\n'.join(map(str, r['примеры']))] for g, r in fg.iterrows()]
@@ -362,7 +361,7 @@ def build(wb, res, S, site):
     links_sheets(wb, E)
     full_sheets(wb, S, E.get('с_дня', ''), E.get('сбои'))
     overview(wb, res, S, site)
-    redden_codes(wb, only=('Битые внутренние', 'Битые внешние', 'Поисковые ошибки'), rx=r'^Ошибки$')   # красный — где он различает 404 и 5xx
+    redden_codes(wb, only=('Битые внутренние', 'Битые внешние', 'Поисковые ошибки', 'Пострадавшие страницы', '5xx', '403 и прочие 4xx', 'Битые из скриптов'), rx=r'^Ошибки$')   # красный — где он различает 404 и 5xx
     byname = {w.title: w for w in wb._sheets}
     head_ = [byname[n_] for n_ in ORDER if n_ in byname]
     wb._sheets = head_ + [w for w in wb._sheets if w not in head_]

@@ -6,7 +6,8 @@
   python3 nxld_run.py --logs ./logs --work ./work --out ./out --blocks errors,bots --check-ips 1.2.3.4,5.6.7.8
   python3 nxld_run.py --work ./work --out ./out --stage analyze      # пересчитать блоки без повторного разбора логов
 
-Этапы: prepare (разбор логов, ~1–3 мин на 10 млн строк), analyze (блоки), report (Excel, Redmine, снимок, архив).
+Этапы: prepare (разбор логов), analyze (блоки и выжимка brief.json, без отчёта), report (Excel, Redmine, снимок, STIX, архив).
+На 7 млн строк и 1 млн IP нужно больше 8 ГБ памяти; процесс, убитый нехваткой памяти, обрывается без сообщения.
 """
 import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +29,7 @@ def main():
     ap.add_argument('--edits', default=None, help='JSON с правками находок после расследования (add/remove/update)')
     ap.add_argument('--redmine', default=None, help='текст для Redmine, написанный ИИ (по умолчанию work/NXLD_Redmine.textile, если есть)')
     ap.add_argument('--only', default=None, help='собрать только эти файлы: overview,errors,load,bots,marketing (для отладки отчётов; без текста, снимка и архива)')
+    ap.add_argument('--skip-existing', action='store_true', help='report: не пересобирать файлы NXLD_0x.xlsx, которые уже есть в --out (досборка после падения; правки в них не попадут)')
     ap.add_argument('--stage', default='all', choices=['all', 'prepare', 'analyze', 'report'])
     ap.add_argument('--site', default=None)
     a = ap.parse_args()
@@ -42,13 +44,13 @@ def main():
     if a.stage in ('all', 'analyze'):
         prev = json.load(open(a.prev, encoding='utf-8')) if a.prev else None
         analyze.run(a.work, sel, [x.strip() for x in a.check_ips.split(',') if x.strip()], marks, prev)
-    if a.stage in ('all', 'analyze', 'report') and a.out:
+    if a.stage in ('all', 'report') and a.out:   # analyze только считает: отчёт собирается после правок (--stage report --edits)
         import pickle
         res = pickle.load(open(os.path.join(a.work, 'results.pkl'), 'rb'))
         edits = json.load(open(a.edits, encoding='utf-8')) if a.edits else None
         rm = a.redmine or os.path.join(a.work, 'NXLD_Redmine.textile')
         only = {BLK[x.strip()] for x in a.only.split(',') if x.strip()} if a.only else None
-        out = report.build(res, a.out, a.site, edits, rm, only, a.work)
+        out = report.build(res, a.out, a.site, edits, rm, only, a.work, a.skip_existing)
         if not os.path.exists(rm) and not only:
             print('Текста для Redmine от ИИ нет — в архив положен черновик движка (NXLD_Redmine_черновик.textile). Напишите текст по work/brief.json (он пересобран с правками) и пересоберите --stage report.')
         print('Готово:', out['zip'] or ', '.join(out['files']))

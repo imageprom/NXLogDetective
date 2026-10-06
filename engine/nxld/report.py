@@ -238,7 +238,7 @@ def textile(res, site, file_names):
 from .edits import apply as apply_edits   # правки Детектива — в engine/nxld/edits.py
 
 
-def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=None):
+def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=None, skip_existing=False):
     """redmine — путь к тексту, который написал ИИ по brief.json (work/NXLD_Redmine.textile).
     Если его нет, кладётся запасной черновик движка с пометкой «черновик»."""
     os.makedirs(outdir, exist_ok=True)
@@ -257,12 +257,6 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
     report_marketing.relink(res['findings'])   # и 05
     from . import report_seo
     report_seo.relink(res['findings'])   # и 06
-    if workdir and edits and not only:   # выжимка — заново, с правками и проверками из сети: текст пишется по ней (SKILL.md, шаг 5)
-        try:
-            from . import brief as brief_
-            brief_.refresh(res, workdir)
-        except Exception:
-            import traceback; traceback.print_exc()
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
@@ -275,6 +269,12 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
             res['stix'] = dict(sm_, файл=f'{stem}.stix.json')
         except Exception:
             import traceback; traceback.print_exc(); res['stix'] = None
+    if workdir and edits and not only:   # выжимка — заново, с правками и проверками из сети: текст пишется по ней (SKILL.md, шаг 5); STIX в ней — уже построенный
+        try:
+            from . import brief as brief_
+            brief_.refresh(res, workdir)
+        except Exception:
+            import traceback; traceback.print_exc()
     file_names = {b: f'NXLD_{FILES[b]}.xlsx' for b in FILES}
     from . import snapshot as snapshot_
     snap = snapshot_.build(res, site, edits)   # NXLD-snapshot/2 (совместим с /1)
@@ -282,6 +282,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
     about = about_df(res)
     written = []
     for b in res['selected']:
+        if skip_existing and os.path.exists(os.path.join(outdir, file_names[b])):   # готовый файл после падения сборки — не пересобирать
+            written.append(os.path.join(outdir, file_names[b])); continue
         if only and b not in only: continue
         S = res['sheets'].get(b, {})
         if 'SEO' in res['selected']:   # листы, переехавшие в 06 «SEO», в своих файлах не повторяются

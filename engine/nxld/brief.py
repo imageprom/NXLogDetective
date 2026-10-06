@@ -289,10 +289,16 @@ def build(res, c, prev=None):
         if nh: q.append(f'{nh} отправок людей не приняты сервером — сверить (часть может быть повторными нажатиями)')
     q.append('звонки и мессенджеры в логах не видны')
     B['открытые_вопросы'] = q
-    try:   # выгрузка STIX 2.1 — что в пакете (для раздела «Файлы» текста); сам файл кладёт сборка отчёта
-        from .stix import build as stix_build
-        _, st_ = stix_build(res, (m.get('site_hosts') or ['site'])[0])
-        B['выгрузка_stix'] = dict({k: v for k, v in st_.items() if k != 'сигнатуры_в_пакете'}, файл='NXLD_<сайт>_<с>_<по>.stix.json',
+    try:   # выгрузка STIX 2.1 — что в пакете (для раздела «Файлы» текста). Пакет строится один раз, при сборке отчёта;
+        # до неё (стадия analyze) — оценка по делам и сигнатурам, без построения пакета
+        st_ = res.get('stix')
+        if not st_:
+            from .stix import CASES
+            pr_ = res.get('profiles') or {}
+            Sg_ = pr_.get('сигнатуры')
+            st_ = {'дел': sum(1 for x in pr_.get('дела', []) if x.get('важность') in CASES), 'сигнатур_всего': int(len(Sg_)) if Sg_ is not None else 0,
+                   'оценка': 'точные числа — после сборки отчёта'}
+        B['выгрузка_stix'] = dict({k: v for k, v in st_.items() if k not in ('сигнатуры_в_пакете', 'файл')}, файл='NXLD_<сайт>_<с>_<по>.stix.json',
                                    что_это='STIX 2.1 — открытый стандарт OASIS для обмена данными об угрозах; принимают OpenCTI, MISP и другие',
                                    документация='https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html')
     except Exception:

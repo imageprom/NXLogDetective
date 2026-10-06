@@ -79,6 +79,8 @@ def recheck_cases(res):
     if not D: return
     op_ = set(leaks_open(res))
     for x in D:
+        if x.get('важность_правка'):   # важность, которую Детектив поставил после расследования (edits.json → «дела»), не перебивается
+            x['важность'] = x['важность_правка']; continue
         why = x.get('тревога_по') or {}
         if not why or 'важность_без_тревоги' not in x: continue
         alarm = why.get('сбой') or any(f_ in op_ for f_ in why.get('файлы') or [])

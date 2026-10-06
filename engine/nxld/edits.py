@@ -16,6 +16,8 @@ def apply(res, edits):
         for k in ('факты', 'где_править', 'что_сделать', 'лист', 'также_в', 'статус'): a.setdefault(k, '')
         a.setdefault('главная_цифра', None)
         res['findings'].append(a)
+    if edits.get('дела') or edits.get('люди_ip'):
+        cases_and_people(res, edits)
     if edits.get('справочник'):   # Детектив нашёл поиском незнакомые параметры — в справочник (learned) и сразу на лист
         from . import reference
         from .anatomy import param_groups
@@ -75,3 +77,58 @@ def apply(res, edits):
 
 
 apply_edits = apply
+
+
+def cases_and_people(res, edits):
+    """Правки дел после расследования и IP, которые оказались людьми.
+    «дела»: {"BF09CC": {"важность": "К сведению", "оправдано": true, "почему": "вернувшиеся вкладки покупателей"}} —
+      важность дела; оправданное дело уходит в «К сведению», его IP — в «люди_ip», его сигнатура не учится.
+    «люди_ip»: ["1.2.3.4", …] — адреса посетителей: убираются из дел, «Состава дел», «Мер по IP» и STIX,
+      а в карточках проблем заменяются на «IP скрыт» (IP людей нигде не показываются)."""
+    import re
+    import pandas as pd
+    Pf = res.get('profiles') or {}
+    D = Pf.get('дела') or []
+    people = set(map(str, edits.get('люди_ip') or []))
+    ED = edits.get('дела') or {}
+    site = (res.get('site_map', {}).get('site_hosts') or ['site'])[0]
+    unlearn = []
+    for x in D:
+        e = ED.get(x['дело'])
+        if not e: continue
+        if e.get('оправдано'):
+            x['оправдано'] = e.get('почему') or 'обвинение не подтвердилось'
+            people |= set(map(str, x.get('ips') or []))
+            unlearn.append((x.get('сигнатура') or {}).get('id'))
+            e = dict({'важность': 'К сведению'}, **{k: v for k, v in e.items() if k == 'важность'})
+        if e.get('важность'):
+            x['важность'] = x['важность_правка'] = e['важность']
+        if e.get('почему'): x['примечание'] = e['почему']
+    if not people: return
+    for x in D:
+        if x.get('ips'):
+            x['ips'] = [i for i in x['ips'] if str(i) not in people]
+    for k in ('состав', 'меры_ip'):
+        T = Pf.get(k)
+        if isinstance(T, pd.DataFrame) and len(T) and 'ip' in T:
+            Pf[k] = T[~T['ip'].astype(str).isin(people)].reset_index(drop=True)
+    rx = re.compile(r'(?<![\d.])(' + '|'.join(re.escape(i) for i in sorted(people, key=len, reverse=True)) + r')(?![\d.])')
+    for f in res.get('findings') or []:
+        for fld in ('факты', 'что_происходит', 'что_сделать', 'заголовок'):
+            if isinstance(f.get(fld), str) and rx.search(f[fld]):
+                f[fld] = re.sub(r'(IP скрыт)(, IP скрыт)+', r'\1', rx.sub('IP скрыт', f[fld]))
+    res['люди_ip'] = sorted(people)
+    if unlearn:   # оправданное дело не учит сигнатуру: убрать этот сайт из learned/signatures.json
+        try:
+            import json, os
+            from .profiles import REF
+            p = os.path.join(REF, 'learned', 'signatures.json')
+            J = json.load(open(p, encoding='utf-8'))
+            for sid_ in filter(None, unlearn):
+                e = J.get('сигнатуры', {}).get(sid_)
+                if not e: continue
+                e.get('сайты', {}).pop(site, None)
+                if not e.get('сайты'): J['сигнатуры'].pop(sid_, None)
+            json.dump(J, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=1, default=str)
+        except Exception:
+            pass

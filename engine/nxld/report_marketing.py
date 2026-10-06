@@ -197,6 +197,7 @@ def organic_sheet(wb, O):
 
 
 def overview(wb, res, site):
+    num_ = lambda v: int(v) if pd.notna(v) and v else 0   # NaN or 0 — это NaN, int(NaN) падает (у кампаний VK нет «принято»)
     MK = res.get('marketing') or {}
     S = (res.get('sheets') or {}).get('Маркетинг', {})
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
@@ -231,10 +232,9 @@ def overview(wb, res, site):
         M = M.sort_values('визитов_всех', ascending=False)
         W.section('Кампании', 'Крупнейшие кампании: клики, впустую и заявки.')
         W.table(['Кампания', 'Кликов', 'Впустую', 'Ботов, %', 'Принято'],
-                [[str(r['кампания']) or '(без метки)', int(r['визитов_всех']), int(r['впустую']), r['доля_ботов_%'], int(r.get('принято', 0) or 0)] for _, r in M.head(6).iterrows()],
+                [[str(r['кампания']) or '(без метки)', int(r['визитов_всех']), int(r['впустую']), r['доля_ботов_%'], num_(r.get('принято', 0))] for _, r in M.head(6).iterrows()],
                 ['BCDE', 'F', 'G', 'H', 'I'], num=(1, 2, 4), wrap=0.95)
         W.link('Все кампании', 'Кампании', names)
-    num_ = lambda v: int(v or 0)
     for key, title, sub, n_ in (('фразы_топ', 'Фразы', 'Ключевые фразы кампаний с наибольшим числом кликов. Это не поисковые запросы людей.', 10),
                                 ('фразы_с_заявками', 'Фразы с заявками', 'Фразы, по которым люди оставили заявки.', 5)):
         T = MK.get(key)

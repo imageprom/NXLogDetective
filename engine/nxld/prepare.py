@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np, pandas as pd
 from . import ingest, load, recon, visits, ipdb
 
-VERSION = '0.2.0-alpha'
+VERSION = '0.2.1'
 
 
 def site_hosts_from(state, R):
@@ -64,6 +64,11 @@ def run(paths, workdir, log=print, map_override=None):
     t0 = time.time()
     log('1/5 Приём файлов')
     state = ingest.ingest(paths, workdir, log=log)
+    src_ = state.get('sources', {}).values()
+    if not any(r.get('kind') == 'access' and (r.get('lines') or 0) > 0 for r in src_):   # формат не распознан — дальше считать нечего
+        bad_ = [os.path.basename(str(r.get('member') or r.get('path'))) for r in src_ if r.get('kind') not in ('access', 'error')]
+        raise SystemExit('Ни одной строки access-лога не распознано' + (f" (не распознаны: {', '.join(bad_[:10])})" if bad_ else '') +
+                         '. Пришлите 3–5 первых строк лога и log_format из конфигурации nginx: формат нужно добавить в engine/nxld/ingest.py (ACCESS_RX).')
     log('2/5 Сборка таблицы запросов')
     R, dup_report = load.load_requests(workdir, state)
     E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
@@ -94,6 +99,10 @@ def run(paths, workdir, log=print, map_override=None):
     staff = ok_admin.groupby('ip', observed=True).size()
     staff_ips = staff[staff >= 5].index.astype(str).tolist()
     if map_override: staff_ips += map_override.get('staff_ips', [])
+    if map_override and map_override.get('staff_ips_remove'):   # ошибочно найденные «сотрудники» (например, зонд формы входа)
+        rm_ = set(map_override['staff_ips_remove'])
+        staff_ips = [i for i in staff_ips if i not in rm_]
+    staff_ips = list(dict.fromkeys(staff_ips))
     # мониторинги: один адрес с одного IP строго по расписанию
     cand = R.groupby(['ip', 'ua', 'base'], observed=True).size()
     cand = cand[cand >= 300].reset_index()

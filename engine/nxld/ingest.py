@@ -12,11 +12,11 @@ import pandas as pd
 CHUNK = 1_000_000
 MON = {m: i for i, m in enumerate(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], 1)}
 
-# combined (nginx / apache) + необязательный хвост ("$host" $request_time и т.п.)
-ACCESS_RX = re.compile(r'^(\S+) \S+ (\S+) \[(\d\d)/(\w\w\w)/(\d{4}):(\d\d):(\d\d):(\d\d) ([+-]\d{4})\] "(.*?)" (\d{3}) (\d+|-) "(.*?)" "(.*?)"(.*)$')
-COMMON_RX = re.compile(r'^(\S+) \S+ (\S+) \[(\d\d)/(\w\w\w)/(\d{4}):(\d\d):(\d\d):(\d\d) ([+-]\d{4})\] "(.*?)" (\d{3}) (\d+|-)\s*$')
-NGX_ERR_RX = re.compile(r'^(\d{4})/(\d\d)/(\d\d) (\d\d):(\d\d):(\d\d) \[(\w+)\] \d+#\d+: (?:\*\d+ )?(.*)$')
-APA_ERR_RX = re.compile(r'^\[(\w{3}) (\w{3}) (\d\d) (\d\d):(\d\d):(\d\d)(?:\.\d+)? (\d{4})\] \[([\w:]+)\] (.*)$')
+# combined (nginx / apache); необязательные BOM в начале файла и $host после $remote_user (мультисайты); необязательный хвост ("$host" $request_time и т.п.)
+ACCESS_RX = re.compile(r'^\ufeff?(\S+) \S+ (\S+)(?: ([A-Za-z0-9.:-]+))? \[(\d\d)/(\w\w\w)/(\d{4}):(\d\d):(\d\d):(\d\d) ([+-]\d{4})\] "(.*?)" (\d{3}) (\d+|-) "(.*?)" "(.*?)"(.*)$')
+COMMON_RX = re.compile(r'^\ufeff?(\S+) \S+ (\S+)(?: ([A-Za-z0-9.:-]+))? \[(\d\d)/(\w\w\w)/(\d{4}):(\d\d):(\d\d):(\d\d) ([+-]\d{4})\] "(.*?)" (\d{3}) (\d+|-)\s*$')
+NGX_ERR_RX = re.compile(r'^\ufeff?(\d{4})/(\d\d)/(\d\d) (\d\d):(\d\d):(\d\d) \[(\w+)\] \d+#\d+: (?:\*\d+ )?(.*)$')
+APA_ERR_RX = re.compile(r'^\ufeff?\[(\w{3}) (\w{3}) (\d\d) (\d\d):(\d\d):(\d\d)(?:\.\d+)? (\d{4})\] \[([\w:]+)\] (.*)$')
 
 
 # ---------- источники ----------
@@ -92,7 +92,7 @@ def _ts(d, mon, y, hh, mm, ss):
 
 def parse_access(path, member, outdir, src_id, start_chunk):
     """Разбирает один access-источник в куски req_*.pkl. Время — местное время лога (как в строке)."""
-    cols = {k: [] for k in ('ts', 'ip', 'user', 'method', 'base', 'query', 'proto', 'status', 'bytes', 'ref', 'ua', 'tail')}
+    cols = {k: [] for k in ('ts', 'ip', 'user', 'vhost', 'method', 'base', 'query', 'proto', 'status', 'bytes', 'ref', 'ua', 'tail')}
     chunks, nbad, nlines = [], 0, 0
     minute_counts = Counter()
     tz = Counter()
@@ -103,7 +103,7 @@ def parse_access(path, member, outdir, src_id, start_chunk):
         if not cols['ts']: return
         df = pd.DataFrame(cols)
         df['src'] = src_id
-        for c in ('ip', 'user', 'method', 'base', 'query', 'proto', 'ref', 'ua', 'tail', 'src'):
+        for c in ('ip', 'user', 'vhost', 'method', 'base', 'query', 'proto', 'ref', 'ua', 'tail', 'src'):
             df[c] = df[c].astype('category')
         df['status'] = df['status'].astype('int16')
         df['bytes'] = df['bytes'].astype('int64')
@@ -126,7 +126,7 @@ def parse_access(path, member, outdir, src_id, start_chunk):
                 g = list(m2.groups()) + ['', '', '']
             else:
                 g = m.groups()
-            ip, user, d, mon, y, hh, mm, ss, z, req, st, by, ref, ua, tail = g
+            ip, user, vh, d, mon, y, hh, mm, ss, z, req, st, by, ref, ua, tail = g
             try:
                 t = _ts(d, mon, y, hh, mm, ss)
             except Exception:
@@ -145,7 +145,7 @@ def parse_access(path, member, outdir, src_id, start_chunk):
                 base, q = url.split('?', 1)
             else:
                 base, q = url, ''
-            cols['ts'].append(t); cols['ip'].append(ip); cols['user'].append(user)
+            cols['ts'].append(t); cols['ip'].append(ip); cols['user'].append(user); cols['vhost'].append((vh or '').lower())
             cols['method'].append(meth[:12]); cols['base'].append(base[:500]); cols['query'].append(q[:1000])
             cols['proto'].append(proto[:12]); cols['status'].append(int(st)); cols['bytes'].append(0 if by == '-' else int(by))
             cols['ref'].append(ref[:500]); cols['ua'].append(ua[:400]); cols['tail'].append(tail.strip()[:200])

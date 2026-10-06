@@ -10,3 +10,6 @@
 - добавлено: `inline` — Атаки и зонды: зонд уязвимости dev-сервера Vite (CVE-2025-30208): ?inline обходит запрет на чтение файлов (https://www.offsec.com/blog/cve-2025-30208/)
 - добавлено: `vars[0]` — Атаки и зонды: зонд RCE ThinkPHP 5.x (CVE-2018-20062): invokefunction&function=call_user_func_array&vars[0]=… (https://www.exploit-db.com/exploits/46150)
 - добавлено: `vars[1][]` — Атаки и зонды: зонд RCE ThinkPHP 5.x (CVE-2018-20062): аргументы vars[1][] (https://www.exploit-db.com/exploits/46150)
+
+## 2026-10-06 — сайт-8b00dc81
+- добавлено: `goto` — Атаки и зонды: Параметр /bitrix/redirect.php (модуль статистики Битрикса) — адрес перехода; без проверки работает как открытый редирект, его используют спамеры (https://dbugs.ptsecurity.com/vulnerability/PT-2008-3569)

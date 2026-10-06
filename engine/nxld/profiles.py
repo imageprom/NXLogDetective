@@ -115,6 +115,24 @@ def key_of(ip, P, ops):
     return kind + '|' + (p['организация'] or p['сеть'] or '?')
 
 
+def keys_of(ips, P, ops):
+    """key_of для списка IP разом: профили берутся одним reindex, без P.loc на каждый адрес (на 1 млн IP — секунды, а не час)."""
+    cols = ['группа', 'подгруппа', 'имя', 'организация', 'сеть']
+    Pc = P.reindex(list(ips))[cols]
+    have = Pc.index.isin(P.index)
+    from .actors import sig_kind
+    out = []
+    for ip, ok, g, s, f, o, n in zip(Pc.index, have, *(Pc[c_].values for c_ in cols)):
+        if ip in ops: out.append('op:' + ops[ip][0]); continue
+        if not ok: out.append('misc:?'); continue
+        s, f = str(s), str(f)
+        if s == 'подделки роботов': out.append('fake:' + (f or 'робот')); continue
+        if s == 'разведка по расписанию': out.append('sched:' + ip); continue
+        kind = {'Утилиты': 'util:' + s, 'Роботы': 'robot:' + f, 'Люди': 'human'}.get(g) or ('bot:' + (s if s == 'без User-Agent' else sig_kind(s)))
+        out.append(kind + '|' + (o or n or '?'))
+    return out
+
+
 NAMES = {'Зонды и перебор': 'Сканер', 'Маскировка': 'Маскировщик', 'Явный бот': 'Бот', 'Спам форм': 'Спамер форм', 'Прочее': 'Бот', 'без User-Agent': 'Безымянный бот'}
 
 
@@ -159,7 +177,7 @@ def build(c, res):
     cand = (grp.isin(['Боты', 'Утилиты']) | F.index.isin(list(ops)) | (strong & ~grp.isin(['Свои']))) & ~F.index.isin(list(staff))
     C = F[cand].copy()
     if not len(C): return dict(дела=[], состав=pd.DataFrame(), сигнатуры=pd.DataFrame())
-    C['key'] = [key_of(ip, P, ops) for ip in C.index]
+    C['key'] = keys_of(C.index, P, ops)
     site = (c.m.get('site_hosts') or ['site'])[0]
     REFS = charges_ref()
     OUT = (res.get('errors') or {}).get('сбои')
@@ -196,6 +214,9 @@ def build(c, res):
         keep |= (pd.Series(cnt[C['_code'].values], index=C.index).groupby(C['key']).sum() / tot).reindex(A.index).fillna(0) >= 0.05
     C = C[C['key'].isin(set(keep[keep].index))]
     cases = []
+    Vip_ = V['ip'].astype(str)   # один раз на все дела: на 2,5 млн визитов это минуты на каждое дело
+    orgV_ = Vip_.map(P['организация'])
+    Vhuman_ = (V['group'] == 'Люди').values
     for key, g in C.groupby('key'):
         agg = {f: (g[f].max() if f == 'maxpm' else g[f].sum()) for f in FEATURES if f in g}
         orgs = P['организация'].reindex(g.index).replace('', np.nan).fillna(P['сеть'].reindex(g.index))
@@ -284,11 +305,9 @@ def build(c, res):
                 tag = {'bot:Зонды и перебор': 'SCAN', 'bot:Маскировка': 'MASK', 'bot:Явный бот': 'BOT', 'bot:без User-Agent': 'NOUA', 'bot:Спам форм': 'SPAM'}.get(key.split('|')[0], key.split(':')[0].upper())
                 from .actors import sig_label
                 sig_text = f"{'; '.join(sig_label(x_).lower() for x_ in subs[:2] if x_)} — из сети {', '.join(a_ for a_ in asns if a_) or 'без названия'}"
-            Vm = V['ip'].astype(str).isin(set(g.index))
-            hits = int(Vm.sum())
+            hits = int(Vip_.isin(set(g.index)).sum())
             own_asn = set(P.loc[g.index, 'организация'])
-            orgV = V['ip'].astype(str).map(P['организация'])
-            false_ = int((orgV.isin(own_asn) & (V['group'] == 'Люди')).sum())
+            false_ = int((orgV_.isin(own_asn).values & Vhuman_).sum())
             check = f'{nf(hits)} визитов этой группы; в тех же сетях визитов людей — {nf(false_)}' + (' (сеть целиком не закрывать)' if false_ else '')
         sig_id = f"SIG-{tag}-{h6(json.dumps(rule, sort_keys=True, ensure_ascii=False))}"
         case_id = h6(site, key)

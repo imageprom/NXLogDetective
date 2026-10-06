@@ -42,7 +42,12 @@ def apply(res, items=None):
         t, why = _type(x), None
         if t == 'exposed' and R_.get('утечка_открыта_сейчас'):
             op = leaks_open(res)
-            if op: why = 'отдаётся посторонним сейчас: ' + ', '.join(op)
+            if op:
+                L = sec.get('утечки')
+                chk = {str(r['файл']): (str(r.get('проверка') or ''), str(r.get('проверено') or '')) for _, r in L.iterrows()} if L is not None else {}
+                net = [f for f in op if chk.get(f, ('', ''))[0].startswith('открыт')]
+                if net: why = 'проверено из сети' + (f" {chk[net[0]][1]}" if chk[net[0]][1] else '') + ': отдаётся посторонним — ' + ', '.join(net)
+                else: why = 'по логу отдаётся посторонним на конец лога (из сети не проверено): ' + ', '.join(op)
         elif t == 'outage' and R_.get('сбой_продолжается') and 'продолжается на конец лога' in str(x.get('почему', '')) + str(x.get('факты', '')):
             why = 'сбой продолжается на конец лога'
         elif t == 'webshell' and R_.get('веб_шелл'): why = 'исполняемый файл в папке загрузок отвечает'

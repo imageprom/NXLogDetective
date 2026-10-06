@@ -186,53 +186,52 @@ def snapshot(res, site):
                 site_map={k: res['site_map'].get(k) for k in ('site_hosts', 'server', 'engines', 'admin_regex', 'forms', 'catalog_templates', 'embedded_templates', 'ad_params')})
 
 
+LABEL = {'Тревога': 'Тревога', 'Срочно': 'Приоритетная', 'Важно': 'Важная', 'К сведению': 'Остальное', 'Замечание': 'Замечание'}
+
+
 def textile(res, site, file_names):
+    """Запасной черновик движка — если Детектив не написал текст по brief.json. Порядок разделов — как в skill/references/redmine.md."""
+    from .sheets import resolve
     inv = res['inventory']
+    where = lambda x: f"{file_names[x['блок']]}, лист «{resolve(x['блок'], x['лист'])}»" if x.get('лист') else file_names[x['блок']]
+    live = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     out = [f"h2. NX Log Detective: {site}, {inv['period'][0][:10]} — {inv['period'][1][:10]}", '',
            f"Проверены блоки: {', '.join(res['selected'])}. Запросов: " + f"{inv['requests']:,}".replace(',', ' ') + ". Подробности — в приложенных файлах NXLD_*.xlsx.", '']
-    if res.get('compare') is not None:
-        st = pd.Series([x.get('статус', '') for x in res['findings']])
-        out += [f"h3. С прошлой проверки ({' — '.join(s_[:10] for s_ in res.get('prev_period') or [])})", '',
-                f"Новых проблем: {int(st.str.startswith('новая').sum())}, сохраняются: {int(st.str.startswith('сохраняется').sum())}, не обнаружены в новом периоде: {int(st.str.startswith('не обнаружена').sum())}.", '']
     m = res['site_map']
     if not [f for f in m.get('forms', []) if str(f.get('вывод', '')).startswith('цель')]:
         out += ['Форм и целей на сайте не обнаружено — конверсии не считались.', '']
     if not m.get('ad_params'):
         out += ['Рекламных меток не обнаружено — реклама не анализировалась, только каналы по рефереру.', '']
+    al = [x for x in live if x['важность'] == 'Тревога']
+    if al:   # «Тревога» — перед «Главным»: подтверждённый вред, который идёт сейчас
+        out += ['h3. Тревога', '']
+        for x in al:
+            out += [f"*{x.get('заголовок') or x['что_происходит']}.* {x.get('почему_тревога', '')}. {x.get('что_сделать', '')}. Подробно — {where(x)}.", '']
+    top = [x for x in live if x['важность'] == 'Срочно']
+    if top:
+        out += ['h3. Главное', '']
+        out += [f"* {x.get('заголовок') or x['что_происходит']} — {where(x)}" for x in top[:5]] + ['']
+    if res.get('compare') is not None:
+        st = pd.Series([x.get('статус', '') for x in res['findings']])
+        out += [f"h3. Что изменилось с прошлой проверки ({' — '.join(s_[:10] for s_ in res.get('prev_period') or [])})", '',
+                f"Новых проблем: {int(st.str.startswith('новая').sum())}, сохраняются: {int(st.str.startswith('сохраняется').sum())}, исправлены или не обнаружены: {int(st.str.startswith('исправлена').sum())}.", '']
     n = 0
-    urgent = [x for x in res['findings'] if x['важность'] == 'Срочно' and x.get('статус') != 'отмечено как норма']
-    if urgent:
-        out += ['h3. Срочно', '']
-        for x in sorted(urgent, key=lambda x: list(FILES).index(x['блок'])):
-            n += 1
-            out.append(f"*{n}.* [{x['блок']}] {x['что_происходит']}. {x['факты']} → _{file_names[x['блок']]}, лист «{x['лист']}»_")
-            out.append('')
     for b in res['selected']:
-        items = [x for x in res['findings'] if x['блок'] == b and x['важность'] != 'Срочно']
+        items = [x for x in live if x['блок'] == b and x['важность'] not in ('Тревога',)]
+        if not items: continue
         out += [f'h3. {b}', '']
-        s = res['summary'].get(b, {})
-        if s:
-            out.append(' · '.join(f'{k}: {v}' for k, v in list(s.items())[:8]))
-            out.append('')
         for x in sorted(items, key=lambda x: SEV_ORDER[x['важность']]):
             n += 1
-            mark = ' _(отмечено как норма)_' if x.get('статус') == 'отмечено как норма' else ''
-            out.append(f"*{n}.* {x['важность']}: {x['что_происходит']}{mark}. {x['факты']}" + (f" Что сделать: {x['что_сделать']}." if x['что_сделать'] else ''))
+            out.append(f"*{n}.* {LABEL.get(x['важность'], x['важность'])}: {x.get('заголовок') or x['что_происходит']}. {x.get('факты', '')}" + (f" Что сделать: {x['что_сделать']}." if x.get('что_сделать') else '') + f" ({where(x)})")
             out.append('')
         if b == 'Боты':
-            V = res.get('spam_examples', [])
-            if V:
-                out += ['h4. Какие боты у нас ходят', '']
-                for ex in V:
-                    out.append(f"*{ex['класс']}* — {SPAM_TEXT.get(ex['класс'], '')} Пример: {ex['ip']}, {ex['время']}, вход {ex['вход']}.")
-                    out.append('')
-            ips = res['ips']
-            spam = ips[ips['категория'] == 'спам форм']
-            if 0 < len(spam) <= 15:
-                out.append('IP спама форм: ' + ', '.join(f"{r.ip} ({r.сеть})" for r in spam.itertuples()))
-            elif len(spam):
-                out.append(f'IP спама форм: {len(spam)} адресов, список на листе IP в {file_names["Общий анализ"]}.')
-            out.append('')
+            D = (res.get('profiles') or {}).get('дела') or []
+            if D:
+                out += ['h4. Главные дела', '']
+                for x in D[:3]:
+                    ch = '; '.join(f"{o['статья']} ({o['сила']})" for o in x['обвинения'][:3])
+                    out += [f"*Дело {x['дело']}* · {x['кличка']}: {ch}. Подробно — {file_names['Боты']}, лист «Разыскиваются».", '']
+    out += ['h3. Файлы', ''] + [f"* {file_names[b]}" for b in res['selected']] + ['']
     return '\n'.join(out)
 
 
@@ -261,7 +260,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
     file_names = {b: f'NXLD_{FILES[b]}.xlsx' for b in FILES}
-    snap = snapshot(res, site)
+    from . import snapshot as snapshot_
+    snap = snapshot_.build(res, site, edits)   # NXLD-snapshot/2 (совместим с /1)
     snap_json = json.dumps(snap, ensure_ascii=False, default=str, indent=1)
     about = about_df(res)
     written = []
@@ -376,7 +376,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         text = open(redmine, encoding='utf-8').read()
     else:
         text = textile(res, site, file_names).replace('h2. NX Log Detective:', 'h2. Черновик. NX Log Detective:', 1)
-        text = text.replace('\n\n', '\n\n_Черновик движка: связный текст пишет ИИ по brief.json (см. SKILL.md, шаг 5)._\n\n', 1)
+        text = text.replace('\n\n', '\n\n_Черновик движка: связный текст пишет Детектив по brief.json (см. SKILL.md, шаг 5)._\n\n', 1)
     open(tx, 'w', encoding='utf-8').write(text)
     sp = os.path.join(outdir, f'{stem}.snapshot.json')
     open(sp, 'w', encoding='utf-8').write(snap_json)

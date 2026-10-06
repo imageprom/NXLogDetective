@@ -193,6 +193,7 @@ def findings(res, items):
     D = res.get('seo') or {}
     def add(sev, kind, sub, title, facts, where, todo, n, sheet):
         key = f'{BLOCK}:{kind}:{sub}'
+        items[:] = [x for x in items if not (x['key'] == key and x.get('статус_вид') == 'исправлена')]   # заглушка «исправлена» из сравнения — карточка снова есть
         if any(x['key'] == key for x in items): return
         items.append(dict(key=key, блок=BLOCK, важность=sev, что_происходит=title, заголовок=title, факты=facts, факт=facts, где_править=where, что_сделать=todo,
                           главная_цифра=n, лист=sheet, также_в='', статус='', доказательство='', тема='Поиск'))

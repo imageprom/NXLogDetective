@@ -43,6 +43,26 @@ def important_ips(c, S_bots):
     return D
 
 
+def restatus_late(prev, items, thr=STATUS_THRESHOLD):
+    """Статус «было → стало» для карточек, созданных после основного сравнения (SEO), и снятие ложных «исправлена» по их ключам."""
+    old = {x['key']: x for x in prev.get('findings', [])}
+    live = {x['key'] for x in items if x.get('статус_вид') != 'исправлена'}
+    items[:] = [x for x in items if not (x.get('статус_вид') == 'исправлена' and x['key'] in live)]
+    for x in items:
+        if x.get('статус'): continue
+        if x['key'] not in old:
+            x['статус'], x['статус_вид'] = 'новая', 'новая'; continue
+        o, n = old[x['key']].get('главная_цифра'), x.get('главная_цифра')
+        x['было'], x['стало'] = o, n
+        if isinstance(o, (int, float)) and isinstance(n, (int, float)) and o:
+            ch = (n - o) / abs(o)
+            vid = 'стала хуже' if ch >= thr else ('исправлена частично' if ch <= -thr else 'сохраняется')
+            x['статус'] = f"{vid}: {o:g} → {n:g}" + (f" ({ch:+.0%})" if vid == 'исправлена частично' else '')
+        else:
+            vid = 'сохраняется'; x['статус'] = vid
+        x['статус_вид'] = vid
+
+
 def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     selected = selected or BLOCKS
     selected = ['Общий анализ', 'Ошибки'] + [b for b in selected if b not in ('Общий анализ', 'Ошибки')]
@@ -144,6 +164,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
                 rows.append(dict(блок=b, показатель=k, было=ov, стало=v))
         res['compare'] = pd.DataFrame(rows)
         res['prev_period'] = prev.get('period')
+        res['prev_format'] = prev.get('format')   # /1 или /2: от формата зависит, что можно сравнить
     try:
         res['site_profile'] = profile.detect(c, res.get('site_map') or {})
     except Exception as e:
@@ -253,8 +274,12 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         try:
             res['seo'] = seo.build(c, res)
             seo.findings(res, F.items)
+            if prev: restatus_late(prev, F.items)   # карточки SEO появились после сравнения с прошлым снимком
         except Exception:
             import traceback; traceback.print_exc(); res['seo'] = None
+    if prev:
+        from .snapshot import check_keys
+        res['ключи'] = check_keys(prev, {'findings': F.items})   # стабильность ключей проблем относительно прошлой проверки
     from . import alarms, derive
     alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
     derive.build(res)   # признаки и сводки для оформления, выжимки и снимка

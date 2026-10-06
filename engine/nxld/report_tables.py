@@ -25,8 +25,11 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
         ws['B2'].alignment = Alignment(vertical='center', wrap_text=False)
     ws.row_dimensions[2].height = 24
     X = 1   # сдвиг колонок
-    if kpi:   # цифры сводки — справа от заголовка: подпись мелко, число крупно
+    def put_kpi():   # цифры сводки — справа от заголовка: подпись мелко, число крупно; не налезают на подзаголовок
+        from openpyxl.utils import get_column_letter as L_
         c0 = (cols.index(kpi_col) if kpi_col in cols else max(0, len(cols) - len(kpi))) + 1 + X
+        need = max(len(str(title)) * 2.2, len(str(note or '')) * 1.45)   # заголовок (Montserrat 16) и подзаголовок (Comfortaa 11) шире обычного текста
+        while c0 <= len(cols) + X + 2 and sum((ws.column_dimensions[L_(j)].width or 10) for j in range(2, c0)) < need: c0 += 1
         for k, (lab, val) in enumerate(kpi):
             a = ws.cell(1, c0 + k, lab); a.font = Font(name='Arial', size=9, color=INK); a.alignment = Alignment(horizontal='center', vertical='bottom', wrap_text=True)
             b = ws.cell(2, c0 + k, val); b.font = Font(name='Arial', size=14, bold=True, color='000000'); b.alignment = Alignment(horizontal='center', vertical='center')
@@ -63,6 +66,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
         letter = ws.cell(H, j + X).column_letter
         ws.column_dimensions[letter].width = (widths or {}).get(c) or min(45, max(10, len(str(c)) + 2, int(df[c].astype(str).str.len().quantile(0.9)) + 2 if len(df) else 10))
     fit_header(ws, H, cols, X)
+    if kpi: put_kpi()
     r_ = H + len(df) + 2   # ссылки — под таблицей, как на других листах
     for text, target in links:
         if isinstance(target, tuple):   # лист другого файла отчёта
@@ -154,6 +158,7 @@ LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «По�
           'ответ_200': ('EFEFEF', None, 'Сервер ответил 200, но это не улика: обычные страницы, заглушки, формы входа'), 'закрыт': ('FFFFFF', GREY, 'Закрыт: больше не отдаётся'),
           'опасная_точка': (F_NOTE, None, 'Загрузка файлов посторонними или персональные данные в адресе'), 'сканер_точка': ('EFEFEF', None, 'Сканер: адреса на сайте нет'),
           'задевает': ('EFEFEF', None, 'Из тех же сетей приходят люди: сеть целиком не закрывать'), 'принята_заявка': (F_NOTE, None, 'Сайт принял заявку бота как настоящую'),
+          'приговор_блок': (F_NOTE, None, 'Заблокировать: дело серьёзное, людей из этой сети нет'),
           'массовые_люди': ('FFFFFF', GREY, 'Люди и свои: проверить, не общий ли это IP (офис, мобильный оператор)')}
 
 
@@ -777,6 +782,19 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
         ws.cell(r, 2, note).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
     cols = list(df.columns)
     pos = [ci_(x) for x in at] if at else [2 + j for j in range(len(cols))]
+    span = [1] * len(cols)
+    if not at and not groups:   # длинный текст — на несколько колонок листа (объединённые ячейки), остальные сдвигаются вправо
+        from openpyxl.utils import get_column_letter as L_
+        cur = 2
+        for j, c in enumerate(cols):
+            need = 0
+            if c in wrap and len(df):
+                need = min(60, df[c].astype(str).str.split('\n').map(lambda xs: max(len(x) for x in xs)).quantile(0.9) * 0.95 + 2)
+            n_, w_ = 1, (ws.column_dimensions[L_(cur)].width or 10)
+            while need and w_ < need and n_ < 3:
+                w_ += ws.column_dimensions[L_(cur + n_)].width or 10; n_ += 1
+            pos[j], span[j] = cur, n_
+            cur += n_
     if groups:   # шапка в два уровня: верх — над своими колонками, остальные колонки — одной ячейкой на два уровня
         inner = {c: top for top, cs in groups.items() for c in cs}
         merges = []
@@ -802,7 +820,11 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
         if groups: break   # шапка в два уровня уже записана
         cell = ws.cell(r, pos[j], c); cell.font = Font(name='Arial', size=size, bold=True, color='FFFFFF'); cell.fill = PatternFill('solid', fgColor=ORANGE)
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True); cell.border = Border(left=WHITE, right=WHITE)
-    fit_header(ws, r, cols, first=pos[0]) if not at else None
+        for k_ in range(1, span[j]): ws.cell(r, pos[j] + k_).fill = PatternFill('solid', fgColor=ORANGE)
+    if not groups:
+        for j in range(len(cols)):
+            if span[j] > 1: ws.merge_cells(start_row=r, start_column=pos[j], end_row=r, end_column=pos[j] + span[j] - 1)
+    fit_header(ws, r, cols, first=pos[0]) if not at and max(span) == 1 else None
     for row in df.itertuples(index=False):
         r += 1
         rf = row_rule(dict(zip(cols, row))) if row_rule else None
@@ -818,6 +840,19 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
             if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
             cell.border = Border(bottom=SEP)
             if rf: cell.fill = PatternFill('solid', fgColor=rf)
+            for k_ in range(1, span[j]):
+                cc = ws.cell(r, pos[j] + k_); cc.border = Border(bottom=SEP)
+                if rf: cc.fill = PatternFill('solid', fgColor=rf)
+        for j in range(len(cols)):
+            if span[j] > 1: ws.merge_cells(start_row=r, start_column=pos[j], end_row=r, end_column=pos[j] + span[j] - 1)
+        if max(span) > 1:   # высота строки — по самому длинному тексту в объединённых ячейках
+            from openpyxl.utils import get_column_letter as L_
+            lines = 1
+            for j, v in enumerate(row):
+                if cols[j] in wrap and v is not None:
+                    w_ = sum((ws.column_dimensions[L_(pos[j] + k_)].width or 10) for k_ in range(span[j]))
+                    lines = max(lines, sum(max(1, -(-len(x) // max(5, int(w_ * 1.05)))) for x in str(v).split('\n')))
+            ws.row_dimensions[r].height = max(15, 12.5 * lines + 3)
     return ws
 
 

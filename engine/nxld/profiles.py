@@ -326,23 +326,62 @@ def build(c, res):
     S = pd.DataFrame([dict(id=x['сигнатура']['id'], правило=x['сигнатура']['правило'], вид=x['вид'], дело=x['дело'], кличка=x['кличка'],
                            проверка=x['сигнатура']['проверка'], ложных=x['сигнатура']['ложных'], IP=x['состав']['IP'], запросов=x['запросов']) for x in cases])
     learn_signatures(cases, site, c)
-    return dict(дела=cases, состав=pd.DataFrame(rows), сигнатуры=S)
+    return dict(дела=cases, состав=pd.DataFrame(rows), сигнатуры=S, меры_ip=measures_by_ip(c, res, cases, P, F))
+
+
+VERDICT_ORDER = {'заблокировать': 0, 'ограничить частоту': 1, 'наблюдать': 2, 'не трогать': 3}
+
+
+def measures_by_ip(c, res, cases, P, F):
+    """Меры по IP: приговор каждому IP из дел и своим — готовый список для администратора.
+    Заблокировать — дело серьёзное и в сети нет людей; ограничить частоту — в сети есть люди или это мобильный оператор
+    (за одним IP много абонентов); наблюдать — дело «к сведению»; не трогать — свои, сервер сайта, мониторинг."""
+    V = c.V
+    vv = V.assign(ip=V['ip'].astype(str)).groupby('ip').agg(визитов=('n_req', 'size'), отправок=('n_goal', 'sum'))
+    T = c.T.drop_duplicates('ip').set_index('ip') if 'ip' in c.T else pd.DataFrame()
+    rows = []
+    def row(ip, дело, кличка, приговор, основание):
+        rows.append(dict(ip=ip, дело=дело, кличка=кличка, подсеть=subnet(ip), сеть=P['организация'].get(ip, ''), страна=P['страна'].get(ip, ''),
+                         тип_сети=P['сеть'].get(ip, ''), визитов=int(vv['визитов'].get(ip, 0)), запросов=int(F['req'].get(ip, 0)) if ip in F.index else 0,
+                         отправок=int(vv['отправок'].get(ip, 0)), приговор=приговор, основание=основание,
+                         первый=common.dmy(F.at[ip, 't0']) if ip in F.index and pd.notna(F.at[ip, 't0']) else '',
+                         последний=common.dmy(F.at[ip, 't1']) if ip in F.index and pd.notna(F.at[ip, 't1']) else ''))
+    seen = set()
+    for x in cases:
+        main = x['обвинения'][0]['статья']
+        people = x['сигнатура']['ложных']
+        for ip in x['ips']:
+            if ip in seen: continue
+            seen.add(ip)
+            mobile = 'мобильн' in str(P['сеть'].get(ip, ''))
+            if x['важность'] == 'К сведению': v, why = 'наблюдать', f'{main}; дело к сведению'
+            elif mobile: v, why = 'ограничить частоту', f'{main}; мобильный оператор — за одним IP много абонентов'
+            elif people: v, why = 'ограничить частоту', f'{main}; из этой сети ходят люди ({nf(people)} визитов)'
+            else: v, why = 'заблокировать', f'{main}; людей из этой сети нет'
+            row(ip, x['дело'], x['кличка'], v, why)
+    for ips, why in ((c.m.get('staff_ips', []), 'сотрудник'), (c.m.get('server_ips', []), 'сервер сайта'),
+                     ([m_['ip'] for m_ in c.m.get('monitors', []) if isinstance(m_, dict)], 'система мониторинга')):
+        for ip in ips:
+            if ip not in seen: seen.add(ip); row(ip, '', '', 'не трогать', why)
+    D = pd.DataFrame(rows)
+    if len(D): D = D.sort_values(['приговор', 'запросов'], key=lambda s_: s_.map(VERDICT_ORDER) if s_.name == 'приговор' else -s_).reset_index(drop=True)
+    return D
 
 
 def signs(key, P, g, sub, fam, ctx):
-    """Приметы — как узнать на глаз."""
+    """Приметы — как узнать на глаз: список, каждая с большой буквы."""
     out = []
     ua = P['кто'].reindex(g.index).value_counts()
     if fam: out.append(f'представляется {fam}')
     if len(sub):
-        out.append(f"ответы: {common.codes_text(sub['status'].values).split(', ')[0]} и др.")
+        out.append(f"ответы: {common.codes_text(sub['status'].values).split(', ')[0]} и другие")
         ent = sub['base'].astype(str).value_counts().head(2)
         out.append('чаще всего запрашивает: ' + ', '.join(ent.index))
     if ctx.get('mask'): out.append('браузер без загрузки картинок и стилей')
     if ctx.get('noua'): out.append('без User-Agent')
     if key.startswith('op:'): out.append('меняет IP посреди визита, заходит через битые адреса')
     out.append('кто: ' + ', '.join(ua.index[:2]))
-    return '; '.join(out)
+    return [x[:1].upper() + x[1:] for x in out]
 
 
 def measures(ch, fam, nets, false_, key):

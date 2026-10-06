@@ -316,9 +316,9 @@ def build(c, res):
     for x in cases:
         mates = {}
         for s_, _, _ in x['состав']['подсети']:
-            for d in net_of.get(s_, ()):
+            for d in sorted(net_of.get(s_, ())):
                 if d != x['дело']: mates.setdefault(d, []).append(s_)
-        x['сообщники'] = [(d, f"общая подсеть {', '.join(v[:2])}") for d, v in mates.items()][:6]
+        x['сообщники'] = [(d, f"общая подсеть {', '.join(v[:2])}") for d, v in sorted(mates.items(), key=lambda kv: (-len(kv[1]), kv[0]))][:6]   # порядок не плавает
     names = {x['дело']: x['кличка'] for x in cases}
     for x in cases: x['сообщники'] = [(d, names.get(d, ''), why) for d, why in x['сообщники']]
     # состав по IP

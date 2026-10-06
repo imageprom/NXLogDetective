@@ -202,6 +202,23 @@ def learn_monitors(items, site=''):
     return ok
 
 
+_RANGES = None
+
+
+def robot_ranges():
+    """Официальные сети роботов из data/reference/robot_ranges.json: {семейство: [сети]} (обновление — tools/update_robot_ranges.py)."""
+    global _RANGES
+    if _RANGES is None:
+        import json, os, ipaddress
+        p = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'robot_ranges.json')
+        try:
+            d = json.load(open(p, encoding='utf-8')).get('семейства', {})
+            _RANGES = {f: [ipaddress.ip_network(n, strict=False) for n in nets] for f, nets in d.items() if nets}
+        except Exception:
+            _RANGES = {}
+    return _RANGES
+
+
 def reverify(R, V):
     """Подлинность объявленных роботов — заново по справочнику сетей (ipdb.VERIFIED), если он изменился после подготовки логов.
     Визит робота, который пришёл не из своей сети, — подделка: группа «Боты», подгруппа «подделки роботов»."""
@@ -211,6 +228,20 @@ def reverify(R, V):
     for f, allowed in ipdb.VERIFIED.items():
         m = fam == f
         if m.any(): ver[m] = np.where(np.isin(R['asn'].values[m], list(allowed)), 'да', 'нет')
+    RG = robot_ranges()   # официальные списки сетей (Google, Bing, OpenAI, Perplexity, DuckDuckGo): точнее, чем ASN
+    if RG:
+        import ipaddress
+        ipc, ipcode = R['ip'].cat.categories.astype(str).values, R['ip'].cat.codes.values
+        for f, nets in RG.items():
+            m = fam == f
+            if not m.any(): continue
+            codes = np.unique(ipcode[m])
+            ok = np.zeros(len(ipc), bool)
+            for k in codes:
+                try:
+                    a_ = ipaddress.ip_address(ipc[k]); ok[k] = any(a_ in n_ for n_ in nets)
+                except ValueError: pass
+            ver[m] = np.where(ok[ipcode[m]], 'да', 'нет')
     R['fam_verified'] = pd.Categorical(ver)
     first = pd.Series(ver).groupby(R['vid'].values).first()
     V = V.copy()

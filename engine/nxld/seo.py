@@ -140,12 +140,16 @@ def authenticity(c):
     V = c.V
     S = V[V['fam_cat'].astype(str) == 'Поисковик']
     if not len(S): return pd.DataFrame()
-    S = S.assign(_ok=(S['fam_verified'].astype(str) == 'да'))
-    g = S.groupby(S['fam'].astype(str))
-    t = pd.DataFrame({'IP': g['ip'].nunique(), 'подлинных_IP': S[S['_ok']].groupby(S['fam'].astype(str))['ip'].nunique(),
-                      'поддельных_IP': S[~S['_ok']].groupby(S['fam'].astype(str))['ip'].nunique(),
-                      'запросов': g['n_req'].sum(), 'запросов_подделок': S[~S['_ok']].groupby(S['fam'].astype(str))['n_req'].sum()}).fillna(0).astype(int)
+    fv = S['fam_verified'].astype(str)
+    S = S.assign(_ok=(fv == 'да'), _fake=(fv == 'нет'))   # пусто — у робота нет опубликованных сетей: подлинность не проверить, это не подделка
+    f_ = S['fam'].astype(str)
+    g = S.groupby(f_)
+    t = pd.DataFrame({'IP': g['ip'].nunique(), 'подлинных_IP': S[S['_ok']].groupby(f_[S['_ok']])['ip'].nunique(),
+                      'поддельных_IP': S[S['_fake']].groupby(f_[S['_fake']])['ip'].nunique(),
+                      'запросов': g['n_req'].sum(), 'запросов_подделок': S[S['_fake']].groupby(f_[S['_fake']])['n_req'].sum()}).fillna(0).astype(int)
     t['подделок_%'] = (t['запросов_подделок'] / t['запросов'].clip(lower=1) * 100).round(1)
+    checked = S.groupby(f_)['fam_verified'].agg(lambda s_: (s_.astype(str) != '').any())
+    t['проверяется'] = checked.reindex(t.index).fillna(False).values
     return t.sort_values('запросов', ascending=False).reset_index().rename(columns={'fam': 'робот', 'index': 'робот'})
 
 

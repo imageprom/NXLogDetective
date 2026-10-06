@@ -62,6 +62,20 @@ def slash_check(rows, R):
     return rows
 
 
+def regions_info(MK):
+    """Справочник регионов: дата и сколько кодов без названия — Детективу решить, не пора ли обновить (SKILL.md)."""
+    from .marketing import regions
+    import json as _j, os as _o
+    p = _o.path.join(_o.path.dirname(__file__), '..', '..', 'data', 'reference', 'regions_yandex.json')
+    try: d_ = _j.load(open(p, encoding='utf-8')).get('загружено')
+    except Exception: d_ = None
+    T = (MK.get('реклама_боты') or {}).get('Регионы')
+    if T is None or not len(T) or 'регион' not in T: return dict(справочник_от=d_)
+    no = T[T['регион'].astype(str) == '']
+    return dict(справочник_от=d_, кодов=int(len(T)), без_названия=int(len(no)), кликов_без_названия=int(no['визитов_всех'].sum()),
+                доля_кликов_без_названия_проц=round(no['визитов_всех'].sum() / max(1, T['визитов_всех'].sum()) * 100, 1))
+
+
 def build(res, c, prev=None):
     S, sm, inv, m = res['sheets'], res['summary'], res['inventory'], res['site_map']
     V, R = c.V, c.R
@@ -178,6 +192,7 @@ def build(res, c, prev=None):
             кампании_впустую=recs(KB.sort_values('впустую', ascending=False), ['кампания', 'визитов_всех', 'ботов', 'доля_ботов_%', 'впустую'], n=6) if KB is not None else [],
             площадки_к_отключению=dict(всего=len(pl), визитов=int(pl['визитов'].sum()) if len(pl) else 0, крупнейшие=recs(pl, ['source', 'тип', 'визитов'], n=6)),
             метки=recs(SM.get('Метки: проблемы'), n=4),
+            регионы=regions_info(MK),
             впустую_что_это='клик впустую — бот по рекламной ссылке или человек на посадочной с ошибкой (кроме 499); роботы проверки объявлений не входят',
             где=dict(типы=ref('Маркетинг', 'Реклама: системы и типы площадок'), кампании=ref('Маркетинг', 'Реклама: Кампании'),
                      площадки=ref('Маркетинг', 'Площадки к отключению'), каналы=ref('Маркетинг', 'Каналы'), время=ref('Маркетинг', 'Конверсии по времени')))
@@ -274,6 +289,14 @@ def build(res, c, prev=None):
         if nh: q.append(f'{nh} отправок людей не приняты сервером — сверить (часть может быть повторными нажатиями)')
     q.append('звонки и мессенджеры в логах не видны')
     B['открытые_вопросы'] = q
+    try:   # выгрузка STIX 2.1 — что в пакете (для раздела «Файлы» текста); сам файл кладёт сборка отчёта
+        from .stix import build as stix_build
+        _, st_ = stix_build(res, (m.get('site_hosts') or ['site'])[0])
+        B['выгрузка_stix'] = dict({k: v for k, v in st_.items() if k != 'сигнатуры_в_пакете'}, файл='NXLD_<сайт>_<с>_<по>.stix.json',
+                                   что_это='STIX 2.1 — открытый стандарт OASIS для обмена данными об угрозах; принимают OpenCTI, MISP и другие',
+                                   документация='https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html')
+    except Exception:
+        pass
     B['что_за_сайт'] = res.get('site_profile')   # Детектив может поправить через edits.json → «site_profile»
     an = res.get('anatomy') or {}
     B['тематика_подсказки'] = an.get('подсказки')   # по ним Детектив называет тематику и уровни каталогов (edits.json → «anatomy_names», «site_profile.тематика»)

@@ -42,6 +42,7 @@ def apply(res, items=None):
     sec = res.get('security') or {}
     for x in items:
         if x.get('_до_тревоги'): x['важность'] = x.pop('_до_тревоги')   # повторный вызов — от исходной важности
+        x.pop('почему_тревога', None)   # объяснение — только у действующей тревоги (проверка из сети могла её снять)
         t, why = _type(x), None
         if t == 'exposed' and R_.get('утечка_открыта_сейчас'):
             op = leaks_open(res)

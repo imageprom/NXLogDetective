@@ -238,7 +238,7 @@ def textile(res, site, file_names):
 from .edits import apply as apply_edits   # правки Детектива — в engine/nxld/edits.py
 
 
-def build(res, outdir, site=None, edits=None, redmine=None, only=None):
+def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=None):
     """redmine — путь к тексту, который написал ИИ по brief.json (work/NXLD_Redmine.textile).
     Если его нет, кладётся запасной черновик движка с пометкой «черновик»."""
     os.makedirs(outdir, exist_ok=True)
@@ -257,6 +257,12 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     report_marketing.relink(res['findings'])   # и 05
     from . import report_seo
     report_seo.relink(res['findings'])   # и 06
+    if workdir and edits and not only:   # выжимка — заново, с правками и проверками из сети: текст пишется по ней (SKILL.md, шаг 5)
+        try:
+            from . import brief as brief_
+            brief_.refresh(res, workdir)
+        except Exception:
+            import traceback; traceback.print_exc()
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
@@ -382,10 +388,11 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         written.append(path)
     if only:
         return dict(files=written, zip=None, stem=stem)
-    tx = os.path.join(outdir, 'NXLD_Redmine.textile')
     if redmine and os.path.exists(redmine):
+        tx = os.path.join(outdir, 'NXLD_Redmine.textile')
         text = open(redmine, encoding='utf-8').read()
-    else:
+    else:   # запасной черновик — под своим именем, чтобы его не спутали с текстом Детектива
+        tx = os.path.join(outdir, 'NXLD_Redmine_черновик.textile')
         text = textile(res, site, file_names).replace('h2. NX Log Detective:', 'h2. Черновик. NX Log Detective:', 1)
         text = text.replace('\n\n', '\n\n_Черновик движка: связный текст пишет Детектив по brief.json (см. SKILL.md, шаг 5)._\n\n', 1)
     open(tx, 'w', encoding='utf-8').write(text)

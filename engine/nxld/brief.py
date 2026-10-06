@@ -313,6 +313,14 @@ def build(res, c, prev=None):
     return B
 
 
+def refresh(res, workdir):
+    """Пересобрать brief.json после правок Детектива (--stage report --edits): тревоги, важность, проверки из сети — актуальные."""
+    from types import SimpleNamespace
+    c = SimpleNamespace(V=pd.read_pickle(os.path.join(workdir, 'V.pkl')), R=pd.read_pickle(os.path.join(workdir, 'R.pkl')))
+    prev = {'period': res['prev_period'], 'format': res.get('prev_format')} if res.get('prev_period') else None
+    return save(build(res, c, prev), workdir)
+
+
 def save(B, workdir):
     p = os.path.join(workdir, 'brief.json')
     txt = json.dumps(B, ensure_ascii=False, default=str, separators=(',', ':'))

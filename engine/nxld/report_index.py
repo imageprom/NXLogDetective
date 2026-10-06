@@ -464,7 +464,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     for b, f in BLOCK_FILES.items():
         if b == 'Общий анализ' or b not in res['selected']: continue
         rows.append((f, FILE_NOTES.get(b, ''), f))
-    rows += [('NXLD_Redmine.textile', 'связный отчёт Детектива для задачи в Redmine', None),
+    rows += [('NXLD_Redmine.textile', 'связный отчёт Детектива для задачи в Redmine (если его нет — NXLD_Redmine_черновик.textile, сухой черновик движка)', None),
              ('*.snapshot.json', 'снимок проверки — понадобится для повторной проверки', None)]
     st_ = res.get('stix') or {}
     if st_:

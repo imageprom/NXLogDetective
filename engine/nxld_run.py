@@ -48,9 +48,9 @@ def main():
         edits = json.load(open(a.edits, encoding='utf-8')) if a.edits else None
         rm = a.redmine or os.path.join(a.work, 'NXLD_Redmine.textile')
         only = {BLK[x.strip()] for x in a.only.split(',') if x.strip()} if a.only else None
-        out = report.build(res, a.out, a.site, edits, rm, only)
+        out = report.build(res, a.out, a.site, edits, rm, only, a.work)
         if not os.path.exists(rm) and not only:
-            print('Текста для Redmine от ИИ нет — в архив положен черновик движка. Напишите текст по work/brief.json и пересоберите --stage report.')
+            print('Текста для Redmine от ИИ нет — в архив положен черновик движка (NXLD_Redmine_черновик.textile). Напишите текст по work/brief.json (он пересобран с правками) и пересоберите --stage report.')
         print('Готово:', out['zip'] or ', '.join(out['files']))
 
 

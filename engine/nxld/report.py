@@ -297,6 +297,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     report_errors.relink(res['findings'])   # карточки ссылаются на новые листы 02
     from . import report_load
     report_load.relink(res['findings'])   # и 03
+    from . import report_bots
+    report_bots.relink(res['findings'])   # и 04
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
@@ -319,6 +321,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         elif b == 'Нагрузка и безопасность':   # 03 — по правилам 01 и 02: обзор вместо «Сводки» и «О данных»
             from . import report_load
             sheets = {'Обзор': pd.DataFrame(), **report_load.sheets_for(S)}
+            hidden = None
+        elif b == 'Боты':   # 04 — по правилам 01–03: обзор вместо «Сводки» и «О данных»
+            from . import report_bots
+            sheets = report_bots.sheets_for(S, res)
             hidden = None
         elif b == 'Ошибки':   # 02 — по правилам Overview: сводка вместо «Сводки» и «О данных» (они в Overview)
             from . import report_errors
@@ -345,9 +351,9 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             report_errors.build(wb, res, S, site)
         if b == 'Нагрузка и безопасность':
             report_load.build(wb, res, S, site)
-        if b == 'Боты' and res.get('security'):
-            from . import report_load as rl_
-            rl_.scanner_ips_sheet(wb, res)
+        if b == 'Боты':
+            from . import report_bots
+            report_bots.build(wb, res, S, site)
         if b == 'Общий анализ':
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}
@@ -387,7 +393,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
             report_index.build_index(wb, res, names)
         report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
         report_tables.mask_pd_cells(wb)  # персональные данные в адресах — маскированно на всех листах
-        if b not in ('Ошибки', 'Нагрузка и безопасность'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
+        if b not in ('Ошибки', 'Нагрузка и безопасность', 'Боты'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
         wb.save(path)
         written.append(path)
     if only:

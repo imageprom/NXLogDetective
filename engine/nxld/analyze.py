@@ -237,6 +237,12 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         if os.environ.get('NXLD_DUMP_CTX'): pickle.dump((c, res), open(os.environ['NXLD_DUMP_CTX'], 'wb'), protocol=4)   # отладка срезов 03 без полного пересчёта
         res['security'] = security.build(c, res, res['sheets'].get('Нагрузка и безопасность', {}))
         security.findings(res, F.items)
+    from . import profiles   # «Дела» атакующих для 04: обвинения, сигнатуры, состав — после реестров, ошибок и срезов 03
+    try:
+        res['profiles'] = profiles.build(c, res)
+        res['bots_extra'] = profiles.extras(c, res)
+    except Exception:
+        import traceback; traceback.print_exc(); res['profiles'], res['bots_extra'] = None, None
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
     brief.save(brief.build(res, c, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')

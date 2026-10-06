@@ -140,6 +140,19 @@ def links_sheets(wb, E):
         legend(wb[nm], ['люди', 'обычно', 'неактуально'])
 
 
+def search_errors_sheet(wb, SE, nm='Поисковые ошибки'):
+    """Поисковые ошибки — лист 06 «SEO» (или 02, если 06 не строится)."""
+    if SE is None or not len(SE): return None
+    if nm not in wb.sheetnames: wb.create_sheet(nm)
+    d = pd.DataFrame({'Робот': SE['робот'], 'Тип страницы': SE['шаблон'], 'Ошибки': SE['коды'].map(fmt_codes), 'Запросов': SE['запросов'], 'Ошибок': SE['ошибок']})
+    data_sheet(wb, nm, d, nm, 'Страницы, которые поисковые роботы получают с ошибкой, — они выпадают из поиска', {'Тип страницы': 55, 'Ошибки': 24}, wrap=('Тип страницы', 'Ошибки'),
+               row_rule=lambda r: F_NOTE if any(t.strip().startswith('5') for t in str(r.get('Ошибки', '')).split(',')) else None, red=())
+    notes(wb[nm], ['5xx — сервер отказывает роботу: страница может выпасть из поиска, даже если она существует. 404 — страницы нет, робот её забудет.'])
+    legend(wb[nm], ['5xx', 'обычно'])
+    redden_codes(wb, only=(nm,), rx=r'^Ошибки$')
+    return wb[nm]
+
+
 def full_sheets(wb, S, recent='', OUT=None):
     """Остальные полные листы — в едином табличном стиле, с человеческими колонками, подписями и подсветкой."""
     def put(name, df, note, rename, widths, wrap=(), kpi=None, kpi_col=None, rule=None, links=(), center=(), font=None):
@@ -303,6 +316,7 @@ def overview(wb, res, S, site):
         rows = [[r['тип'], ERRLOG_MEANING.get(r['тип'], ('', False))[0], int(r['сообщений']), _d(r['первый']), _d(r['последний'])] for _, r in EL.iterrows()]
         W.table(['Тип', 'Диагностическое значение', 'Сообщений', 'Первый', 'Последний'], rows, ['B', 'CDE', 'F', 'G', 'H'], num=(2,), center=(3, 4), wrap=0.95)
         W.link('Какие запросы вызывали', 'Error-лог', names)
+    W.related(res, 'Ошибки')
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

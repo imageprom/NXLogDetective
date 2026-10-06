@@ -61,12 +61,12 @@ def link(V, spam_ips, human_direct_max=5):
             add(r['ip'], o['ip'], 'смена IP посреди визита', 'сильная',
                 f"{o['ip']} открыл {pth} (404) в {_ts(o['start'])}, через {int((r['start'] - o['start']) // 60)} мин {r['ip']} пришёл с этой страницы и отправил форму")
             if o['ip'] not in spam_ips: recon.add(o['ip'])
-        for o in spam404_by_entry.get(pth, set()) - {r['ip']}:
+        for o in sorted(spam404_by_entry.get(pth, set()) - {r['ip']}):
             add(r['ip'], o, 'реферер — битый вход другого спамера', 'средняя',
                 f"{r['ip']} пришёл со страницы {pth}, которой нет на сайте; через неё же входил спамер {o}")
     # разведка, вошедшая через те же редкие битые адреса, что и спам
     for _, r in e404[e404['ip'].isin(recon)].drop_duplicates(['ip', 'entry']).iterrows():
-        for o in spam404_by_entry.get(r['entry'], set()):
+        for o in sorted(spam404_by_entry.get(r['entry'], set())):
             nh = int(hum_direct.get(r['entry'], 0))
             add(r['ip'], o, 'общий битый вход', 'сильная' if nh <= human_direct_max else 'средняя',
                 f"разведка {r['ip']} и спамер {o} входили на {r['entry']} (404); людей с прямым заходом туда {nh}")
@@ -100,7 +100,7 @@ def link(V, spam_ips, human_direct_max=5):
         while parent[x] != x:
             parent[x] = parent[parent[x]]; x = parent[x]
         return x
-    for ip in spam_ips | recon: find(ip)
+    for ip in sorted(spam_ips | recon): find(ip)   # порядок обхода — по IP: группы и их номера одинаковы от запуска к запуску
     for _, e in E[E['сила'] == 'сильная'].iterrows():
         parent[find(e['IP_A'])] = find(e['IP_B'])
     changed = True
@@ -112,11 +112,12 @@ def link(V, spam_ips, human_direct_max=5):
             if a == b: continue
             k = tuple(sorted((a, b)))
             score[k][(e['улика'], e['сила'])] = W[e['сила']]
-        for (a, b), types in score.items():
+        for (a, b), types in sorted(score.items()):
             if any(f == 'средняя' for _, f in types) and sum(types.values()) >= 3 and find(a) != find(b):
                 parent[find(a)] = find(b); changed = True
+                break   # по одной склейке за круг: результат не зависит от порядка пар
     comps = defaultdict(set)
-    for ip in spam_ips | recon: comps[find(ip)].add(ip)
+    for ip in sorted(spam_ips | recon): comps[find(ip)].add(ip)
     # компактная таблица улик: по одной строке на присоединение IP к группе (самая сильная улика пары,
     # остальные улики этой пары — через «;»), плюс связи между разными группами, которых не хватило для склейки
     E['_s'] = E['сила'].map({'сильная': 0, 'средняя': 1, 'слабая': 2})
@@ -140,4 +141,4 @@ def link(V, spam_ips, human_direct_max=5):
     cols = ['IP_A', 'IP_B', 'сила', 'улика', 'доказательство', 'учтена']
     out = pd.concat([out, rest], ignore_index=True)
     out = out[cols] if len(out) else pd.DataFrame(columns=cols)
-    return list(comps.values()), recon, out
+    return sorted(comps.values(), key=lambda g: (-len(g), min(g))), recon, out

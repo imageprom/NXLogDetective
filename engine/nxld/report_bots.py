@@ -102,6 +102,20 @@ def wanted(wb, Pf):
     return ws
 
 
+def ai_sheet(wb, AI, AP, nm='ИИ-роботы', title=None):
+    """ИИ-роботы и страницы, которые нейросети открывали по запросам людей (04, или «ИИ-видимость» в 06)."""
+    if AI is None or not len(AI): return None
+    if nm not in wb.sheetnames: wb.create_sheet(nm)
+    d = pd.DataFrame({'Назначение': AI['назначение'], 'Робот': AI['робот'], 'Запросов': AI['запросов'].astype(int), 'Уникальных IP': AI['IP'].astype(int), 'Дней': AI['дней'].astype(int),
+                      'Трафик, МБ': AI['МБ'], 'Ошибок': AI['ошибок'].astype(int), 'Подлинных, %': AI['подлинных_%'], 'Что читал': AI['что_читал']})
+    data_sheet(wb, nm, d, nm, title or 'Роботы нейросетей: обучение, поисковый индекс, ответы на запросы людей', {'Назначение': 24, 'Робот': 30, 'Что читал': 50}, wrap=('Назначение', 'Робот', 'Что читал'),
+               kpi=[('Роботов', len(d)), ('Запросов', int(d['Запросов'].sum()))], kpi_col='Дней', red=())
+    if AP is not None and len(AP):
+        extra_table(wb[nm], pd.DataFrame({'Страница': AP['base'], 'Робот': AP['fam'], 'Запросов': AP['запросов'].astype(int), 'Дней': AP['дней'].astype(int)}).head(200),
+                    'Страницы по запросам людей', 'Что нейросети открывали, отвечая людям', wrap=('Страница',))
+    return wb[nm]
+
+
 def build_sheets(wb, res, S):
     Pf = res.get('profiles') or {}
     EX = res.get('bots_extra') or {}
@@ -201,7 +215,7 @@ def build_sheets(wb, res, S):
         d = pd.DataFrame({'Реклама': AD['channel_sub'], 'Вид бота': AD['вид'], 'Визитов': AD['визитов'].astype(int), 'Уникальных IP': AD['IP'].astype(int), 'Частый вход': AD['вход']})
         data_sheet(wb, nm, d, nm, 'Визиты ботов по рекламным ссылкам — клики, за которые заплачено', {'Реклама': 26, 'Вид бота': 22, 'Частый вход': 60}, wrap=('Частый вход',),
                    kpi=[('Визитов ботов', int(d['Визитов'].sum())), ('Визитов людей с рекламы', int(EX.get('реклама_люди') or 0))], kpi_col='Частый вход', red=(),
-                   links=[('Реклама по кампаниям', ('NXLD_05_Marketing.xlsx', 'Реклама — Кампании'))])
+                   links=[('Реклама по кампаниям', ('NXLD_05_Marketing.xlsx', 'Кампании'))])
         notes(wb[nm], ['Рекламная система списывает деньги за каждый такой клик. Сети и IP из карточек можно исключить в настройках рекламы и сообщить о скликивании в поддержку.'])
     # Расписание ботов
     H = EX.get('расписание') or {}
@@ -240,18 +254,7 @@ def build_sheets(wb, res, S):
                           'Что запрашивали чаще всего': U['что'].astype(str).str.replace(', ', '\n'), 'Похоже на (по IP)': U['похоже'].astype(str).str.replace(', ', '\n')})
         data_sheet(wb, nm, d, nm, 'Программы без браузера: curl, wget, Python, PHP и другие — вывод по поведению каждого IP', {'Утилита': 22, 'Что запрашивали чаще всего': 50, 'Похоже на (по IP)': 40},
                    wrap=('Что запрашивали чаще всего', 'Похоже на (по IP)'), kpi=[('Утилит', len(d))], kpi_col='Зондов', red=())
-    # ИИ-роботы
-    AI, AP = BS.get('ИИ-роботы'), BS.get('ИИ: страницы по запросам людей')
-    if AI is not None and len(AI):
-        nm = 'ИИ-роботы'
-        if nm not in wb.sheetnames: wb.create_sheet(nm)
-        d = pd.DataFrame({'Назначение': AI['назначение'], 'Робот': AI['робот'], 'Запросов': AI['запросов'].astype(int), 'Уникальных IP': AI['IP'].astype(int), 'Дней': AI['дней'].astype(int),
-                          'Трафик, МБ': AI['МБ'], 'Ошибок': AI['ошибок'].astype(int), 'Подлинных, %': AI['подлинных_%'], 'Что читал': AI['что_читал']})
-        data_sheet(wb, nm, d, nm, 'Роботы нейросетей: обучение, поисковый индекс, ответы на запросы людей', {'Назначение': 24, 'Робот': 30, 'Что читал': 50}, wrap=('Назначение', 'Робот', 'Что читал'),
-                   kpi=[('Роботов', len(d)), ('Запросов', int(d['Запросов'].sum()))], kpi_col='Дней', red=())
-        if AP is not None and len(AP):
-            extra_table(wb[nm], pd.DataFrame({'Страница': AP['base'], 'Робот': AP['fam'], 'Запросов': AP['запросов'].astype(int), 'Дней': AP['дней'].astype(int)}).head(200),
-                        'Страницы по запросам людей', 'Что нейросети открывали, отвечая людям', wrap=('Страница',))
+    ai_sheet(wb, BS.get('ИИ-роботы'), BS.get('ИИ: страницы по запросам людей'))
     # Проверка IP и сети ботов
     CI = BS.get('Проверка IP')
     if CI is not None and len(CI):
@@ -353,6 +356,7 @@ def overview(wb, res, site):
         W.table(['Робот', 'Назначение', 'Запросов', 'Подлинных, %'], [[r['робот'], r['назначение'], int(r['запросов']), r['подлинных_%'] if pd.notna(r['подлинных_%']) else '—'] for _, r in AI.head(6).iterrows()],
                 ['BC', 'DEF', 'G', 'H'], num=(2,), wrap=0.95)
         W.link('Все ИИ-роботы', 'ИИ-роботы', names)
+    W.related(res, 'Боты')
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

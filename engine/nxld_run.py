@@ -12,7 +12,7 @@ import argparse, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nxld import prepare, analyze, report
 
-BLK = {'overview': 'Общий анализ', 'errors': 'Ошибки', 'load': 'Нагрузка и безопасность', 'security': 'Нагрузка и безопасность', 'bots': 'Боты', 'marketing': 'Маркетинг'}
+BLK = {'overview': 'Общий анализ', 'errors': 'Ошибки', 'load': 'Нагрузка и безопасность', 'security': 'Нагрузка и безопасность', 'bots': 'Боты', 'marketing': 'Маркетинг', 'seo': 'SEO'}
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
     ap.add_argument('--logs', nargs='*', default=[], help='файлы или папки с логами (.log, .gz, .zip)')
     ap.add_argument('--work', required=True, help='рабочая папка (промежуточные таблицы)')
     ap.add_argument('--out', help='папка для результата')
-    ap.add_argument('--blocks', default='all', help='overview,errors,load,bots,marketing или all (overview и errors — всегда)')
+    ap.add_argument('--blocks', default='all', help='overview,errors,load,bots,marketing,seo или all (overview и errors — всегда)')
     ap.add_argument('--check-ips', default='', help='IP через запятую для проверки')
     ap.add_argument('--marks', default=None, help='JSON {ключ_проблемы: комментарий} — отметки «это норма» или прошлый снимок .snapshot.json')
     ap.add_argument('--map-override', default=None, help='JSON с поправками карты сайта (site_hosts, staff_ips, catalog_templates ...)')

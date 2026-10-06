@@ -173,13 +173,16 @@ def build_sheets(wb, res, S):
         ws = _sheet(wb, nm, d, sub, wd, tuple(wd), kpi, 'Роботов', row_rule=rule)
         if ws is not None and col == 'source':
             notes(ws, ['Вердикт: «отключить: в основном боты» — ботов не меньше половины кликов; «отключить: трафик без заявок» — от 30 визитов людей и ни одной заявки; «мало данных» — решать рано.'])
-    # Органика
-    O = S.get('Органика')
-    if O is not None and len(O):
-        d = O.copy(); dt_ = pd.to_datetime(d['day'])
-        d = pd.concat([pd.DataFrame({'Дата': dt_.dt.strftime('%d.%m.%Y')}), d.drop(columns='day').astype(int)], axis=1)
-        _sheet(wb, 'Органика', d, 'Визиты людей из поиска по дням и поисковикам (переедет в файл 06 «SEO»)', {'Дата': 12}, (),
-               [('Визитов из поиска', int(d.drop(columns='Дата').values.sum()))], None, red=())
+    organic_sheet(wb, S.get('Органика'))
+
+
+def organic_sheet(wb, O):
+    """Органика — визиты людей из поиска по дням и поисковикам (06 «SEO», или 05, если 06 не строится)."""
+    if O is None or not len(O): return None
+    d = O.copy(); dt_ = pd.to_datetime(d['day'])
+    d = pd.concat([pd.DataFrame({'Дата': dt_.dt.strftime('%d.%m.%Y')}), d.drop(columns='day').astype(int)], axis=1)
+    return _sheet(wb, 'Органика', d, 'Визиты людей из поиска по дням и поисковикам', {'Дата': 12}, (),
+                  [('Визитов из поиска', int(d.drop(columns='Дата').values.sum()))], None, red=())
 
 
 def overview(wb, res, site):
@@ -232,6 +235,7 @@ def overview(wb, res, site):
     if LB is not None and len(LB):
         W.section('Метки', 'Рекламные ссылки с ошибками в метках: клики не попадут в отчёты систем аналитики.')
         W.table(['Проблема', 'Кликов', 'Пример'], [[r['проблема'], int(r['кликов']), str(r['пример'])[:120]] for _, r in LB.iterrows()], ['BC', 'D', 'EFGHI'], num=(1,), wrap=0.95)
+    W.related(res, 'Маркетинг')
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

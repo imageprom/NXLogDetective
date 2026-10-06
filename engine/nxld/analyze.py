@@ -6,7 +6,7 @@ from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
 STATUS_THRESHOLD = 0.30   # порог «стала хуже / исправлена частично» при повторной проверке
-BLOCKS = ['Общий анализ', 'Ошибки', 'Нагрузка и безопасность', 'Боты', 'Маркетинг']
+BLOCKS = ['Общий анализ', 'Ошибки', 'Нагрузка и безопасность', 'Боты', 'Маркетинг', 'SEO']
 
 
 def cleaning_stats(R, V):
@@ -74,7 +74,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
            'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None}
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
-          'Маркетинг': lambda: blocks.marketing(c, F)}
+          'Маркетинг': lambda: blocks.marketing(c, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)
     for b in BLOCKS:
         if b in selected or b == 'Боты':   # боты считаем всегда: нужны для листа IP и спама форм
             log(f'Блок: {b}')
@@ -248,6 +248,13 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         try: res['marketing'] = marketing.build(c, res)
         except Exception:
             import traceback; traceback.print_exc(); res['marketing'] = None
+    if 'SEO' in selected:   # 06: обход поисковиками, файлы для роботов, страницы без обхода; карточки о поиске переезжают сюда (ключи прежние)
+        from . import seo
+        try:
+            res['seo'] = seo.build(c, res)
+            seo.findings(res, F.items)
+        except Exception:
+            import traceback; traceback.print_exc(); res['seo'] = None
     from . import alarms, derive
     alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
     derive.build(res)   # признаки и сводки для оформления, выжимки и снимка

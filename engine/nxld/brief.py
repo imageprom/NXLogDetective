@@ -7,7 +7,7 @@ import json, os, re
 import numpy as np, pandas as pd
 
 FILES = {'Общий анализ': 'NXLD_01_Overview.xlsx', 'Ошибки': 'NXLD_02_Errors.xlsx', 'Нагрузка и безопасность': 'NXLD_03_Load_Security.xlsx',
-         'Боты': 'NXLD_04_Bots.xlsx', 'Маркетинг': 'NXLD_05_Marketing.xlsx'}
+         'Боты': 'NXLD_04_Bots.xlsx', 'Маркетинг': 'NXLD_05_Marketing.xlsx', 'SEO': 'NXLD_06_SEO.xlsx'}
 # частые обработчики форм → человеческое имя (если имени нет — ИИ называет форму сам по адресу и странице)
 FORM_NAMES = [(r'callback_newproject|newproject', 'заявка по новому проекту'), (r'modal_callback|callback', 'обратный звонок'),
               (r'excursion', 'запись на экскурсию'), (r'getprice|get_price|price', 'запрос цены'), (r'mortgage_consultation', 'консультация по ипотеке'),

@@ -7,8 +7,9 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from .findings import SEV_ORDER
 from . import report_index, report_problems, report_anatomy, report_files, report_tables
+from . import sheets as sheet_catalog
 
-FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing'}
+FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing', 'SEO': '06_SEO'}
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'Замечание': 'F3F3F3', 'отмечено как норма': 'EDEDED'}
 HDR = PatternFill('solid', fgColor='1F3864')
 FONT = 'Arial'
@@ -254,6 +255,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     report_bots.relink(res['findings'])   # и 04
     from . import report_marketing
     report_marketing.relink(res['findings'])   # и 05
+    from . import report_seo
+    report_seo.relink(res['findings'])   # и 06
     site = site or (res['site_map'].get('site_hosts') or ['site'])[0]
     p0, p1 = res['inventory']['period']
     stem = f"NXLD_{site_slug(site)}_{p0[:10]}_{p1[5:10]}"
@@ -265,6 +268,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
     for b in res['selected']:
         if only and b not in only: continue
         S = res['sheets'].get(b, {})
+        if 'SEO' in res['selected']:   # листы, переехавшие в 06 «SEO», в своих файлах не повторяются
+            S = {k_: v_ for k_, v_ in S.items() if k_ not in sheet_catalog.MOVED_TO_06.get(b, ())}
         items = [x for x in res['findings'] if x['блок'] == b]
         summ = kv_df(res['summary'].get(b, {}))
         if b == 'Общий анализ':
@@ -280,6 +285,9 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         elif b == 'Боты':   # 04 — по правилам 01–03: обзор вместо «Сводки» и «О данных»
             from . import report_bots
             sheets = report_bots.sheets_for(S, res)
+            hidden = None
+        elif b == 'SEO':   # 06 — как поисковики видят сайт
+            sheets = {'Обзор': pd.DataFrame()}
             hidden = None
         elif b == 'Маркетинг':   # 05 — по правилам 01–04: обзор вместо «Сводки», «О данных» и копий листов 01
             from . import report_marketing
@@ -316,6 +324,9 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None):
         if b == 'Маркетинг':
             from . import report_marketing
             report_marketing.build(wb, res, S, site)
+        if b == 'SEO':
+            from . import report_seo
+            report_seo.build(wb, res, site)
         if b == 'Общий анализ':
             if report_anatomy.build_anatomy(wb, res, names, index=1) is not None:
                 names = {'Проблемы': 'Проблемы', 'Анатомия сайта': 'Анатомия сайта', **{k: v for k, v in names.items() if k != 'Проблемы'}}

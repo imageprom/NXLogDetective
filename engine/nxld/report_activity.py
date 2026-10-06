@@ -84,7 +84,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
         rows = [[r['система'], r['как'], r['проверяет'], int(r['IP']), every(r['интервал']), int(r['запросов']), split_codes(r['коды'])[1], size(r['байт'])] for _, r in M.iterrows()]
         S.table(['Система', 'Как опознана', 'Что проверяет', 'Уникальных IP', 'Интервал', 'Запросов', 'Ошибки', 'Трафик'], rows, list(COLS), num=(3, 5, 7), center=(1, 4))
         S.red(r0, 'H')
-        if bots_file: S.link('Все роботы и системы мониторинга', (bots_file, 'Роботы — семейства'))
+        if bots_file: S.link('Все роботы и системы мониторинга', (bots_file, 'Роботы'))
     # 4а. утилиты
     U = A.get('утилиты')
     if U is not None and len(U):
@@ -102,7 +102,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
                  int(r['запросов']), int(r['IP']), int(r['дней']), size(r['байт']), split_codes(r['коды'])[1]] for _, r in Rb.iterrows()]
         S.table(['Робот', 'Категория', 'Подлинность', 'Запросов', 'Уникальных IP', 'Дней', 'Трафик', 'Ошибки'], rows, list(COLS), num=(2, 3, 4, 5, 6))
         S.red(r0, 'I')
-        if bots_file: S.link('Все роботы', (bots_file, 'Роботы — семейства'))
+        if bots_file: S.link('Все роботы', (bots_file, 'Роботы'))
     # 6. боты по сигнатурам
     B = A.get('сигнатуры')
     if B is not None and len(B):
@@ -110,7 +110,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
         S.section('Боты', 'Топ-10 сигнатур. Сигнатура — поведение, по которому бот себя выдал; одна сигнатура объединяет много IP-адресов и сетей.')
         rows = [[r['сигнатура'], r['вид'], int(r['визитов']), int(r['IP']), int(r['сетей']), int(r['дней']), int(r['заявок']), r['сеть']] for _, r in B.iterrows()]
         S.table(['Сигнатура', 'Вид', 'Визитов', 'Уникальных IP', 'Сетей', 'Дней', 'Заявок', 'Чаще всего из сети'], rows, list(COLS), num=(2, 3, 4, 5, 6))
-        if bots_file: S.link('Все боты и их улики', (bots_file, 'Боты — классы'))
+        if bots_file: S.link('Все боты и их улики', (bots_file, 'Виды ботов'))
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

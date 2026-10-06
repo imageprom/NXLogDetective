@@ -396,6 +396,26 @@ def nlist(s, sep=', '):
     return '\n'.join(x for x in out if x)
 
 
+_PV = None
+
+
+def paren_values(wb):
+    """04–06: «Googlebot: 28, YandexBot: 15» → «Googlebot (28), YandexBot (15)» — общий формат «название (значение)» (ТЗ, вычитка 04–06).
+    Только в оформлении: в данных движка формат прежний, его читают разборщики. Коды ответа («404: 297») и время не трогаются —
+    перед двоеточием должна стоять не цифра."""
+    import re
+    global _PV
+    if _PV is None: _PV = re.compile(r'(?<=[^\s\d:]): (\d(?:[\d\u00a0 ]*\d)?)(?=$|,|;|\n|\)|\.\s|\.$)')
+    for ws in wb.worksheets:
+        if ws.sheet_state != 'visible': continue
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if isinstance(v, str) and ': ' in v and not v.startswith('='):
+                    nv = _PV.sub(r' (\1)', v)
+                    if nv != v: cell.value = nv
+
+
 def fmt_codes(s):
     """«200:65634, 499:632» → «200 (65 634), 499 (632)» — чтобы не читалось как порт."""
     out = []

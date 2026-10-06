@@ -383,6 +383,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
         report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
         report_tables.mask_pd_cells(wb)  # персональные данные в адресах — маскированно на всех листах
         if b not in ('Ошибки', 'Нагрузка и безопасность', 'Боты'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
+        if b in ('Боты', 'Маркетинг', 'SEO'): report_tables.paren_values(wb)   # «название (значение)» вместо двоеточия
         report_tables.sanitize(wb)   # представление листов, легенды, ##### — общий проход перед сохранением
         wb.save(path)
         written.append(path)

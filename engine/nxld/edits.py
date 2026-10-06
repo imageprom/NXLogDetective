@@ -48,6 +48,22 @@ def apply(res, edits):
             if m_.any():
                 L_.loc[m_, 'проверка'] = ch.get('итог', 'проверено'); L_.loc[m_, 'проверено'] = ch.get('когда', '')
                 L_.loc[m_, 'внутри'] = ch.get('внутри', ''); L_.loc[m_, 'тревога'] = bool(ch.get('тревога'))
+    if edits.get('проверка_утечек'):   # итог проверки — в карточку: что открыто, что закрыто, есть ли внутри существенное
+        txt = '; '.join(f"{f_} — {ch.get('итог', 'проверено')}" + (f" ({ch['внутри']})" if ch.get('внутри') else '') for f_, ch in edits['проверка_утечек'].items())
+        when = next((ch.get('когда') for ch in edits['проверка_утечек'].values() if ch.get('когда')), '')
+        for x in res['findings']:
+            if x['key'].split(':')[1:2] == ['exposed'] and 'Проверено из сети' not in str(x.get('факты', '')):
+                x['факты'] = (str(x.get('факты', '')).rstrip('. ') + f". Проверено из сети{' ' + when if when else ''}: {txt}.").lstrip('. ')
+    if edits.get('проверка_сайта'):   # скил открыл robots.txt, карту сайта и т. п. (SKILL.md): итог — на лист «Файлы для роботов» и в карточки
+        Fr = (res.get('seo') or {}).get('файлы')
+        for f_, ch in edits['проверка_сайта'].items():
+            t_ = f"{ch.get('итог', '')}" + (f", {ch['когда']}" if ch.get('когда') else '') + (f": {ch['что']}" if ch.get('что') else '')
+            if Fr is not None and len(Fr):
+                if 'проверка' not in Fr: Fr['проверка'] = ''
+                if (Fr['файл'] == f_).any(): Fr.loc[Fr['файл'] == f_, 'проверка'] = t_
+            for x in res['findings']:
+                if x['key'].endswith(':' + f_) and 'Проверено из сети' not in str(x.get('факты', '')):
+                    x['факты'] = str(x.get('факты', '')).rstrip('. ') + f'. Проверено из сети: {t_}.'
     if edits.get('встраивание') and X_.get('встраивание') is not None and len(X_['встраивание']):   # скил сверил IP сайтов с нашим сервером
         Em_ = X_['встраивание']
         for h_, why in edits['встраивание'].items(): Em_.loc[Em_['сайт'] == h_, 'вывод'] = why

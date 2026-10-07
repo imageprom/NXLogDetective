@@ -397,6 +397,10 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
         if b not in ('Ошибки', 'Нагрузка и безопасность', 'Боты'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
         if b in ('Боты', 'Маркетинг', 'SEO'): report_tables.paren_values(wb)   # «название (значение)» вместо двоеточия
         report_tables.sanitize(wb)   # представление листов, легенды, ##### — общий проход перед сохранением
+        for n_ in sheet_catalog.missing(b, wb.sheetnames):   # страховка: лист без места в каталоге sheets.py
+            msg = f'Лист «{n_}» в {file_names[b][:-5]} нет в каталоге оформления'
+            if os.environ.get('NXLD_STRICT_CATALOG'): raise RuntimeError(msg)   # в тестах — ошибка
+            print(msg)
         wb.save(path)
         written.append(path)
         written += report_tables.write_big_csv(outdir)

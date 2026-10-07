@@ -57,7 +57,7 @@ def run(log, d, *extra):
     keep = {os.path.join(r, f): open(os.path.join(r, f), 'rb').read() for r, _, fs in os.walk(LEARNED) for f in fs}
     try:
         p = subprocess.run([sys.executable, os.path.join(ENGINE, 'nxld_run.py'), '--logs', path, '--work', work, '--out', out, *extra],
-                           capture_output=True, text=True, timeout=900)
+                           capture_output=True, text=True, timeout=900, env=dict(os.environ, NXLD_STRICT_CATALOG='1'))   # лист вне каталога — ошибка
     finally:
         for r, _, fs in os.walk(LEARNED):
             for f in fs:

@@ -26,7 +26,7 @@ def main():
             top = f.split('/')[0]
             if top == 'skill': arc = f[len('skill/'):]
             elif top in ('engine', 'data', 'tools') or f in ('README.md', 'LICENSE'): arc = f
-            else: continue   # docs/ (ТЗ), signatures/legacy — только в репозитории
+            else: continue   # signatures/legacy — только в репозитории
             z.write(os.path.join(ROOT, f), 'nx-log-detective/' + arc); n += 1
         z.writestr('nx-log-detective/VERSION', VERSION + '\n'); n += 1
     print(f'{zp}: {n} файлов, {os.path.getsize(zp) / 1024 ** 2:.1f} МБ')

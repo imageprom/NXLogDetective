@@ -435,6 +435,8 @@ def learn_signatures(cases, site, c):
     try: J = json.load(open(p, encoding='utf-8'))
     except Exception: J = {'сигнатуры': {}}
     d0, d1 = (c.inv.get('period') or ['', ''])[:2] if isinstance(c.inv, dict) else ('', '')
+    from .reference import anon
+    site = anon(site)   # сайт — отпечатком: справочник уходит в общий репозиторий
     for x in cases:
         s = x['сигнатура']
         e = J['сигнатуры'].setdefault(s['id'], dict(правило=s['правило'], rule=s['rule'], вид=x['вид'], сайты={}))

@@ -127,7 +127,8 @@ def cases_and_people(res, edits):
             for sid_ in filter(None, unlearn):
                 e = J.get('сигнатуры', {}).get(sid_)
                 if not e: continue
-                e.get('сайты', {}).pop(site, None)
+                from .reference import anon
+                e.get('сайты', {}).pop(anon(site), None); e.get('сайты', {}).pop(site, None)
                 if not e.get('сайты'): J['сигнатуры'].pop(sid_, None)
             json.dump(J, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=1, default=str)
         except Exception:

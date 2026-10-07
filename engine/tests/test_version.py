@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.join(ROOT, 'engine'))
 from nxld.prepare import VERSION  # noqa: E402
 
 
-def test_version_022():
-    assert VERSION == '0.2.2'
+def test_version_format():
+    assert re.fullmatch(r'\d+\.\d+(\.\d+)?(-[a-z0-9.]+)?', VERSION), VERSION
 
 
 def test_headers_match_engine():

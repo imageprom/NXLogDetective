@@ -173,8 +173,13 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     findings_meta.proofs(c, F.items, res['sheets'])
     flood_circumstance(F.items, res['sheets'])
     findings_text.humanize(F.items, res['sheets'], res['summary'])
+    findings_text.tidy_items(F.items)
     res['findings'] = F.items
     res['coverage'], res['loose_signals'] = coverage.check(res, F.items)
+    for x in res['loose_signals'] or []:
+        if isinstance(x, dict) and 'сигнал' in x: x['сигнал'] = findings_text.tidy(x['сигнал'])
+    sp = res.get('site_profile') or {}
+    if isinstance(sp.get('признаки'), list): sp['признаки'] = [findings_text.tidy(t) for t in sp['признаки']]
     res['query_params'] = getattr(c, 'query_params', None)
     from .thresholds import Sizes
     T_ = Sizes(визиты=int((V['group'] == 'Люди').sum()), запросы=len(R), ip=int(R['ip'].nunique()))   # пороги — доли от размера лога

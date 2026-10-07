@@ -95,6 +95,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
           'Маркетинг': lambda: blocks.marketing(c, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)
+    c.selected = tuple(selected)   # карточки блока, которого нет в отчёте, — в соседний выбранный (серверный фильтр)
     for b in BLOCKS:
         if b in selected or b == 'Боты':   # боты считаем всегда: нужны для листа IP и спама форм
             log(f'Блок: {b}')

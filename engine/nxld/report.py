@@ -173,7 +173,7 @@ def main_sheet(res, file_names):
     rows.append({'Блок': 'СРОЧНОЕ ПО БЛОКАМ'})
     urgent = [x for x in res['findings'] if x['важность'] == 'Срочно' and x.get('статус') != 'отмечено как норма' and x['блок'] in res['selected']]
     for x in sorted(urgent, key=lambda x: list(FILES).index(x['блок'])):
-        rows.append({'Блок': x['блок'], 'Что происходит': x['что_происходит'], 'Главная цифра': x['главная_цифра'], 'Где подробно': f"{file_names[x['блок']]} → лист «{x['лист']}»"})
+        rows.append({'Блок': x['блок'], 'Что происходит': x['что_происходит'], 'Главная цифра': x['главная_цифра'], 'Где подробно': f"{file_names[x.get('лист_блок') or x['блок']]} → лист «{x['лист']}»"})
     return pd.DataFrame(rows, columns=['Блок', 'Срочно', 'Важно', 'К сведению', 'Замечание', 'Что происходит', 'Главная цифра', 'Где подробно'])
 
 
@@ -193,7 +193,7 @@ def textile(res, site, file_names):
     """Запасной черновик движка — если Детектив не написал текст по brief.json. Порядок разделов — как в skill/references/redmine.md."""
     from .sheets import resolve
     inv = res['inventory']
-    where = lambda x: f"{file_names[x['блок']]}, лист «{resolve(x['блок'], x['лист'])}»" if x.get('лист') else file_names[x['блок']]
+    where = lambda x: f"{file_names[x.get('лист_блок') or x['блок']]}, лист «{resolve(x.get('лист_блок') or x['блок'], x['лист'])}»" if x.get('лист') else file_names[x['блок']]
     live = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     out = [f"h2. NX Log Detective: {site}, {inv['period'][0][:10]} — {inv['period'][1][:10]}", '',
            f"Проверены блоки: {', '.join(res['selected'])}. Запросов: " + f"{inv['requests']:,}".replace(',', ' ') + ". Подробности — в приложенных файлах NXLD_*.xlsx.", '']

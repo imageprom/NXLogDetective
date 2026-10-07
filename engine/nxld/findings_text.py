@@ -12,7 +12,7 @@ THEME = {
     '5xx': 'Сайт', '5xx_section': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
     'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'pd_in_get': 'Безопасность', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
-    'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность',
+    'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама',
     'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
     'search_errors': 'Поиск', 'no_service': 'Поиск', 'ai_index': 'Поиск', 'hotlink': 'Нагрузка', 'broken_labels': 'Реклама',
 }
@@ -158,8 +158,11 @@ def humanize(items, sheets, summary):
                         h = f"Не найден файл-заглушка {obj}"
                         f += ' Это заглушка для подгружаемых картинок: человек её, скорее всего, не видит, но страницы делают лишний запрос.'
             elif t == 'blocked_people':
-                h = 'Защита сервера отказывает людям'
-                f = f"Люди {n(x['главная_цифра'])} раз получили отказ в доступе ({x['факты']})."
+                h = 'Серверный фильтр отказывает людям'
+                f = f"Люди, которые смотрели сайт, {nw(x['главная_цифра'], 'раз', 'раза', 'раз')} получили отказ в доступе: {x['факты'].split(' отказов ', 1)[-1]}."
+            elif t in ('search_blocked', 'ad_checker_blocked'):
+                h = x['что_происходит']
+                f = 'Отказы в доступе: ' + x['факты'].rstrip('.') + '.'
             elif t == 'errlog':
                 v = nums(x['факты']); per = re.findall(r'(\d{4}-\d\d-\d\d)', x['факты'])
                 h = f"Ошибки в error-логе: {obj}"

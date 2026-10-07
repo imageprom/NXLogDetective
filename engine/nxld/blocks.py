@@ -613,19 +613,6 @@ def errors(c, F):
             if lab[i] != lab[i - 1]:
                 ch.append(dict(шаблон=t, день=days[i], было=lab[i - 1], стало=lab[i]))
     S['Изменения статусов'] = pd.DataFrame(ch)
-    # защита: кого блокирует
-    blk = np.isin(st, [403, 429, 444, 503])
-    # «люди» — только визиты, которые смотрели сайт (есть страница с ответом 200); сканер служебных файлов — не человек
-    browsing = np.isin(R['vid'].values, np.unique(R['vid'].values[c.human & R['is_page'].values & (st == 200)]))
-    probe = R['base'].cat.categories.to_series().str.contains(r'\.log$|/logs?/|^/(upload|uploads|images|files|bitrix|local)/$', regex=True, case=False).values[R['base'].cat.codes.values]   # логи и листинги папок ищут сканеры
-    PB = R.loc[blk & ~vuln_b & ~probe & ((c.human & browsing) | c.search_ok | (R['fam'] == 'YaDirectFetcher').values), ['day', 'status', 'nettype', 'cc', 'ua_webview', 'base', 'fam']]
-    if len(PB):
-        PB = PB.assign(кто=np.where(PB['fam'].astype(str) == '', 'люди', PB['fam'].astype(str)))
-        S['Защита: кого блокирует'] = PB.groupby(['кто', 'status', 'nettype', 'cc'], observed=True).agg(ответов=('day', 'size'), дней=('day', 'nunique'), пример=('base', 'first')).sort_values('ответов', ascending=False).reset_index().head(300)
-        nh = int((PB['кто'] == 'люди').sum())
-        if nh >= 30:
-            F.add('Ошибки', 'Важно', 'blocked_people', 'all', f'Люди получают блокировки (403/429/444/503): {nh} ответов',
-                  topn(PB.loc[PB['кто'] == 'люди', 'status']), 'защита (nginx, CMS, хостинг)', 'Проверить правила защиты', nh, 'Защита: кого блокирует')
     # error-лог
     if c.E is not None and len(c.E):
         E = c.E
@@ -907,6 +894,34 @@ def load_security(c, F):
     tok = qc.str.contains(recon.SECRET_RX, regex=True).values[R['query'].cat.codes.values]   # список секретов — общий с маскировкой (recon)
     if tok.sum():
         S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(recon.SECRET_RX)[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')
+    # серверный фильтр: кому защита сервера отказывает (403/429/444/503) — поисковым роботам, роботам проверки объявлений, людям
+    from . import security
+    sf = c.server_filter = security.server_filter(c)
+    if len(sf['таблица']):
+        S['Серверный фильтр'] = sf['таблица']
+        W_, sel = sf['кто'], getattr(c, 'selected', None)
+        own = lambda b: b if sel is None or b in sel else 'Нагрузка и безопасность'   # блок не выбран — карточка в 03, чтобы не потерялась
+        todo = (sf['вывод'] + '. ' if sf['вывод'] else '') + sf['что_сделать']
+        def card(block, sev, kind, title, facts, where, n, obj='site'):
+            b_ = own(block)
+            F.add(b_, sev, kind, obj, title, facts, where, todo, n, 'Серверный фильтр')
+            for x in F.items:
+                if x['key'] == f'{b_}:{kind}:{obj}': x['лист_блок'] = 'Нагрузка и безопасность'   # лист — в файле 03
+        se = W_[(W_['группа'] == 'Поисковые роботы') & ((W_['отказов'] >= 1000) | (W_['доля_%'] >= 5))]
+        if len(se):
+            card('SEO', 'Срочно', 'search_blocked', 'Серверный фильтр отказывает поисковым роботам',
+                 '; '.join(f"{r['кто']} — {r['отказов']} из {r['запросов']} ({str(r['доля_%']).replace('.', ',')}%), волны: {r['волны']}" for _, r in se.iterrows()),
+                 'защита сервера (nginx, хостинг, CMS)', int(se['отказов'].sum()))
+        ac = W_[(W_['группа'] == 'Роботы проверки объявлений') & (W_['отказов'] >= 10)]
+        if len(ac):
+            card('Маркетинг', 'Срочно', 'ad_checker_blocked', 'Серверный фильтр отказывает роботу проверки объявлений',
+                 '; '.join(f"{r['кто']} — {r['отказов']} из {r['запросов']} ({str(r['доля_%']).replace('.', ',')}%), волны: {r['волны']}" for _, r in ac.iterrows())
+                 + '. Объявления с такими посадочными могут не пройти модерацию', 'защита сервера (nginx, хостинг, CMS)', int(ac['отказов'].sum()))
+        hp = W_[W_['группа'] == 'Люди']
+        if len(hp) and int(hp['отказов'].iloc[0]) >= 30:
+            r = hp.iloc[0]
+            card('Нагрузка и безопасность', 'Важно', 'blocked_people', 'Серверный фильтр отказывает людям',
+                 f"{r['отказов']} отказов ({r['коды']}); страны: {r['страны']}; волны: {r['волны']}", 'защита сервера (nginx, хостинг, CMS)', int(r['отказов']), 'all')   # ключ прежний, блок — 03
     # флуд и работа защиты
     fl = mn.groupby(['m', 'ip']).size().sort_values(ascending=False).head(30).reset_index(name='запросов_в_минуту')
     fl['минута'] = dt(fl['m'] * 60); fl['ip'] = R['ip'].cat.categories[fl['ip']]

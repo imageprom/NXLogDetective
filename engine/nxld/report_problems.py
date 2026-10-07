@@ -43,7 +43,7 @@ def sheet_ref(name):
 
 def link_for(x, here_file):
     if not x.get('лист'): return None, None
-    f = BLOCK_FILES.get(x['блок'])
+    f = BLOCK_FILES.get(x.get('лист_блок') or x['блок'])   # лист может жить в файле другого блока (серверный фильтр — в 03)
     sh = sheet_ref(x['лист'])
     text = f'лист «{sh}»' + ('' if f == here_file else f' в {f}')
     target = f"#'{sh}'!A1" if f == here_file else f"{f}#'{sh}'!A1"

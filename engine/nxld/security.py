@@ -496,6 +496,78 @@ def attacks(c):
     return D.sort_values('запросов', ascending=False).reset_index(drop=True)
 
 
+# ---------- серверный фильтр: кому защита сервера отказывает ----------
+BLOCK_CODES = (403, 429, 444, 503)
+AD_CHECKERS = ('YaDirectFetcher', 'AdsBot-Google')   # роботы проверки объявлений (модерация посадочных)
+FILTER_GROUPS = ('Поисковые роботы', 'Роботы проверки объявлений', 'Люди')
+FILTER_WHAT = {'Поисковые роботы': 'страницы перестают обходиться и выпадают из поиска',
+               'Роботы проверки объявлений': 'объявления с такими посадочными могут не пройти модерацию',
+               'Люди': 'посетители не видят сайт'}
+GEO_NOTE = 'Похоже на гео-фильтр по стране; под него попадают подлинные поисковые роботы'
+FILTER_TODO = 'Исключить из фильтра подлинных поисковых роботов и роботов Яндекса по их официальным сетям'
+
+
+def waves(days):
+    """Дни отказов, слитые в диапазоны: «1–2.09, 18–24.09» (через месяц — «30.09–2.10»)."""
+    ds = sorted(pd.to_datetime(sorted(set(map(str, days)))))
+    if not ds: return ''
+    runs, a, b = [], ds[0], ds[0]
+    for d_ in ds[1:]:
+        if (d_ - b).days == 1: b = d_
+        else: runs.append((a, b)); a = b = d_
+    runs.append((a, b))
+    fmt = lambda x: f'{x.day}.{x.month:02d}'
+    return ', '.join(fmt(a) if a == b else (f'{a.day}–{fmt(b)}' if (a.year, a.month) == (b.year, b.month) else f'{fmt(a)}–{fmt(b)}') for a, b in runs)
+
+
+def server_filter(c):
+    """Отказы защиты сервера (403/429/444/503) подлинным поисковым роботам, роботам проверки объявлений и людям.
+    Зонды сканеров и уязвимые адреса не считаются. Строка — (группа, кто, код, тип сети, страна).
+    Возвращает словарь: таблица, группы (итоги для Обзора), кто (итоги по роботам и людям для карточек), вывод, что_сделать, гео."""
+    from .blocks import VULN
+    R = c.R
+    st = R['status'].values
+    codes = R['base'].cat.codes.values
+    bcat = R['base'].cat.categories.to_series()
+    vuln_b = bcat.str.contains(VULN, regex=True, case=False).values[codes]
+    probe = bcat.str.contains(r'\.log$|/logs?/|^/(upload|uploads|images|files|bitrix|local)/$', regex=True, case=False).values[codes]   # логи и листинги папок ищут сканеры
+    # «люди» — только визиты, которые смотрели сайт (есть страница с ответом 200); сканер служебных файлов — не человек
+    browsing = np.isin(R['vid'].values, np.unique(R['vid'].values[c.human & R['is_page'].values & (st == 200)]))
+    fam = R['fam'].astype(str).values
+    ad = np.isin(fam, AD_CHECKERS) & (R['fam_verified'].astype(str).values == 'да')
+    grp = np.select([c.search_ok, ad, c.human & browsing], list(FILTER_GROUPS), '')
+    who = np.where(grp == 'Люди', 'люди', fam)
+    inside = grp != ''
+    blk = inside & np.isin(st, BLOCK_CODES) & ~vuln_b & ~probe
+    empty = dict(таблица=pd.DataFrame(), группы=pd.DataFrame(), кто=pd.DataFrame(), вывод='', что_сделать=FILTER_TODO, гео=False)
+    if not blk.any(): return empty
+    total = pd.Series(who[inside]).value_counts()
+    X = pd.DataFrame({'группа': grp[blk], 'кто': who[blk], 'код': st[blk].astype(int), 'сеть': R['nettype'].astype(str).values[blk],
+                      'страна': R['cc'].astype(str).values[blk], 'день': R['day'].astype(str).values[blk], 'адрес': R['base'].astype(str).values[blk]})
+    g = X.groupby(['группа', 'кто', 'код', 'сеть', 'страна'], sort=False)
+    D = g.agg(ответов=('день', 'size'), дней=('день', 'nunique'), пример=('адрес', 'first')).reset_index()
+    D['волны'] = [waves(v) for v in g['день'].agg(lambda s: tuple(s.unique())).values]
+    D['доля_%'] = (D['ответов'] / D['кто'].map(total).values * 100).round(1)
+    D['_g'] = D['группа'].map({k: i for i, k in enumerate(FILTER_GROUPS)})
+    D = D.sort_values(['_g', 'ответов'], ascending=[True, False]).drop(columns='_g').reset_index(drop=True)
+    D = D[['группа', 'кто', 'код', 'сеть', 'страна', 'ответов', 'доля_%', 'дней', 'волны', 'пример']]
+    W = X.groupby('кто').agg(группа=('группа', 'first'), отказов=('день', 'size'), дней=('день', 'nunique')).reset_index()
+    W['запросов'] = W['кто'].map(total).astype(int).values
+    W['доля_%'] = (W['отказов'] / W['запросов'] * 100).round(1)
+    W['волны'] = W['кто'].map(X.groupby('кто')['день'].agg(waves))
+    W['страны'] = W['кто'].map(X.groupby('кто')['страна'].agg(lambda s: ', '.join(f'{k or "?"} — {v}' for k, v in s.value_counts().head(5).items())))
+    W['коды'] = W['кто'].map(X.groupby('кто')['код'].agg(lambda s: ', '.join(f'{k}: {v}' for k, v in s.value_counts().items())))
+    W = W.sort_values('отказов', ascending=False).reset_index(drop=True)
+    G = pd.DataFrame([dict(группа=k, отказов=int((X['группа'] == k).sum()), дней=int(X.loc[X['группа'] == k, 'день'].nunique()),
+                           кто=', '.join(W.loc[W['группа'] == k, 'кто']) if k != 'Люди' else '', что=FILTER_WHAT[k]) for k in FILTER_GROUPS])
+    # гео-фильтр: все отказы — зарубежным адресам, а российские (они в логе есть) не получили ни одного
+    ru_all = int((inside & (R['cc'].astype(str).values == 'RU')).sum())
+    geo = bool(ru_all and X['страна'].ne('RU').all() and X['страна'].ne('').all())
+    robots = bool((X['группа'] != 'Люди').any())
+    note = (GEO_NOTE if robots else GEO_NOTE.split(';')[0]) if geo else ''
+    return dict(таблица=D, группы=G, кто=W, вывод=note, что_сделать=FILTER_TODO, гео=geo)
+
+
 # ---------- токены ----------
 def tokens(c):
     R = c.R
@@ -611,7 +683,7 @@ def build(c, res, S):
              ('типы_файлов', lambda: file_types(c)), ('тяжёлые', lambda: heavy_files(c)), ('паразиты', lambda: parasites(c, res)),
              ('встраивание', lambda: embedding(c, res, S)), ('админка', lambda: admin(c, S)), ('разделы', lambda: sections(S)),
              ('сканеры', lambda: scanners(c, S)), ('методы', lambda: methods(c)), ('атаки', lambda: attacks(c)), ('токены', lambda: tokens(c)),
-             ('конструкты', lambda: constructs_sec(c)), ('журнал', lambda: journal(c, res)), ('утечки', lambda: leaks(c, S, res.get('leak_checks')))]
+             ('конструкты', lambda: constructs_sec(c)), ('фильтр', lambda: getattr(c, 'server_filter', None)), ('журнал', lambda: journal(c, res)), ('утечки', lambda: leaks(c, S, res.get('leak_checks')))]
     for k, f in steps:
         try: out[k] = f()
         except Exception:

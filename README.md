@@ -1,4 +1,4 @@
-# NX Log Detective (NXLD) 0.2.0-alpha
+# NX Log Detective (NXLD) 0.2.2
 
 Скил NX Log Detective анализирует access- и error-логи сайта (nginx, Apache) по ТЗ «NX Log Detective 1.0». Сборки до прохождения тестовых прогонов нумеруются 0.x.
 

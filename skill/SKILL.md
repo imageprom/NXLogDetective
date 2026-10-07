@@ -3,7 +3,7 @@ name: nx-log-detective
 description: NX Log Detective (NXLD) — анализ access/error-логов сайта (nginx, Apache) по ТЗ NXLD 1.0. Использовать, когда пользователь даёт логи сайта и просит разобрать ошибки, ботов, нагрузку и безопасность, маркетинг и конверсии, сравнить с прошлой проверкой или проверить подозрительные IP.
 ---
 
-# NX Log Detective 0.2.0-alpha
+# NX Log Detective 0.2.2
 
 Пиши бренд так: **NX Log Detective**, кратко **NXLD**. NX — всегда заглавными. В именах папок и файлов — без пробелов (`NXLogDetective`, `NXLD_…`).
 

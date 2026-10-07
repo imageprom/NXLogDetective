@@ -6,14 +6,14 @@
 from . import sheets
 import pandas as pd
 from openpyxl.styles import Font
-from .report_index import Wide, brand_header, GREY
-from .report_tables import data_sheet, journal_sheet, service_files, F_NOTE, _day, legend, fmt_codes, redden_codes, heat_sheet
+from .report_index import Wide, brand_header, GREY, ORANGE
+from .report_tables import data_sheet, journal_sheet, service_files, F_NOTE, _day, legend, fmt_codes, redden_codes, heat_sheet, extra_table
 from .report_index import GREY as T_GREY
 from .errors import WHO, FAMILIES, by_family, ERRLOG_MEANING
 
 F_GREY = 'EFEFEF'
 DROP = ('Коды ответа', 'Служебные файлы', 'Отсутствующие ресурсы', 'Ошибки по дням', '5xx по шаблонам', 'Битые ссылки',
-        'Битые ссылки: страницы-источники', '404: входы извне', 'Изменения статусов')
+        'Битые ссылки: страницы-источники', '404: входы извне', 'Изменения статусов', 'Идентичные ответы', 'Пустые страницы')   # последние два — лист «Мягкие ошибки»
 RENAME = sheets.RENAME_02
 # старые имена листов в карточках → новые
 LINK = sheets.LINK_02
@@ -153,6 +153,42 @@ def search_errors_sheet(wb, SE, nm='Поисковые ошибки'):
     return wb[nm]
 
 
+def soft_sheet(wb, G, P, nm='Мягкие ошибки'):
+    """Мягкие ошибки: ответ 200, но не та страница — идентичные ответы на множестве адресов (основная таблица) и почти пустые ответы."""
+    has_g, has_p = G is not None and len(G), P is not None and len(P)
+    if not has_g and not has_p: return None
+    if nm not in wb.sheetnames: wb.create_sheet(nm)
+    sub = 'Ответ 200, но не та страница: одна и та же на разные адреса или почти пустая'
+    def ident():
+        return pd.DataFrame({'Размер, байт': G['размер'], 'Разных адресов': G['разных_адресов'].astype(int), 'Запросов': G['запросов'].astype(int),
+                             'Людям, %': G['людям_%'], 'Ботам, %': G['ботам_%'], 'Поисковым роботам, %': G['поисковым_%'], 'Примеры адресов': G['примеры'], 'Что это': G['что_это']})
+    def empty():
+        d = pd.DataFrame({'Адрес': P['base'].astype(str), 'Ответов меньше 300 байт': P['ответов_меньше_300_байт'].astype(int)})
+        if 'что' in P: d['Что это'] = P['что']
+        if 'комментарий' in P: d['Комментарий'] = P['комментарий']
+        return d
+    crit = lambda: [F_NOTE if (a >= 500 and (h > 0 or s_ > 0)) else None for a, h, s_ in zip(G['разных_адресов'], G['людям_%'], G['поисковым_%'])]
+    norm = lambda: [F_GREY if x else None for x in (list(P['норма']) if 'норма' in P else [False] * len(P))]
+    kpi = [('Групп идентичных ответов', len(G) if has_g else 0), ('Адресов в них', int(G['разных_адресов'].sum()) if has_g else 0), ('Пустых ответов', len(P) if has_p else 0)]
+    first = ('Идентичные ответы', ident, crit) if has_g else ('Пустые ответы', empty, norm)
+    W_ = {'Размер, байт': 16, 'Примеры адресов': 46, 'Что это': 44, 'Адрес': 50, 'Комментарий': 55}
+    WR = ('Примеры адресов', 'Что это', 'Адрес', 'Комментарий')
+    data_sheet(wb, nm, first[1](), nm, sub, W_, wrap=WR, kpi=kpi, row_rule=lambda r, _it=iter(first[2]()): next(_it), red=())
+    ws = wb[nm]
+    ws.cell(3, 2, first[0].upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.freeze_panes = None   # заголовок первой таблицы — над шапкой
+    if has_g:
+        notes(ws, ['Идентичные ответы — страницы с ответом 200 одного размера (±2% от наименьшего в группе) на 200 и больше разных адресах: сервер отдаёт одну и ту же страницу вместо разных.',
+                   'Без косой черты — адрес без «/» в конце отдаёт не ту страницу, что адрес со «/». «Не найдено» с кодом 200 — размер совпадает с ответом 404 этого сайта: робот считает такую страницу настоящей.'])
+        legend(ws, ['критично', 'обычно'])
+    if has_g and has_p:
+        extra_table(ws, empty(), 'Пустые ответы', 'Страницы, которые сервер отдал почти пустыми; служебные адреса движка, где это норма, отмечены', wrap=WR,
+                    row_rule=lambda r, _it=iter(norm()): next(_it), red=())
+    if has_p:
+        notes(ws, ['Пустой ответ — меньше 300 байт. Норма — служебный адрес движка, для которого пустой ответ нормален (по справочнику движка). Остальное стоит открыть и проверить.'])
+        legend(ws, ['норма', 'обычно'])
+    return ws
+
+
 def full_sheets(wb, S, recent='', OUT=None):
     """Остальные полные листы — в едином табличном стиле, с человеческими колонками, подписями и подсветкой."""
     def put(name, df, note, rename, widths, wrap=(), kpi=None, kpi_col=None, rule=None, links=(), center=(), font=None):
@@ -204,14 +240,7 @@ def full_sheets(wb, S, recent='', OUT=None):
             if c_ is not None and str(c_.value) != '499': c_.font = F_(name='Arial', size=9, color=R_)
         notes(wb['Рекламные ошибки'], ['499 — человек не дождался загрузки: это вопрос скорости страницы, а не битая посадочная.'])
         legend(wb['Рекламные ошибки'], ['клик_впустую', 'обычно', 'неактуально'])
-    P = S.get('Пустые страницы')
-    if P is not None and len(P):
-        cols = {'base': 'Адрес', 'ответов_меньше_300_байт': 'Ответов меньше 300 байт', 'что': 'Что это', 'комментарий': 'Комментарий'}
-        norm = list(P['норма']) if 'норма' in P else [False] * len(P)
-        put('Пустые ответы', P, 'Страницы, которые сервер отдал почти пустыми; служебные адреса движка, где это норма, отмечены',
-            cols, {'Адрес': 50, 'Что это': 30, 'Комментарий': 55}, wrap=('Адрес', 'Что это', 'Комментарий'), rule=lambda r, _it=iter(norm): F_GREY if next(_it) else None)
-        notes(wb['Пустые ответы'], ['Норма — служебный адрес движка, для которого пустой ответ нормален (по справочнику движка). Остальное стоит открыть и проверить.'])
-        legend(wb['Пустые ответы'], ['норма', 'обычно'])
+    soft_sheet(wb, S.get('Идентичные ответы'), S.get('Пустые страницы'))
     L = S.get('Error-лог')
     if L is not None and len(L):
         import re as re_
@@ -309,6 +338,8 @@ def overview(wb, res, S, site):
         rows = [[r['entry'], int(r['entry_status']), int(r['кликов'])] for _, r in AD.head(5).iterrows()]
         W.table(['Посадочная', 'Код', 'Кликов'], rows, ['BCD', 'E', 'F'], num=(2,), center=(1,))
         more(W, min(5, len(AD)), len(AD), 'Рекламные ошибки', names)
+    if 'Мягкие ошибки' in names:
+        W.link('Мягкие ошибки: ответ 200, но не та страница', 'Мягкие ошибки', names)
     EL = S.get('Error-лог')
     if EL is not None and len(EL):
         W.section('Error-лог', 'Ошибки из журнала сервера: что они значат. Какие запросы их вызвали — на полном листе.')

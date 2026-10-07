@@ -433,6 +433,52 @@ def lead_status(P, R, m):
     return out
 
 
+SOFT_WHAT = ('Адреса без косой черты в конце: сервер отдаёт другую страницу вместо нужной', 'Похоже на страницу «не найдено» с кодом 200',
+             'Одна и та же страница на разные адреса — проверить')
+
+
+def soft_groups(R, pm, st, c, tol=0.02, min_addr=200, max_size=20000):
+    """Идентичные ответы: страницы 200, сгруппированные по размеру; размер в пределах ±tol от первого размера группы — та же группа.
+    В лист — группы от min_addr разных адресов; «что это» — без косой черты / «не найдено» с кодом 200 / проверить."""
+    b, by = R['base'].cat.codes.values[pm], R['bytes'].values[pm]
+    cats = R['base'].cat.categories.astype(str)
+    med = pd.Series(by).groupby(b).median()   # размер «настоящей» страницы по коду адреса (медиана ответов 200)
+    keep = by < max_size   # большие страницы на разных адресах — обычное дело; мягкая ошибка — короткий одинаковый ответ
+    b, by = b[keep], by[keep]
+    if not len(by): return pd.DataFrame()
+    sizes = np.unique(by)
+    gid, start = np.empty(len(sizes), np.int64), sizes[0]
+    for i, v in enumerate(sizes):
+        if v > start * (1 + tol): start = v
+        gid[i] = start
+    g = gid[np.searchsorted(sizes, by)]
+    X = pd.DataFrame({'g': g, 'b': b, 'by': by})
+    na = X.groupby('g')['b'].nunique()
+    big = na[na >= min_addr].index
+    if not len(big): return pd.DataFrame()
+    who = np.select([c.human, c.search_ok, np.asarray(c.rg) == 'Боты'], [0, 1, 2], 3)[pm][keep]
+    X['w'] = who
+    p404 = R['bytes'].values[R['is_page'].values & (st == 404)]
+    s404 = float(pd.Series(p404).mode().iloc[0]) if len(p404) else None
+    rows = []
+    for g0 in big:
+        Y = X[X['g'] == g0]
+        addrs = cats.values[np.unique(Y['b'].values)]
+        lo, hi = int(Y['by'].min()), int(Y['by'].max())
+        noslash = [a for a in addrs if not a.endswith('/')]
+        other = [med.get(i) for i in pd.Index(cats).get_indexer([a + '/' for a in noslash]) if i >= 0]
+        diff = sum(1 for v in other if v is not None and abs(v - g0) > 0.1 * g0)
+        if len(noslash) > len(addrs) / 2 and diff > len(noslash) / 2: what = SOFT_WHAT[0]
+        elif s404 is not None and abs(s404 - g0) <= tol * g0: what = SOFT_WHAT[1]
+        else: what = SOFT_WHAT[2]
+        n = len(Y)
+        sh = lambda k: round(float((Y['w'] == k).sum()) / n * 100, 1)
+        rows.append(dict(размер=f'{lo:,}'.replace(',', '\u00a0') + ('' if lo == hi else '–' + f'{hi:,}'.replace(',', '\u00a0')), разных_адресов=len(addrs), запросов=n,
+                         людям_=sh(0), ботам_=sh(2), поисковым_=sh(1), примеры='\n'.join(sorted(addrs, key=lambda a: (a.endswith('/'), a))[:3]), что_это=what, _от=int(g0)))
+    D = pd.DataFrame(rows).rename(columns={'людям_': 'людям_%', 'ботам_': 'ботам_%', 'поисковым_': 'поисковым_%'})
+    return D.sort_values('разных_адресов', ascending=False).reset_index(drop=True)
+
+
 def errors(c, F):
     R, V = c.R, c.V
     S = {}
@@ -592,12 +638,21 @@ def errors(c, F):
     ad = H[(H['channel'] == 'Реклама') & (H['entry_status'] >= 400)]
     if len(ad):
         S['Реклама: посадочные с ошибками'] = ad.groupby(['entry', 'entry_status']).agg(кликов=('ip', 'size'), первый=('day', 'min'), последний=('day', 'max')).sort_values('кликов', ascending=False).reset_index()
-    # мягкие ошибки: одинаковый размер ответа на множестве разных адресов
-    pg = R.loc[R['is_page'].values & (st == 200) & (R['method'].values != 'HEAD'), ['base', 'bytes']]
-    sz = pg.groupby('bytes')['base'].nunique()
-    soft = sz[(sz >= 200) & (sz.index < 20000)].sort_values(ascending=False)
-    if len(soft):
-        S['Одинаковые ответы'] = soft.head(20).reset_index().rename(columns={'bytes': 'размер_байт', 'base': 'разных_адресов'})
+    # мягкие ошибки: ответ 200, но одна и та же страница на множестве разных адресов (размеры в пределах ±2% — одна группа)
+    pm = R['is_page'].values & (st == 200) & (R['method'].values != 'HEAD')
+    pg = R.loc[pm, ['base', 'bytes']]
+    G_ = soft_groups(R, pm, st, c)
+    if len(G_):
+        S['Идентичные ответы'] = G_
+        for _, r in G_[(G_['разных_адресов'] >= 500) & ((G_['людям_%'] > 0) | (G_['поисковым_%'] > 0))].iterrows():
+            kind = SOFT_WHAT.index(r['что_это'])
+            title = [f"Адреса без косой черты отдают другую страницу ({r['разных_адресов']} адресов)", f"Страница «не найдено» отдаётся с кодом 200 ({r['разных_адресов']} адресов)",
+                     f"Одна и та же страница на {r['разных_адресов']} разных адресов"][kind]
+            todo = ['Переадресация 301 на адрес с косой чертой', 'Отдавать для несуществующих адресов код 404, а не 200',
+                    'Открыть примеры и проверить, та ли это страница; если нет — исправить маршрутизацию или отдавать 404'][kind]
+            F.add('Ошибки', 'Важно', 'soft_errors', str(r['_от']), title,
+                  f"ответ {r['размер']} байт на {r['разных_адресов']} адресах, {r['запросов']} запросов; людям {r['людям_%']}%, поисковым роботам {r['поисковым_%']}%; "
+                  f"например: {r['примеры'].replace(chr(10), ', ')}", 'сервер / маршрутизация сайта', todo, int(r['разных_адресов']), 'Мягкие ошибки')
     tiny = pg[pg['bytes'] < 300]
     if len(tiny) > 100:
         S['Пустые страницы'] = tiny.groupby('base', observed=True).size().sort_values(ascending=False).head(100).reset_index(name='ответов_меньше_300_байт')

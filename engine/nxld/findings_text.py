@@ -9,7 +9,7 @@ import pandas as pd
 THEME = {
     'bot_leads': 'Заявки', 'operator': 'Заявки', 'lost_leads': 'Заявки',
     'ad_landing_errors': 'Реклама', 'campaign_zero': 'Реклама', 'placements_off': 'Реклама', 'placement_type_low': 'Реклама', 'placement_type_zero': 'Реклама',
-    '5xx': 'Сайт', '5xx_section': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
+    '5xx': 'Сайт', '5xx_section': 'Сайт', 'soft_errors': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
     'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'pd_in_get': 'Безопасность', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
     'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама',

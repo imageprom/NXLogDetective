@@ -456,7 +456,7 @@ def soft_groups(R, pm, st, c, tol=0.02, min_addr=200, max_size=20000):
     na = X.groupby('g')['b'].nunique()
     big = na[na >= min_addr].index
     if not len(big): return pd.DataFrame()
-    who = np.select([c.human, c.search_ok, np.asarray(c.rg) == 'Боты'], [0, 1, 2], 3)[pm][keep]
+    who = np.select([c.human, c.search_ok, np.asarray(c.rg) == 'Боты'], [0, 1, 2], 3)[pm][keep]   # 3 — прочие роботы: остальные роботы, мониторинги, утилиты, свои
     X['w'] = who
     p404 = R['bytes'].values[R['is_page'].values & (st == 404)]
     s404 = float(pd.Series(p404).mode().iloc[0]) if len(p404) else None
@@ -476,8 +476,8 @@ def soft_groups(R, pm, st, c, tol=0.02, min_addr=200, max_size=20000):
         n = len(Y)
         sh = lambda k: round(float((Y['w'] == k).sum()) / n * 100, 1)
         rows.append(dict(размер=f'{lo:,}'.replace(',', '\u00a0') + ('' if lo == hi else '–' + f'{hi:,}'.replace(',', '\u00a0')), разных_адресов=len(addrs), запросов=n,
-                         людям_=sh(0), ботам_=sh(2), поисковым_=sh(1), примеры='\n'.join(sorted(addrs, key=lambda a: (a.endswith('/'), a))[:3]), что_это=what, _от=int(g0)))
-    D = pd.DataFrame(rows).rename(columns={'людям_': 'людям_%', 'ботам_': 'ботам_%', 'поисковым_': 'поисковым_%'})
+                         людям_=sh(0), поисковым_=sh(1), прочим_=sh(3), ботам_=sh(2), примеры='\n'.join(sorted(addrs, key=lambda a: (a.endswith('/'), a))[:3]), что_это=what, _от=int(g0)))
+    D = pd.DataFrame(rows).rename(columns={'людям_': 'людям_%', 'поисковым_': 'поисковым_%', 'прочим_': 'прочим_%', 'ботам_': 'ботам_%'})
     return D.sort_values('разных_адресов', ascending=False).reset_index(drop=True)
 
 
@@ -653,7 +653,8 @@ def errors(c, F):
             todo = ['Переадресация 301 на адрес с косой чертой', 'Отдавать для несуществующих адресов код 404, а не 200',
                     'Открыть примеры и проверить, та ли это страница; если нет — исправить маршрутизацию или отдавать 404'][kind]
             F.add('Ошибки', 'Важно', 'soft_errors', str(r['_от']), title,
-                  f"ответ {r['размер']} байт на {r['разных_адресов']} адресах, {r['запросов']} запросов; людям {r['людям_%']}%, поисковым роботам {r['поисковым_%']}%; "
+                  f"ответ {r['размер']} байт на {r['разных_адресов']} адресах, {r['запросов']} запросов; людям {r['людям_%']}%, поисковым роботам {r['поисковым_%']}%, "
+                  f"прочим роботам {r['прочим_%']}%, ботам {r['ботам_%']}%; "
                   f"например: {r['примеры'].replace(chr(10), ', ')}", 'сервер / маршрутизация сайта', todo, int(r['разных_адресов']), 'Мягкие ошибки')
     tiny = pg[pg['bytes'] < 300]
     if len(tiny) > 100:

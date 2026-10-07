@@ -55,3 +55,29 @@ def test_soft_errors_no_slash_partial_pairs(tmp_path):
     assert r['что_это'].startswith('Адреса без косой черты в конце')
     x = [x for x in res['findings'] if x['key'] == f"Ошибки:soft_errors:{r['_от']}"]
     assert x and 'переадресация 301 на адрес с косой чертой' in x[0]['что_сделать'].lower()
+
+
+UA_AHREFS = 'Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)'
+
+
+def test_soft_errors_shares_four_groups(tmp_path):
+    """Доли «кому отдаётся» — четыре: людям, поисковым, прочим роботам, ботам; вместе 100%, прочие роботы видны."""
+    log = synth.Log()
+    log.people()
+    for i in range(300):
+        t = synth.T0 + timedelta(days=i % 7, hours=14, minutes=(i // 7) % 600 // 10, seconds=i % 60)
+        a = f'/catalog/z/item-{i}'
+        log.line(synth.RU[i % len(synth.RU)], t, a, 200, ref='https://yandex.ru/', size=17000 + random.randint(0, 80))
+        log.line('54.36.148.10', t + timedelta(seconds=7), a, 200, ua=UA_AHREFS, size=17000 + random.randint(0, 80))   # прочий робот
+    for d in range(7):   # подлинный поисковик — обычный фон лога (случай «у всех роботов подлинность пуста» — в test_empty_data)
+        log.line('66.249.66.10', synth.T0 + timedelta(days=d, hours=5), '/', 200, ua='Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)')
+    res, out, _ = synth.run(log, str(tmp_path))
+    G = res['sheets']['Ошибки']['Идентичные ответы']
+    r = G[G['примеры'].str.contains('/catalog/z/item-')].iloc[0]
+    assert r['прочим_%'] > 0
+    assert abs(r['людям_%'] + r['поисковым_%'] + r['прочим_%'] + r['ботам_%'] - 100) < 0.5
+    import openpyxl
+    ws = openpyxl.load_workbook(os.path.join(out, 'NXLD_02_Errors.xlsx'))['Мягкие ошибки']
+    hdr = [c.value for c in ws[4] if c.value]
+    sh = [h for h in hdr if h.endswith(', %')]
+    assert sh == ['Людям, %', 'Поисковым роботам, %', 'Прочим роботам, %', 'Ботам, %']

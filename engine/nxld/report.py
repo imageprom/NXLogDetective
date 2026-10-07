@@ -1,5 +1,5 @@
 """NXLD: сборка результата — Excel по блокам, текст для Redmine (Textile), снимок, архив."""
-import json, numbers, os, re, zipfile
+import glob, json, numbers, os, re, zipfile
 from datetime import datetime
 import numpy as np, pandas as pd
 from openpyxl import load_workbook
@@ -114,6 +114,7 @@ def own_people(wb, m):
 def write_xlsx(path, sheets, hidden=None):
     used = set()
     names = {}
+    cuts = {}   # большие листы (sheets.BIG): над таблицей — строка-пояснение
     with pd.ExcelWriter(path, engine='openpyxl') as xw:
         for name, df in sheets.items():
             if df is None: continue
@@ -126,6 +127,8 @@ def write_xlsx(path, sheets, hidden=None):
                     d[col] = d[col].map(lambda v: v if not isinstance(v, str) else v[:32000])
                 if str(d[col].dtype).startswith('category'):
                     d[col] = d[col].astype(str)
+            d, cut = report_tables.big_cut(name, d)
+            if cut: cuts[sn] = cut
             d.to_excel(xw, sheet_name=sn, index=False)
         if hidden:
             pd.DataFrame({'snapshot': [hidden[i:i + 30000] for i in range(0, len(hidden), 30000)]}).to_excel(xw, sheet_name='_snapshot', index=False)
@@ -157,6 +160,10 @@ def write_xlsx(path, sheets, hidden=None):
             widths[c.column] = max(widths.get(c.column, 0), min(len(str(c.value)), 30))
         for col, w in widths.items():
             ws.column_dimensions[get_column_letter(col)].width = max(8, min(w + 2, 72))
+        if ws.title in cuts:   # пояснение — над таблицей
+            ws.insert_rows(1)
+            ws.cell(1, 1, cuts[ws.title]).font = Font(name=FONT, size=10, bold=True)
+            ws.freeze_panes = 'A3'
     wb.save(path)
     return names
 
@@ -283,7 +290,9 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
     written = []
     for b in res['selected']:
         if skip_existing and os.path.exists(os.path.join(outdir, file_names[b])):   # готовый файл после падения сборки — не пересобирать
-            written.append(os.path.join(outdir, file_names[b])); continue
+            written.append(os.path.join(outdir, file_names[b]))
+            written += sorted(glob.glob(os.path.join(outdir, file_names[b][:-5] + '_*.csv')))   # и его большие листы
+            continue
         if only and b not in only: continue
         S = res['sheets'].get(b, {})
         if 'SEO' in res['selected']:   # листы, переехавшие в 06 «SEO», в своих файлах не повторяются
@@ -327,6 +336,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
             cmp_ = res['compare']
             sheets['Было → стало'] = cmp_ if b == 'Общий анализ' else cmp_[cmp_['блок'] == b]
         path = os.path.join(outdir, file_names[b])
+        report_tables.BIG_OUT.update(файл=file_names[b][:-5], csv=[])   # большие листы этого файла — CSV рядом
         names = write_xlsx(path, sheets, hidden)
         # «Проблемы» — карточками, первым листом блока (в Overview — вторым, после индекса); ТЗ 16.5
         wb = load_workbook(path)
@@ -389,6 +399,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
         report_tables.sanitize(wb)   # представление листов, легенды, ##### — общий проход перед сохранением
         wb.save(path)
         written.append(path)
+        written += report_tables.write_big_csv(outdir)
+        report_tables.BIG_OUT['файл'] = ''
     if only:
         return dict(files=written, zip=None, stem=stem)
     if redmine and os.path.exists(redmine):

@@ -6,6 +6,30 @@ from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT, RED
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE as ILLEGAL
 SEP = Side(style='thin', color='D9D9D9')
+BIG_OUT = {'файл': '', 'csv': []}   # большие листы текущего файла: report.build задаёт имя файла и пишет CSV после сохранения xlsx
+
+
+def big_cut(name, df):
+    """Лист больше порога (sheets.BIG): полный — в очередь CSV, в Excel — первые строки. Возвращает (df для Excel, строка-пояснение или None)."""
+    from .sheets import BIG
+    tag = BIG['листы'].get(name)
+    if tag is None or not BIG_OUT['файл'] or len(df) <= BIG['порог']: return df, None
+    fn = f"{BIG_OUT['файл']}_{tag}.csv"
+    BIG_OUT['csv'] = [x for x in BIG_OUT['csv'] if x[0] != fn] + [(fn, df)]   # лист пересобран — CSV по последней версии
+    show = BIG['показать']
+    return df.head(show), f"Показаны {show:,} из {len(df):,}. Полный список со всеми колонками — файл {fn} в архиве отчёта".replace(',', '\u00a0')
+
+
+def write_big_csv(outdir):
+    """CSV больших листов текущего файла: те же колонки, порядок и заголовки; UTF-8 с BOM, «;», числа без разрядов. Возвращает пути."""
+    import os
+    out = []
+    for fn, df in BIG_OUT['csv']:
+        p = os.path.join(outdir, fn)
+        df.to_csv(p, sep=';', index=False, encoding='utf-8-sig')
+        out.append(p)
+    BIG_OUT['csv'] = []
+    return out
 WHITE = Side(style='thin', color='FFFFFF')
 
 
@@ -16,6 +40,9 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     if name in wb.sheetnames: del wb[name]
     ws = wb.create_sheet(name, idx)
     ws.sheet_view.showGridLines = True
+    df, cut = big_cut(name, df)   # большой лист: в Excel — первые строки, полный — CSV в архиве
+    if cut:
+        ws['B3'] = cut; ws['B3'].font = Font(name='Arial', size=10, bold=True, color=INK)
     cols = list(df.columns)
     ws.column_dimensions['A'].width = 2.5          # поле слева, как на остальных листах
     ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE)

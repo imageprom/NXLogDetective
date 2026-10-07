@@ -194,25 +194,97 @@ def detect_get_pd(R):
     return G[G['query'].astype(str).map(has_pd)]
 
 
+SAFE_GROUPS = ('Реклама и аналитика', 'Поисковики и Яндекс')   # рекламные и поисковые идентификаторы — не ПД, не маскируются
+PD_KEYS = re.compile(r'(?i)(phone|tel|telephone|mobile|email|e-mail|mail|fio|surname|lastname|last_name|passport|snils|inn)')
+TEXT_KEYS = re.compile(r'(?i)(name|fio|message|comment)')   # свободный текст человека — при маскировке целиком ***
+EMAIL = re.compile(r'([\w.-])[\w.-]*@([\w-])[\w.-]*')
+_SAFE, _REF = {}, []
+
+
+def _key(k):
+    """Ключ параметра для сверки: раскодирован, без «amp;» от экранированного &amp; (иначе amp;phone прошёл бы как служебный amp;*)."""
+    from urllib.parse import unquote_plus
+    k = unquote_plus(str(k)).strip()
+    while k.lower().startswith('amp;'): k = k[4:]
+    return k
+
+
+def is_ad_key(k):
+    """Ключ из групп справочника «Реклама и аналитика» / «Поисковики и Яндекс» (common.json, services, learned) или из AD_PARAMS."""
+    k = _key(k).lower()
+    if k not in _SAFE:
+        if not _REF:
+            from . import reference
+            try: _REF.append(reference.Reference())
+            except Exception: _REF.append(None)
+        e = _REF[0].match(k) if _REF[0] is not None else None
+        _SAFE[k] = k in AD_PARAMS or (e is not None and e.get('группа') in SAFE_GROUPS)
+    return _SAFE[k]
+
+
+def is_phone(v):
+    """Похоже на телефон: из цифр, пробелов, скобок, дефисов и «+»; 10–11 цифр, начинается с 7 или 8; с «+» — 10–15 цифр. Длиннее 15 — не телефон."""
+    v = str(v).strip()
+    if not re.fullmatch(r'\+?[\d\s()-]+', v): return False
+    d = re.sub(r'\D', '', v)
+    if len(d) > 15: return False
+    if v.startswith('+'): return 10 <= len(d) <= 15
+    return len(d) in (10, 11) and d[0] in '78'
+
+
+def _pd_kind(k, v):
+    """Чем параметр k=v (v раскодирован) — персональные данные: 'phone', 'email', 'field' (поле ФИО/телефона/почты) или None."""
+    if not v or is_ad_key(k) or re.search(r'autodiscover|/|\\.json', v, re.I): return None   # рекламные метки; зонды сканеров
+    if re.search(r'@[\w-]+\.[a-z]{2,}', v, re.I): return 'email'
+    if is_phone(v): return 'phone'
+    if PD_KEYS.fullmatch(_key(k)): return 'field'
+    return None
+
+
 def has_pd(q):
     """Персональные данные — по значениям, а не по имени параметра: телефон, почта или явное поле ФИО/телефона/почты.
-    name=Квартал Заречный — это название проекта в загрузке формы, не данные человека."""
+    name=Квартал Заречный — это название проекта в загрузке формы, не данные человека.
+    Рекламные и поисковые идентификаторы (clid, yclid, gclid, utm_* …) — никогда не ПД."""
     from urllib.parse import unquote_plus
     for part in str(q).split('&'):
         k, _, v = part.partition('=')
-        v = unquote_plus(v).strip()
-        if not v or re.search(r'autodiscover|/|\\.json', v, re.I): continue   # зонды сканеров, а не данные
-        if re.search(r'@[\w-]+\.[a-z]{2,}', v, re.I) and not re.search(r'autodiscover|\.json', v, re.I): return True
-        if len(re.sub(r'\D', '', v)) >= 10 and re.fullmatch(r'[\d\s()+-]+', v): return True
-        if re.fullmatch(r'(?i)(phone|tel|telephone|mobile|email|e-mail|mail|fio|surname|lastname|last_name|passport|snils|inn)', k): return True
+        if _pd_kind(k, unquote_plus(v).strip()): return True
     return False
 
 
+def _mask_digits(v):
+    d = re.sub(r'\D', '', v)
+    if len(d) < 4: return '***'
+    return ('+' if v.strip().startswith('+') else '') + d[0] + (' ' + d[1] if len(d) >= 10 else '') + '** ***-**-' + d[-2:]
+
+
+def _mask_value(k, v):
+    """Замаскированное значение параметра или None, если маскировать нечего."""
+    from urllib.parse import unquote_plus
+    u = unquote_plus(v).strip()
+    kind = _pd_kind(k, u)
+    if TEXT_KEYS.fullmatch(_key(k)) and u and not is_ad_key(k): return '***'
+    if kind == 'phone': return _mask_digits(u)
+    if kind == 'email': return EMAIL.sub(r'\1***@\2***', u)
+    if kind == 'field': return _mask_digits(u) if re.search(r'(?i)phone|tel|mobile', _key(k)) else '***'
+    return None
+
+
 def mask_pd(s):
-    s = re.sub(r'(\+?\d)[\d\s()-]{6,}(\d\d)', lambda m: m.group(1) + '** ***-**-' + m.group(2), s)
-    s = re.sub(r'([\w.-])[\w.-]*@([\w-])[\w.-]*', r'\1***@\2***', s)
-    s = re.sub(r'(?i)((?:name|fio|message|comment)=)[^&]+', r'\1***', s)
-    return s
+    """Маскировка по параметрам: только значения, которые сами — ПД; остальные параметры, порядок и разделители как были.
+    Просто текст (без «?» и «=») — регулярками по всей строке."""
+    s = str(s)
+    if '?' not in s and '=' not in s:
+        s = re.sub(r'(\+?\d)[\d\s()-]{6,}(\d\d)', lambda m: m.group(1) + '** ***-**-' + m.group(2), s)
+        s = EMAIL.sub(r'\1***@\2***', s)
+        return s
+    head, sep, q = s.partition('?') if '?' in s else ('', '', s)
+    out = []
+    for part in q.split('&'):
+        k, eq, v = part.partition('=')
+        m = _mask_value(k, v) if eq else None
+        out.append(k + eq + m if m is not None else part)
+    return head + sep + '&'.join(out)
 
 
 def detect_hosting(E, rules_path=None):

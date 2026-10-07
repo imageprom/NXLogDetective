@@ -93,7 +93,8 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
             if f: cell.fill = PatternFill('solid', fgColor=f)
     for j, c in enumerate(cols, 1):
         letter = ws.cell(H, j + X).column_letter
-        ws.column_dimensions[letter].width = (widths or {}).get(c) or min(45, max(10, len(str(c)) + 2, int(df[c].astype(str).str.len().quantile(0.9)) + 2 if len(df) else 10))
+        q90 = df[c].astype(str).str.len().quantile(0.9) if len(df) else None   # пустая колонка (категория из одних NaN) — длина NaN
+        ws.column_dimensions[letter].width = (widths or {}).get(c) or min(45, max(10, len(str(c)) + 2, int(q90) + 2 if q90 is not None and pd.notna(q90) else 10))
         lw = max((len(w_) for w_ in str(c).split()), default=0) * 1.1 * size / 9 + 1.5   # слово шапки не рвётся посередине
         if ws.column_dimensions[letter].width < lw: ws.column_dimensions[letter].width = lw
     fit_header(ws, H, cols, X)

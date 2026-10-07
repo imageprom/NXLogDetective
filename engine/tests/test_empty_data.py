@@ -32,3 +32,32 @@ def test_redmine_hint_without_edits(tmp_path):
     _, _, text = synth.run(log, str(tmp_path))
     assert 'Напишите текст по work/brief.json и пересоберите' in text
     assert 'пересобран с правками' not in text
+
+
+def test_log_without_errors(tmp_path):
+    """Лог только с ответами 200: «Пострадавших страниц» нет — пустой результат, сборка не падает."""
+    log = synth.Log()
+    for d in range(7):
+        for k in range(20):
+            log.visit(synth.RU[k % len(synth.RU)], synth.T0 + timedelta(days=d, hours=8, minutes=25 * k))
+    res, out, text = synth.run(log, str(tmp_path))
+    assert ' 404 ' not in open(os.path.join(tmp_path, 'access.log')).read() and ' 500 ' not in open(os.path.join(tmp_path, 'access.log')).read()
+    assert not len(res['errors']['нерабочие'])
+    assert os.path.exists(os.path.join(out, 'NXLD_02_Errors.xlsx'))
+
+
+def test_robots_sheet_without_verification(tmp_path):
+    """Единственный представившийся робот — скрипт: «Подлинных, %» пусто у всех роботов, лист «Роботы» (04) строится."""
+    log = synth.Log()
+    log.people()
+    for d in range(7):
+        for k, u in enumerate(('/', '/catalog/', '/about/', '/contacts/')):
+            log.line('203.0.113.7', synth.T0 + timedelta(days=d, hours=4, seconds=k), u, 200, ua='python-requests/2.31')
+    res, out, _ = synth.run(log, str(tmp_path))
+    RF = res['sheets']['Боты']['Роботы: семейства']
+    assert len(RF) and RF['подлинных_%'].isna().all()
+    import openpyxl
+    wb = openpyxl.load_workbook(os.path.join(out, 'NXLD_04_Bots.xlsx'))
+    assert 'Роботы' in wb.sheetnames
+    hdr = [c.value for c in wb['Роботы'][4]]
+    assert 'Подлинных, %' in hdr

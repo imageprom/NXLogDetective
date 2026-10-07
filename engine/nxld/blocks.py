@@ -468,7 +468,9 @@ def soft_groups(R, pm, st, c, tol=0.02, min_addr=200, max_size=20000):
         noslash = [a for a in addrs if not a.endswith('/')]
         other = [med.get(i) for i in pd.Index(cats).get_indexer([a + '/' for a in noslash]) if i >= 0]
         diff = sum(1 for v in other if v is not None and abs(v - g0) > 0.1 * g0)
-        if len(noslash) > len(addrs) / 2 and diff > len(noslash) / 2: what = SOFT_WHAT[0]
+        # пара со «/» есть не у всех адресов: решаем по найденным парам, если их достаточно (от 20 и от 10% адресов без «/»)
+        pairs_ok = len(other) >= max(20, 0.1 * len(noslash)) and diff > len(other) / 2
+        if len(noslash) > len(addrs) / 2 and pairs_ok: what = SOFT_WHAT[0]
         elif s404 is not None and abs(s404 - g0) <= tol * g0: what = SOFT_WHAT[1]
         else: what = SOFT_WHAT[2]
         n = len(Y)

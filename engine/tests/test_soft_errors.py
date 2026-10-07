@@ -36,3 +36,22 @@ def test_soft_errors_no_slash(tmp_path):
     assert 'ИДЕНТИЧНЫЕ ОТВЕТЫ' in vals and 'МЯГКИЕ ОШИБКИ' in vals   # заголовки листа и блока — прописными
     ov = [v for row in wb['Обзор'].iter_rows(values_only=True) for v in row if isinstance(v, str)]
     assert any(v.startswith('Мягкие ошибки') for v in ov)
+
+
+def test_soft_errors_no_slash_partial_pairs(tmp_path):
+    """Пара со «/» есть только у 40% адресов без «/» (как на живом логе): правило решает по найденным парам."""
+    log = synth.Log()
+    log.people()
+    for i in range(N):
+        ip = synth.RU[i % len(synth.RU)]
+        t = synth.T0 + timedelta(days=i % 7, hours=14, minutes=(i // 7) % 600 // 10, seconds=i % 60)
+        a = f'/catalog/y/item-{i}'
+        log.line(ip, t, a, 200, ref='https://yandex.ru/', size=17000 + random.randint(0, 80))
+        if i % 10 < 4:   # 40% адресов — со «/» и настоящей страницей
+            log.line(ip, t + timedelta(seconds=20), a + '/', 200, ref=f'https://site.ru{a}', size=23000 + random.randint(0, 300))
+    res, _, _ = synth.run(log, str(tmp_path))
+    G = res['sheets']['Ошибки']['Идентичные ответы']
+    r = G[G['примеры'].str.contains('/catalog/y/item-')].iloc[0]
+    assert r['что_это'].startswith('Адреса без косой черты в конце')
+    x = [x for x in res['findings'] if x['key'] == f"Ошибки:soft_errors:{r['_от']}"]
+    assert x and 'переадресация 301 на адрес с косой чертой' in x[0]['что_сделать'].lower()

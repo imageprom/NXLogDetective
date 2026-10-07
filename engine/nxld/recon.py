@@ -501,7 +501,9 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
             k = unquote(k).strip()
             if re.fullmatch(r'\d+|[0-9a-f]{16,}', k) and not v: k = '(число без имени)'   # ?1778857049245644 — метка от кэша
             if 1 <= len(k) <= 40 and re.fullmatch(r'[\w\[\]\-.()а-я ;]+', k): pairs.append((i, k, v))
-    if not pairs: return pd.DataFrame()
+    if not pairs:   # в логе нет ни одного параметра — пустой реестр с теми же колонками (вызывающий код фильтрует по ним)
+        return pd.DataFrame(columns=['параметр', 'ключ', 'ключи', 'группа', 'что', 'источник', 'ссылка', 'запросов', 'людей', 'значений', 'частое_значение',
+                                     'значения', 'вместе_с', 'где', 'роботы'])
     P = pd.DataFrame(pairs, columns=['q', 'ключ', 'значение'])
     P['n'] = cnt[P['q'].values]
     hm = has & np.asarray(human)

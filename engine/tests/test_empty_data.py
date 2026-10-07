@@ -23,3 +23,12 @@ def test_log_without_query_params(tmp_path):
     res, _, text = synth.run(log, str(tmp_path))
     assert res['params'] == []
     assert "KeyError" not in text
+
+
+def test_redmine_hint_without_edits(tmp_path):
+    """Без --edits выжимка не пересобирается — в подсказке нет «пересобран с правками»."""
+    log = synth.Log()
+    log.people()
+    _, _, text = synth.run(log, str(tmp_path))
+    assert 'Напишите текст по work/brief.json и пересоберите' in text
+    assert 'пересобран с правками' not in text

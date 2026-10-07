@@ -52,7 +52,8 @@ def main():
         only = {BLK[x.strip()] for x in a.only.split(',') if x.strip()} if a.only else None
         out = report.build(res, a.out, a.site, edits, rm, only, a.work, a.skip_existing)
         if not os.path.exists(rm) and not only:
-            print('Текста для Redmine от ИИ нет — в архив положен черновик движка (NXLD_Redmine_черновик.textile). Напишите текст по work/brief.json (он пересобран с правками) и пересоберите --stage report.')
+            brief_ = 'work/brief.json (он пересобран с правками)' if edits else 'work/brief.json'   # выжимку пересобирает только сборка с --edits
+            print(f'Текста для Redmine от ИИ нет — в архив положен черновик движка (NXLD_Redmine_черновик.textile). Напишите текст по {brief_} и пересоберите --stage report.')
         print('Готово:', out['zip'] or ', '.join(out['files']))
 
 

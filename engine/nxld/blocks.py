@@ -904,9 +904,9 @@ def load_security(c, F):
         F.add('Нагрузка и безопасность', 'Важно', 'human_prober', 'actors', f'Человек систематически исследует сайт ({hr["ip"].nunique()} адресов)',
               '; '.join(f"{r['ip']} — {r['дней']} дн., {r['первый']}…{r['последний']}: {r['что_пробовал'] or r['признак']}" for _, r in hr.head(5).iterrows()),
               'сервер / настройки защиты', 'Проверить, кто это (свой разработчик или посторонний); постороннего ограничить по IP', int(hr['ip'].nunique()), 'Исследователи сайта')
-    tok = qc.str.contains(r'(?i)(?:^|&)(sessid|phpsessid|token|access_token|api_key|apikey|key|password|passwd)=', regex=True).values[R['query'].cat.codes.values]
+    tok = qc.str.contains(recon.SECRET_RX, regex=True).values[R['query'].cat.codes.values]   # список секретов — общий с маскировкой (recon)
     if tok.sum():
-        S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(r'(?i)((?:sessid|phpsessid|token|access_token|api_key|apikey|key|password|passwd))=')[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')
+        S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(recon.SECRET_RX)[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')
     # флуд и работа защиты
     fl = mn.groupby(['m', 'ip']).size().sort_values(ascending=False).head(30).reset_index(name='запросов_в_минуту')
     fl['минута'] = dt(fl['m'] * 60); fl['ip'] = R['ip'].cat.categories[fl['ip']]

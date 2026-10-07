@@ -74,3 +74,47 @@ def test_order_and_separators_kept():
 def test_plain_text_as_before():
     assert mask_pd('звоните 8 903 123-45-67') == 'звоните 8** ***-**-67'
     assert mask_pd('ivan@mail.ru') == 'i***@m***'
+
+
+def test_checkword_secret_and_email():
+    m = mask_pd('login=yes&USER_CHECKWORD=diea4ns7iuco1vzwt7det6ocjiy383mj&USER_LOGIN=a%40b.ru')
+    assert m.startswith('login=yes&USER_CHECKWORD=diea…&USER_LOGIN=')
+    assert 'diea4ns7' not in m and 'a%40b.ru' not in m and 'a@b.ru' not in m
+
+
+def test_sessid_secret_not_pd():
+    q = 'sessid=1f4e04b22e04cef40044c820f16100e4&clid=2270455-308'
+    assert not has_pd(q)
+    assert mask_pd(q) == 'sessid=1f4e…&clid=2270455-308'
+
+
+def test_secret_keys_case_insensitive():
+    from nxld.recon import mask_value
+    for k in ('token', 'ACCESS_TOKEN', 'api_key', 'ApiKey', 'password', 'passwd', 'checkword', 'PHPSESSID'):
+        assert mask_value(k, 'abcdefgh') == 'abcd…', k
+
+
+def test_mask_cells_secrets_without_pd():
+    from openpyxl import Workbook
+    from nxld.report_tables import mask_pd_cells
+    wb = Workbook()
+    ws = wb.active
+    ws['A1'] = '/auth/?login=yes&USER_CHECKWORD=diea4ns7iuco1vzwt7det6ocjiy383mj'
+    ws['A2'] = 'name=Квартал Заречный'
+    mask_pd_cells(wb)
+    assert ws['A1'].value == '/auth/?login=yes&USER_CHECKWORD=diea…'
+    assert ws['A2'].value == 'name=Квартал Заречный'
+
+
+def test_params_sheet_top_value():
+    from openpyxl import Workbook
+    from nxld.report_tables import params_sheet
+    def row(k, v):
+        return {'параметр': k, 'ключ': k, 'группа': 'Логика сайта', 'запросов': 5, 'людей': 2, 'значений': 1, 'частое_значение': v, 'где': ''}
+    wb = Workbook()
+    ws = params_sheet(wb, {'params': [row('phone', '89031234567'), row('clid', '2270455-308'), row('USER_CHECKWORD', 'diea4ns7iuco')]})
+    vals = [c.value for r in ws.iter_rows() for c in r if isinstance(c.value, str)]
+    assert not any('1234567' in v for v in vals)
+    assert any(v.startswith('8') and v.endswith('-67') for v in vals)   # телефон есть, но маскированный
+    assert '2270455-308' in vals
+    assert 'diea…' in vals and not any('diea4ns7' in v for v in vals)

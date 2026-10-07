@@ -198,6 +198,8 @@ SAFE_GROUPS = ('Реклама и аналитика', 'Поисковики и 
 PD_KEYS = re.compile(r'(?i)(phone|tel|telephone|mobile|email|e-mail|mail|fio|surname|lastname|last_name|passport|snils|inn)')
 TEXT_KEYS = re.compile(r'(?i)(name|fio|message|comment)')   # свободный текст человека — при маскировке целиком ***
 EMAIL = re.compile(r'([\w.-])[\w.-]*@([\w-])[\w.-]*')
+SECRET_KEYS = ('sessid', 'phpsessid', 'token', 'access_token', 'api_key', 'apikey', 'key', 'password', 'passwd', 'user_checkword', 'checkword')
+SECRET_RX = r'(?i)(?:^|&)(' + '|'.join(SECRET_KEYS) + r')='   # секреты в адресе: сессии, токены, пароли, код сброса пароля Битрикса — не ПД, но в отчёте не открыто
 _SAFE, _REF = {}, []
 
 
@@ -232,6 +234,11 @@ def is_phone(v):
     return len(d) in (10, 11) and d[0] in '78'
 
 
+def is_secret_key(k):
+    """Ключ секрета (сессия, токен, ключ API, пароль, USER_CHECKWORD) — без учёта регистра."""
+    return _key(k).lower() in SECRET_KEYS
+
+
 def _pd_kind(k, v):
     """Чем параметр k=v (v раскодирован) — персональные данные: 'phone', 'email', 'field' (поле ФИО/телефона/почты) или None."""
     if not v or is_ad_key(k) or re.search(r'autodiscover|/|\\.json', v, re.I): return None   # рекламные метки; зонды сканеров
@@ -258,9 +265,11 @@ def _mask_digits(v):
     return ('+' if v.strip().startswith('+') else '') + d[0] + (' ' + d[1] if len(d) >= 10 else '') + '** ***-**-' + d[-2:]
 
 
-def _mask_value(k, v):
-    """Замаскированное значение параметра или None, если маскировать нечего."""
+def mask_value(k, v):
+    """Замаскированное значение параметра k или None, если маскировать нечего.
+    Секрет — первые 4 символа и «…»; ПД — по _pd_kind; рекламные идентификаторы не трогаются."""
     from urllib.parse import unquote_plus
+    if is_secret_key(k) and v: return str(v)[:4] + '…'
     u = unquote_plus(v).strip()
     kind = _pd_kind(k, u)
     if TEXT_KEYS.fullmatch(_key(k)) and u and not is_ad_key(k): return '***'
@@ -270,8 +279,20 @@ def _mask_value(k, v):
     return None
 
 
+def has_secret(q):
+    """Есть параметр-секрет с непустым значением (has_pd из-за них не срабатывает: это не ПД)."""
+    return any(is_secret_key(k) and v for k, _, v in (p.partition('=') for p in str(q).split('&')))
+
+
+def mask_secrets(s):
+    """Только секреты: значение — первые 4 символа и «…»; остальное как было."""
+    s = str(s)
+    head, sep, q = s.partition('?') if '?' in s else ('', '', s)
+    return head + sep + '&'.join(k + eq + v[:4] + '…' if eq and v and is_secret_key(k) else k + eq + v for k, eq, v in (p.partition('=') for p in q.split('&')))
+
+
 def mask_pd(s):
-    """Маскировка по параметрам: только значения, которые сами — ПД; остальные параметры, порядок и разделители как были.
+    """Маскировка по параметрам: значения-ПД и секреты (сессия, токен, USER_CHECKWORD…); остальные параметры, порядок и разделители как были.
     Просто текст (без «?» и «=») — регулярками по всей строке."""
     s = str(s)
     if '?' not in s and '=' not in s:
@@ -282,7 +303,7 @@ def mask_pd(s):
     out = []
     for part in q.split('&'):
         k, eq, v = part.partition('=')
-        m = _mask_value(k, v) if eq else None
+        m = mask_value(k, v) if eq else None
         out.append(k + eq + m if m is not None else part)
     return head + sep + '&'.join(out)
 

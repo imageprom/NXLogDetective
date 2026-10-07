@@ -500,7 +500,7 @@ def attacks(c):
 def tokens(c):
     R = c.R
     qc, qcode = _cat(R, 'query')
-    rx = r'(?i)(?:^|&)(sessid|phpsessid|token|access_token|api_key|apikey|key|password|passwd)='
+    from .recon import SECRET_RX as rx   # список секретов — общий с маскировкой (+ USER_CHECKWORD); значения на лист не выводятся
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)

@@ -721,6 +721,15 @@ SRC_LABEL = {'документация': 'Документация', 'сообщ
              'поиск': 'Оперативный поиск', 'поиск, подтверждено': 'Оперативный поиск, подтверждено', 'дедукция': 'Дедукция', 'поведение': 'Дедукция', 'имя': 'Дедукция', '': ''}
 
 
+def _mask_top(p):
+    """Частое значение — без «ключ=», поэтому mask_pd_cells его не видит: маскируется здесь как значение своего параметра (recon.mask_value)."""
+    from .recon import mask_value
+    v = p['частое_значение']
+    if not isinstance(v, str) or not v or v == '(пусто)': return v
+    m = mask_value(p.get('ключ') or p['параметр'], v)
+    return v if m is None else m
+
+
 def params_sheet(wb, res, name='Параметры запросов'):
     """Каждый ключ (семейство ключей) после «?»: группа, что это, откуда знаем, запросы, люди, значения, где встречается."""
     P = res.get('params')
@@ -728,7 +737,7 @@ def params_sheet(wb, res, name='Параметры запросов'):
     from .anatomy import PARAM_ORDER as order
     d = pd.DataFrame([{'Параметр': p['параметр'], 'Группа': p['группа'], 'Запросов': int(p['запросов']), 'Визитов (люди)': int(p['людей']),
                        'Опознание': p.get('что', ''), 'Основание': SRC_LABEL.get(p.get('источник', ''), p.get('источник', '')),
-                       'Значений': int(p['значений']), 'Частое значение': p['частое_значение'],
+                       'Значений': int(p['значений']), 'Частое значение': _mask_top(p),
                        'Точки обращения': _who(p['где']), 'Спутники': p.get('вместе_с', '')} for p in P])
     if not d['Спутники'].astype(bool).any(): d = d.drop(columns='Спутники')
     cnt = d['Группа'].value_counts()
@@ -980,9 +989,10 @@ def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, siz
 
 
 def mask_pd_cells(wb, skip=('_snapshot',)):
-    """Во всех листах: персональные данные (телефоны, почты, ФИО) в адресах и параметрах — маскированно, по общему правилу recon.has_pd / mask_pd.
+    """Во всех листах: персональные данные (телефоны, почты, ФИО) в адресах и параметрах — маскированно, по общему правилу recon.has_pd / mask_pd;
+    секреты (sessid, token, USER_CHECKWORD…) — первые 4 символа и «…» (recon.has_secret / mask_secrets).
     Смотрятся только ячейки, похожие на адрес с параметрами (есть «=»), — числа с разрядами и даты не трогаются."""
-    from .recon import has_pd, mask_pd
+    from .recon import has_pd, mask_pd, has_secret, mask_secrets
     import re
     for ws in wb.worksheets:
         if ws.title in skip: continue
@@ -996,5 +1006,7 @@ def mask_pd_cells(wb, skip=('_snapshot',)):
                     q = p_.split('?', 1)[1] if '?' in p_ else p_
                     if '=' in q and has_pd(q):
                         out.append(p_[:len(p_) - len(q)] + mask_pd(q)); hit = True
+                    elif '=' in q and has_secret(q):
+                        out.append(p_[:len(p_) - len(q)] + mask_secrets(q)); hit = True
                     else: out.append(p_)
                 if hit: c.value = ''.join(out)

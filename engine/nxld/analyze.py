@@ -81,7 +81,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
-    V = visits.mark_files_only(V, R)   # визит из одних файлов, без страниц, — не люди (хотлинк, скрапер картинок)
+    V = visits.mark_files_only(V, R, m.get('own_hosts') or [])   # визит из одних файлов: кто (категория) и что делает (тип)
     V = visits.mark_unrendered(V, R)   # «статика» считается, только если её подгрузила страница визита
     V, server_ips = visits.own_server(V, R)   # сервер сайта проверяет сам себя — его IP «Свои — сервер сайта»
     m['server_ips'] = server_ips

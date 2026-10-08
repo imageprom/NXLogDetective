@@ -297,7 +297,7 @@ def embedding(c, res, S):
         elif h in set(c.m.get('server_ips', [])): why = 'лежит на нашем сервере (IP сервера сайта)'
         elif re.fullmatch(r'[\d.]+', h): why = 'IP без домена'
         elif re.search(r'dev|test|stage|staging|demo|local', h): why = 'похоже на тестовую копию — сверить IP с нашим сервером'
-        else: why = 'чужой сайт'
+        else: why = 'внешний сайт'
         rows.append({'сайт': h, 'запросов': int(r['запросов']), 'байт': int(r['байт']), 'файлы': files, 'вывод': why,
                      'первый': sub['d'].min() if len(sub) else '', 'последний': sub['d'].max() if len(sub) else ''})
     return pd.DataFrame(rows)

@@ -34,10 +34,12 @@ def test_files_only_visits_are_not_people(tmp_path):
     res, _, _ = synth.run(log, str(tmp_path))
     G = res['sheets']['Общий анализ']['Люди и боты']
     people = G[G['группа'] == 'Люди']
-    files = G[G['подгруппа'].astype(str).str.startswith('файлы без страниц')]
+    files = G[G['подгруппа'].astype(str).str.startswith('только файлы: ')]
     assert int(people['визитов'].sum()) == 7 * 20, G   # в «Людях» — только обычные визиты людей (страница + ресурсы)
     assert int(files['визитов'].sum()) >= 400, G   # остальные 100 и раньше уходили в боты по другому правилу
-    assert 'генератор User-Agent' in ' '.join(files['подгруппа'].astype(str))
+    subs = set(files['подгруппа'].astype(str))
+    assert 'только файлы: выдуманный браузер' in subs, subs
+    assert not any(w in ' '.join(G['подгруппа'].astype(str)) for w in ('файлы без страниц', 'скрапер с хостинга', 'генератор User-Agent'))
     au = res['audience']
     assert au['страна'] == 'RU' and not au['предупреждение']
 
@@ -107,23 +109,71 @@ def test_image_search_is_people(tmp_path):
     assert any(x['key'] == 'Ошибки:404_entry:Поиск' for x in res['findings'])
 
 
-def test_hotlink_is_not_bots(tmp_path):
-    """Хотлинк (реферер — чужой домен) — группа «Чужой сайт», не боты; их IP не попадают в дела, «Меры по IP» и STIX."""
+DC_IP = lambda i: f'51.15.{60 + i // 200}.{i % 200 + 1}'   # дата-центр
+HOME_IP = lambda i: f'95.165.{150 + i // 200}.{i % 200 + 1}'   # домашняя сеть
+VPN_IP = lambda i: f'104.28.{i // 200}.{i % 200 + 1}'   # прокси-релей (признаков не хватает)
+
+
+def test_hotlink_categories(tmp_path):
+    """Хотлинк (реферер — внешний сайт): браузеры из домашних сетей — «Люди · хотлинк»; сервер внешнего сайта (дата-центр,
+    ровный темп, много с одного адреса) — «Боты · через внешний сайт»; признаков не хватает — «Внешние сайты · хотлинк».
+    Хотлинк-посетители не попадают в дела и «Меры по IP»; групп «Чужой сайт» нет."""
     log = synth.Log()
     log.people()
-    hot = [f'95.165.{150 + i // 200}.{i % 200 + 1}' for i in range(200)]
-    for i, ip in enumerate(hot):
-        log.line(ip, synth.T0 + timedelta(days=i % 7, hours=16, seconds=i), f'/upload/iblock/{i % 40}/photo{i}.jpg', 200,
+    for i in range(120):   # разные люди из домашних сетей
+        log.line(HOME_IP(i), synth.T0 + timedelta(days=i % 7, hours=16, seconds=i), f'/upload/iblock/{i % 40}/photo{i}.jpg', 200,
                  ref='https://blog.example.org/post-1', ua=UA_MODERN[i % 2].format(i % 9))
-    for k in range(40):   # популярная запись в блоге: один IP подгружает 40 картинок за минуту — без исключения это «Массовые запросы»
-        log.line(hot[0], synth.T0 + timedelta(days=3, hours=17, seconds=k), f'/upload/iblock/7/gallery{k}.jpg', 200, ref='https://blog.example.org/post-2', ua=UA_MODERN[0].format(1))
+    for k in range(60):   # сервер внешнего сайта: один адрес дата-центра, ровно раз в 2 секунды
+        log.line(DC_IP(0), synth.T0 + timedelta(days=2, hours=3, seconds=2 * k), f'/upload/iblock/9/item{k}.jpg', 200, ref='https://shop.example.net/catalog/', ua=UA_MODERN[0].format(3))
+    for i in range(30):   # прокси-релей: не дом и не дата-центр — признаков не хватает
+        log.line(VPN_IP(i), synth.T0 + timedelta(days=i % 7, hours=18, seconds=i), f'/upload/iblock/{i % 40}/p{i}.jpg', 200,
+                 ref='https://forum.example.com/t/1', ua=UA_MODERN[1].format(i % 9))
     res, _, _ = synth.run(log, str(tmp_path))
     G = res['sheets']['Общий анализ']['Люди и боты']
-    hl = G[G['группа'] == 'Чужой сайт']
-    assert int(hl['визитов'].sum()) >= 200 and set(hl['подгруппа'].astype(str)) == {'хотлинк'}, G
-    assert not G['подгруппа'].astype(str).str.contains('хотлинк').loc[G['группа'] == 'Боты'].any(), G
+    cnt = lambda g, sg: int(G.loc[(G['группа'] == g) & (G['подгруппа'].astype(str) == sg), 'визитов'].sum())
+    assert cnt('Люди', 'хотлинк') == 120, G
+    assert cnt('Боты', 'через внешний сайт') >= 1, G
+    assert cnt('Внешние сайты', 'хотлинк') == 30, G
+    assert 'Чужой сайт' not in set(G['группа']), G
     Pf = res['profiles'] or {}
+    hot = {HOME_IP(i) for i in range(120)} | {VPN_IP(i) for i in range(30)}
     in_cases = {ip for d in Pf.get('дела', []) for ip in d.get('ips', [])}
     MI = Pf.get('меры_ip')
     in_mi = set(MI['ip'].astype(str)) if MI is not None and len(MI) else set()
-    assert not (in_cases | in_mi) & set(hot), sorted((in_cases | in_mi) & set(hot))[:5]
+    assert not (in_cases | in_mi) & hot
+
+
+def test_files_only_direct_link_and_own(tmp_path):
+    """Без реферера: из домашней сети — «Люди · открыл файл по прямой ссылке»; из дата-центра — «Боты · только файлы:
+    открывает файлы по прямой ссылке» или «…: скрапер» (много файлов с адреса). Реферер — свои системы (own_hosts) — «Свои»."""
+    import json, os
+    log = synth.Log()
+    log.people()
+    for i in range(50):   # ссылку на файл прислали в мессенджере
+        log.line(HOME_IP(i), synth.T0 + timedelta(days=i % 7, hours=20, seconds=i), f'/upload/docs/price{i % 5}.pdf', 200, ua=UA_MODERN[i % 2].format(i % 9))
+    for i in range(20):   # один файл из дата-центра
+        log.line(DC_IP(i + 10), synth.T0 + timedelta(days=i % 7, hours=21, seconds=i), '/upload/docs/price1.pdf', 200, ua=UA_MODERN[0].format(i % 9))
+    for k in range(10):   # много файлов с одного адреса дата-центра
+        log.line(DC_IP(5), synth.T0 + timedelta(days=4, hours=22, minutes=k), f'/upload/iblock/3/pic{k}.jpg', 200, ua=UA_MODERN[0].format(2))
+    for i in range(15):   # письма и CRM: реферер — свой хост (копия сайта, почта)
+        log.line(HOME_IP(300 + i), synth.T0 + timedelta(days=i % 7, hours=11, seconds=i), '/upload/mail/logo.png', 200, ref='https://crm.example-own.ru/deal/1', ua=UA_MODERN[0].format(1))
+    ovr = os.path.join(str(tmp_path), 'map.json')
+    json.dump({'own_hosts': ['crm.example-own.ru']}, open(ovr, 'w'))
+    res, _, _ = synth.run(log, str(tmp_path), '--map-override', ovr)
+    G = res['sheets']['Общий анализ']['Люди и боты']
+    cnt = lambda g, sg: int(G.loc[(G['группа'] == g) & (G['подгруппа'].astype(str) == sg), 'визитов'].sum())
+    assert cnt('Люди', 'открыл файл по прямой ссылке') == 50, G
+    assert cnt('Боты', 'только файлы: открывает файлы по прямой ссылке') == 20, G
+    assert cnt('Боты', 'только файлы: скрапер') >= 1, G
+    assert cnt('Свои', 'свои системы') == 15, G
+
+
+def test_page_parser_class(tmp_path):
+    """Класс ботов «парсер страниц» (бывший «парсер»): много страниц без единого файла оформления."""
+    log = synth.Log()
+    log.people()
+    for k in range(30):
+        log.line(DC_IP(1), synth.T0 + timedelta(days=1, hours=2, seconds=5 * k), f'/catalog/item-{k}/', 200, ua=UA_MODERN[0].format(4))
+    res, _, _ = synth.run(log, str(tmp_path))
+    K = res['sheets']['Боты']['Боты: классы']
+    assert 'парсер страниц' in set(K['класс']) and 'парсер' not in set(K['класс']), K

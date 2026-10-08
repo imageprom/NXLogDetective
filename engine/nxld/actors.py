@@ -129,7 +129,7 @@ def product_name(ua):
     return m.group(1) if m else 'без названия'
 
 
-UTIL_NAME = {'Headless-браузер': 'Headless-браузер', 'Скрипты: прочие': 'Прочие программы'}
+UTIL_NAME = {'Headless-браузер': 'Headless-браузер', 'Скрипты: прочие': 'Прочие утилиты'}
 
 
 def utilities(c):

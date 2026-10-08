@@ -315,7 +315,7 @@ def regroup(V, R=None):
     return V
 
 
-UTIL_LABEL = {'Скрипты: прочие': 'Прочие программы'}
+UTIL_LABEL = {'Скрипты: прочие': 'Прочие утилиты'}
 
 
 def load_probes():
@@ -495,45 +495,80 @@ def impossible_ua(ua, year=None):
     return False
 
 
-def mark_files_only(V, R):
-    """Визит без единой страницы, только файлы (без POST и подгружаемых блоков), — не «Люди»: скрапер картинок, превью.
-    Исключения: продолжение визита человека (файлы подгружены страницей сайта, и тот же IP с тем же браузером смотрел страницы
-    в соседнем визите — пауза больше 30 минут разрезала визит) и человек из поиска по картинкам (реферер — поисковик):
-    оба остаются «Людьми». Хотлинк (файлы подгружает чужой сайт: реферер — чужой домен) — группа «Чужой сайт», не боты:
-    это посетители другого сайта, их IP не попадают в дела, «Меры по IP» и STIX."""
+DC_NETS = ('хостинг/облако', 'Яндекс')   # дата-центры: серверы, а не люди
+HOME_NETS = ('мобильный оператор', 'RU провайдер доступа', 'зарубежный провайдер доступа')   # домашние и мобильные сети
+
+
+def mark_files_only(V, R, own_hosts=()):
+    """Визит «Людей» без единой страницы, только файлы (без POST и подгружаемых блоков). Категория — кто, тип — что делает:
+    - продолжение визита человека (файлы подгружены страницей сайта, тот же IP с тем же браузером смотрел страницы рядом) — «Люди»;
+    - реферер — поисковик: «Люди · из поиска по картинкам»;
+    - реферер — свои хосты, их копии, CRM, почта (хосты сайта и own_hosts из поправок карты) — «Свои · свои системы»;
+    - реферер — внешний сайт (хотлинк): браузер из домашней или мобильной сети — «Люди · хотлинк»; сервер внешнего сайта
+      (дата-центр, не браузер или headless, ровный темп и много файлов с одного адреса) — «Боты · через внешний сайт»;
+      признаков не хватает — «Внешние сайты · хотлинк». Хотлинк-посетители в дела, «Меры по IP» и STIX не попадают;
+    - без реферера: из домашней или мобильной сети — «Люди · открыл файл по прямой ссылке» (ссылку прислали в мессенджере);
+      из дата-центра — «Боты · только файлы: скрапер» (от порога файлов с адреса) или «…: открывает файлы по прямой ссылке»;
+    - выдуманный браузер (невозможная версия в User-Agent) и только несуществующие файлы — «Боты · только файлы: …»."""
+    from .thresholds import value
     V = V.copy()
     m = (V['group'] == 'Люди') & (V['n_pages_raw'] == 0) & (V['n_post'] == 0) & (V['n_embedded'] == 0) & (V['n_static'] > 0)
     if not m.any(): return V
     vid = R['vid'].values
-    ext_ref = ~R['ref_internal'].values.astype(bool) & ~R['ref'].astype(str).isin(['-', '']).values
     rh = R['ref_host'].astype(str)
+    has_ref = ~R['ref'].astype(str).isin(['-', '']).values
+    own = {h.lower().removeprefix('www.') for h in own_hosts}
+    own_r = has_ref & (R['ref_internal'].values.astype(bool) | rh.str.lower().str.removeprefix('www.').isin(own).values)
+    ext_ref = has_ref & ~own_r
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)   # группы в шаблоне поисковиков — не для извлечения
         search_ref = ext_ref & rh.str.contains(SEARCH, regex=True).values   # Яндекс/Google Картинки и другие поисковики
-    own_ref = pd.Series(R['ref_internal'].values.astype(bool)).groupby(vid).all()
-    any_ext = pd.Series(ext_ref & ~search_ref).groupby(vid).any()
-    any_search = pd.Series(search_ref).groupby(vid).any()
-    only4 = pd.Series((R['status'].values >= 400) & (R['status'].values < 500)).groupby(vid).all()
+    per = lambda x: pd.Series(x).groupby(vid)
+    all_own = per(own_r).all().reindex(V.index).fillna(False).values
+    any_ext = per(ext_ref & ~search_ref).any().reindex(V.index).fillna(False).values
+    any_search = per(search_ref).any().reindex(V.index).fillna(False).values
+    only4 = per((R['status'].values >= 400) & (R['status'].values < 500)).all().reindex(V.index).fillna(False).values
     key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
     browsing = set(key[(V['group'] == 'Люди') & (V['n_pages'] > 0)])
-    cont = m & own_ref.reindex(V.index).fillna(False).values & key.isin(browsing)
+    cont = m & all_own & key.isin(browsing)   # продолжение визита человека — «Люди»
     m &= ~cont
-    img = m & any_search.reindex(V.index).fillna(False).values   # человек из поиска по картинкам — «Люди»
+    img = m & any_search
     V.loc[img, 'subgroup'] = 'из поиска по картинкам'
     m &= ~img
-    hot = m & any_ext.reindex(V.index).fillna(False).values   # хотлинк — посетители чужого сайта, не боты
-    V.loc[hot, 'group'] = 'Чужой сайт'
-    V.loc[hot, 'subgroup'] = 'хотлинк'
+    ours = m & all_own
+    V.loc[ours, 'group'] = 'Свои'; V.loc[ours, 'subgroup'] = 'свои системы'
+    m &= ~ours
+    dc = V['nettype'].isin(DC_NETS).values
+    home = V['nettype'].isin(HOME_NETS).values
+    br = V['ua_browser'].astype(bool).values
+    # хотлинк: сервер внешнего сайта — дата-центр, не браузер, или ровный темп и много файлов с одного адреса
+    hot = m & any_ext
+    rows = np.isin(vid, V.index[hot])
+    T = pd.DataFrame({'k': key.reindex(vid[rows]).values, 't': R['ts'].values[rows]}).sort_values(['k', 't'])
+    gap = T.groupby('k')['t'].diff()
+    st_ = gap.groupby(T['k']).agg(['mean', 'std', 'size'])
+    steady = set(st_[(st_['size'] + 1 >= value('внешний_сайт_запросов_с_адреса_от', 30)) & (st_['std'] <= 0.5 * st_['mean'].clip(lower=1))].index)
+    server = hot & (dc | ~br | key.isin(steady).values)
+    V.loc[server, 'group'] = 'Боты'; V.loc[server, 'subgroup'] = 'через внешний сайт'
+    ppl = hot & ~server & br & home
+    V.loc[ppl, 'subgroup'] = 'хотлинк'   # группа — «Люди»
+    ext = hot & ~server & ~ppl
+    V.loc[ext, 'group'] = 'Внешние сайты'; V.loc[ext, 'subgroup'] = 'хотлинк'
     m &= ~hot
+    # без реферера и прочее: «только файлы»
     year = int(pd.to_datetime(V['end'].max(), unit='s').year)
-    imp = pd.Series([impossible_ua(u, year) for u in V['ua']], index=V.index)
-    sub = np.select([imp.values,
-                     V['nettype'].isin(['хостинг/облако', 'VPN/прокси-релей']).values, only4.reindex(V.index).fillna(False).values,
-                     (V['entry_ref'].isin(['-', ''])).values],
-                    ['генератор User-Agent', 'скрапер с хостинга', 'только ошибки 4xx', 'прямой заход'], 'прочие')
+    imp = np.array([impossible_ua(u, year) for u in V['ua']])
+    direct = V['entry_ref'].isin(['-', '']).values
+    nfiles = V.groupby(key)['n_req'].transform('sum').values   # файлов с адреса (IP + браузер) за период
+    by_link = m & ~imp & direct & home & br & ~only4   # человек открыл файл по прямой ссылке (прислали в мессенджере)
+    V.loc[by_link, 'subgroup'] = 'открыл файл по прямой ссылке'   # группа — «Люди»
+    m &= ~by_link
+    lim = value('только_файлы_скрапер_от', 3)
+    sub = np.select([imp, dc & (nfiles >= lim), dc, only4],
+                    ['выдуманный браузер', 'скрапер', 'открывает файлы по прямой ссылке', 'запрашивает несуществующие файлы'], 'прочие')
     V.loc[m, 'group'] = 'Боты'
-    V.loc[m, 'subgroup'] = 'файлы без страниц: ' + pd.Series(sub, index=V.index)[m]
+    V.loc[m, 'subgroup'] = 'только файлы: ' + pd.Series(sub, index=V.index)[m]
     return V
 
 

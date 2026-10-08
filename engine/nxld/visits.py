@@ -757,6 +757,26 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     return V
 
 
+def mark_system_agents(V, R):
+    """Системный агент на устройстве человека (data/reference/system_agents.json: автозаполнение паролей Apple и родственные),
+    который в визите запрашивает только стандартные /.well-known/ (extensions.json, «Служебные (.well-known)»), — «Люди».
+    Тот же UA с любым другим адресом — обычные правила."""
+    import json, os
+    ref = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+    A = json.load(open(os.path.join(ref, 'system_agents.json'), encoding='utf-8')).get('agents', [])
+    ext = json.load(open(os.path.join(ref, 'extensions.json'), encoding='utf-8'))
+    rx = next((g['шаблон'] for g in ext.get('по_адресу', []) if g.get('группа') == 'Служебные (.well-known)'), None)
+    if not A or rx is None: return V
+    V = V.copy()
+    only_wk = pd.Series(_cat_mask(R, rx)[R['base'].cat.codes.values]).groupby(R['vid'].values).all().reindex(V.index).fillna(False).values
+    ua_rx = '|'.join(f"(?:{a['ua_pattern']})" for a in A)
+    agent = V['ua'].astype(str).str.contains(ua_rx, regex=True).values
+    m = only_wk & agent & (V['group'] != 'Свои').values
+    V.loc[m, 'group'] = 'Люди'
+    V.loc[m, 'subgroup'] = ''
+    return V
+
+
 def mark_service_checks(V, R):
     """Визит, в котором только запросы к стандартным файлам /.well-known/ (extensions.json, «Служебные (.well-known)»), из сети
     самого сервиса (data/reference/service_checks.json: Google, Apple, Akamai…) — «Роботы · проверка сервиса», не зонд и не бот."""

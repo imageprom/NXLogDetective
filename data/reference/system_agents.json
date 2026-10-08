@@ -1,0 +1,13 @@
+{
+  "description": "Системные агенты на устройстве человека: сами запрашивают стандартные файлы /.well-known/ (менеджер паролей, связь приложения с сайтом). Визит такого агента только к стандартным /.well-known/ — «Люди»; если тот же UA просит что-то ещё — обычные правила.",
+  "to_verify": "проверить заново на новых данных",
+  "agents": [
+    {
+      "key": "apple_autofill",
+      "title": "автозаполнение паролей Apple",
+      "ua_pattern": "com\\.apple\\.AuthenticationServicesCore\\.AuthenticationServicesAgent|AuthenticationServicesAgent/|^swcd \\(|com\\.apple\\.Passwords",
+      "paths": ["passkey-endpoints", "apple-app-site-association", "change-password", "webcredentials"],
+      "source": "https://developer.apple.com/documentation/xcode/supporting-associated-domains"
+    }
+  ]
+}

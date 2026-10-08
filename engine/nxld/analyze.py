@@ -85,6 +85,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     V = visits.mark_files_only(V, R, m.get('own_hosts') or [], form_ == 'страница')   # визит из одних файлов: кто (категория) и что делает (тип)
     V = visits.mark_unrendered(V, R)   # «статика» считается, только если её подгрузила страница визита
     V = visits.mark_service_checks(V, R)   # /.well-known/ из сетей самих сервисов — «Роботы · проверка сервиса»
+    V = visits.mark_system_agents(V, R)   # агент автозаполнения паролей Apple только с /.well-known/ — «Люди» (system_agents.json)
     V, server_ips = visits.own_server(V, R)   # сервер сайта проверяет сам себя — его IP «Свои — сервер сайта»
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)

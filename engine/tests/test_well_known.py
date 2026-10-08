@@ -34,3 +34,26 @@ def test_standard_well_known_not_probe_in_any_net(tmp_path):
     assert not any(rc.get(ip) for ip in PASS), {ip: rc.get(ip) for ip in PASS}
     assert not any(set(d.get('ips', [])) & set(PASS) for d in res['profiles']['дела'])
     assert rc.get('104.28.99.7'), rc   # нестандартное имя — по-прежнему «Разведка»
+
+
+def test_apple_autofill_agent_is_people(tmp_path):
+    """#14: агент автозаполнения паролей Apple только со стандартными /.well-known/ — «Люди»; тот же UA с посторонним
+    адресом — обычные правила (не «Люди»)."""
+    log = synth.Log()
+    log.people()
+    ONLY, ODD_IP = ['95.165.160.1', '104.28.10.6', '172.224.226.6'], '95.165.160.2'
+    for d in range(7):
+        for j, ip in enumerate(ONLY):
+            log.line(ip, synth.T0 + timedelta(days=d, hours=20, minutes=j), '/.well-known/passkey-endpoints', 404, ua=UA_PASS)
+            log.line(ip, synth.T0 + timedelta(days=d, hours=20, minutes=j, seconds=2), '/.well-known/apple-app-site-association', 404, ua=UA_PASS)
+        log.line(ODD_IP, synth.T0 + timedelta(days=d, hours=21), '/.well-known/passkey-endpoints', 404, ua=UA_PASS)
+        log.line(ODD_IP, synth.T0 + timedelta(days=d, hours=21, seconds=3), '/catalog/', 200, ua=UA_PASS)
+    res, _, _ = synth.run(log, str(tmp_path))
+    G = res['sheets']['Общий анализ']['Люди и боты']
+    assert 'явные (не браузер)' in set(G.loc[G['группа'] == 'Боты', 'подгруппа'].astype(str)), G   # ODD_IP — обычные правила
+    assert int(G.loc[G['группа'] == 'Люди', 'IP'].sum()) == len(set(synth.RU)) + len(ONLY), G
+    import sys
+    sys.path.insert(0, synth.ENGINE)
+    import json, os
+    A = json.load(open(os.path.join(synth.ENGINE, '..', 'data', 'reference', 'system_agents.json'), encoding='utf-8'))
+    assert A.get('to_verify') == 'проверить заново на новых данных'

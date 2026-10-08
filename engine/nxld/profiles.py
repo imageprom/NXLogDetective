@@ -178,6 +178,13 @@ def build(c, res):
     cand = (grp.isin(['Боты', 'Утилиты']) | F.index.isin(list(ops)) | (strong & ~grp.isin(['Свои']))) & ~F.index.isin(list(staff))
     cand &= ~F.index.isin(list(common.hotlink_ips(c)))   # хотлинк — посетители внешнего сайта: в дела, меры и STIX не идут
     cand &= ~F.index.isin(list(common.service_check_ips(c)))   # проверка сервиса (/.well-known/ из сети сервиса) — не разведка
+    # «Подозрительные лица» и «Свои · скачал бэкап» — без дел и обвинений; предъявленные правилами обвинения снимаются (факт — в res['backups'])
+    own_bk = common.own_backup_ips(c)
+    off = (common.suspect_ips(c) | own_bk)
+    lifted = set(F.index[cand & strong & F.index.isin(list(off))])
+    for b_ in res.get('backups') or []:
+        b_['обвинения_сняты'] = b_['ip'] in lifted and b_['ip'] in own_bk
+    cand &= ~F.index.isin(list(off))
     C = F[cand].copy()
     if not len(C): return dict(дела=[], состав=pd.DataFrame(), сигнатуры=pd.DataFrame())
     C['key'] = keys_of(C.index, P, ops)

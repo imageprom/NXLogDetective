@@ -217,6 +217,14 @@ def engine_pages(engines, roles=('вход',)):
     return out
 
 
+def engine_backup_paths():
+    """Шаблоны адресов бэкапов всех движков справочника («backup_paths»): Битрикс /bitrix/backup/, WordPress updraft и ai1wm, Joomla Akeeba."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        out += (_read(path) or {}).get('backup_paths', [])
+    return out
+
+
 def load(site_map, paths=(), site=''):
     engines = [e.get('движок') for e in (site_map or {}).get('engines') or [] if isinstance(e, dict)]
     return Reference(engines, paths, site)

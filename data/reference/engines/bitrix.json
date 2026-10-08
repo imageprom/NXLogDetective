@@ -9,6 +9,7 @@
     "https://dev.1c-bitrix.ru/learning/",
     "https://cashruflow.ru/blog/clean-param"
   ],
+  "backup_paths": ["^/bitrix/backup/"],
   "признаки": [
     "^/bitrix/",
     "^/local/(templates|components|js|php_interface)/",

@@ -1,0 +1,28 @@
+{
+  "description": "Визиты «только файлы»: какие файлы — скачивание, какие — обвес страницы (всё остальное), служебные файлы (в «только файлы» не считаются) и чувствительные адреса (бэкапы, дампы — раньше всех правил).",
+  "to_verify": "каталоги выгрузок (data.dirs), фоновые адреса (data.not_dirs) и шаблоны бэкапов собраны по описаниям движков, а не по логам; сверить на новых логах",
+  "download_groups": [
+    {"key": "documents", "title": "Документы", "ext": ["pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "csv", "txt"]},
+    {"key": "data", "title": "Данные и выгрузки", "ext": ["json", "xml", "yml"],
+     "dirs": ["/upload/", "/export/", "/exports/", "/download/", "/downloads/", "/files/", "/price/", "/prices/"],
+     "not_dirs": ["/api/", "/ajax/", "/bitrix/", "/wp-json/", "/.well-known/"]},
+    {"key": "archives", "title": "Архивы", "ext": ["zip", "rar", "7z", "tar.gz"]},
+    {"key": "drawings", "title": "Чертежи, 3D, рендеры", "ext": ["dwg", "dxf", "step", "stp", "stl", "obj", "skp", "3ds", "psd", "tif", "tiff"]},
+    {"key": "programs", "title": "Программы и прошивки", "ext": ["exe", "msi", "dmg", "apk", "iso", "bin"]},
+    {"key": "books", "title": "Книги", "ext": ["epub", "fb2", "mobi", "djvu"]},
+    {"key": "contacts", "title": "Календарь и контакты", "ext": ["ics", "vcf"]},
+    {"key": "media", "title": "Медиа", "ext": ["mp3", "wav", "mp4", "mov", "webm"], "photo_ext": ["jpg", "jpeg", "png", "webp", "heic"],
+     "rule": "скачивание, только если файл взят целиком (200, не 206) и больше порога files_media_download_min_bytes; иначе — обвес"}
+  ],
+  "page_assets": ["css", "js", "mjs", "map", "woff", "woff2", "ttf", "otf", "eot"],
+  "service_files": "^/(robots\\.txt|sitemap[^/]*|favicon[^/]*|apple-touch-icon[^/]*)$",
+  "sensitive": [
+    "/backups?(/|$|[._-])",
+    "\\.(sql|dump)(\\.(gz|zip|bz2|7z))?$",
+    "\\.(bak|wpress|jpa)$",
+    "^/[^/]+\\.(zip|rar|7z|tar|tar\\.gz|tgz|gz)(\\.\\d+)?$",
+    "/restore\\.php$",
+    "/\\.env"
+  ],
+  "transfer": ["/restore\\.php$", "\\.(tar\\.gz|tgz|tar|zip)\\.\\d+$"]
+}

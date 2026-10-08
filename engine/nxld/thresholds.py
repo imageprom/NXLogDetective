@@ -9,8 +9,9 @@ except Exception:
 
 
 def value(name, default=None):
-    """Порог-значение, не зависящее от размера лога: {"значение": …} в data/thresholds.json."""
-    return (_T.get(name) or {}).get('значение', default)
+    """Порог-значение, не зависящее от размера лога: {"значение": …} или {"value": …, "to_verify": …} в data/thresholds.json."""
+    t = _T.get(name) or {}
+    return t.get('value', t.get('значение', default))
 
 
 class Sizes:

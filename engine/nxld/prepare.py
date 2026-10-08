@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np, pandas as pd
 from . import ingest, load, recon, visits, ipdb
 
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 
 
 def site_hosts_from(state, R):

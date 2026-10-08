@@ -118,7 +118,9 @@ def build(R, human, staff=None, engines=()):
     from .reference import engine_pages
     eng = engine_pages(engines)
     svc = cats.str.contains('|'.join(f'(?:{x})' for x in eng), regex=True, case=False).values if eng else np.zeros(L, bool)
-    F['служебная_страница'] = svc
+    # стандартные имена /.well-known/ (extensions.json, «Служебные (.well-known)»: passkey-endpoints, assetlinks.json, security.txt…) —
+    # служебные адреса в любой сети, не зонд: их просят браузеры и сервисы сами (автозаполнение паролей Apple через iCloud Private Relay и т. п.)
+    F['служебная_страница'] = svc | (F['группа'] == 'Служебные (.well-known)').values
     F.loc[(F['зонд'] == 'неоднозначный') & (F['людям'] | svc), 'зонд'] = ''
     F['раздел'] = cats.str.extract(r'^(/[^/]*/?)')[0].values
     return F

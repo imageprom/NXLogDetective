@@ -1,5 +1,6 @@
-"""Запросы к стандартным файлам /.well-known/ из сетей самих сервисов (Google, Apple, Akamai…) — «Роботы · проверка сервиса»:
-без дел, обвинений, сигнатур и STIX (задача #10, дополнение)."""
+"""Запросы к стандартным файлам /.well-known/ из сетей самих сервисов (Google, Apple…) — «Роботы · проверка сервиса»:
+без дел, обвинений, сигнатур и STIX (задача #10, дополнение). Akamai — не сеть сервиса: через неё идёт iCloud Private Relay (люди),
+но и оттуда стандартное имя — не зонд, дел нет (раунд 3)."""
 import glob
 import json
 import os
@@ -30,7 +31,7 @@ def test_service_checks_are_robots_without_cases(tmp_path):
     res, out, _ = synth.run(_log(), str(tmp_path))
     G = res['sheets']['Общий анализ']['Люди и боты']
     svc = G[(G['группа'] == 'Роботы') & (G['подгруппа'].astype(str) == 'проверка сервиса')]
-    assert int(svc['IP'].sum()) == len(GOOGLE) + len(AKAMAI), G
+    assert int(svc['IP'].sum()) == len(GOOGLE), G   # Akamai убрана из service_checks.json
     ips = set(GOOGLE + AKAMAI)
     Pf = res['profiles'] or {}
     cases = [d for d in Pf.get('дела', []) if set(d.get('ips', [])) & ips]

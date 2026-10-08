@@ -89,7 +89,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     # 4а. утилиты
     U = A.get('утилиты')
     if U is not None and len(U):
-        S.section('Утилиты', 'Программы, которые обращаются к сайту без браузера: curl, wget, Python, PHP и другие. За ними может стоять разработчик, интеграция или сканер — вывод по поведению каждого IP.')
+        S.section('Утилиты', 'Утилиты, которые обращаются к сайту без браузера: curl, wget, Python, PHP и другие. За ними может стоять разработчик, интеграция или сканер — вывод по поведению каждого IP.')
         r0 = S.r + 1
         cut = lambda t: '\n'.join((x[:45] + '…' if len(x) > 46 else x) for x in str(t).split(', '))
         rows = [[r['утилита'], int(r['запросов']), int(r['IP']), int(r['зондов']), cut(r['что']), str(r['похоже']).replace(', ', '\n')] for _, r in U.iterrows()]

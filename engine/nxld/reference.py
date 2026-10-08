@@ -206,13 +206,13 @@ def all_engine_names():
 
 
 def engine_pages(engines, roles=('вход',)):
-    """Шаблоны служебных страниц найденных движков с этими ролями (справочник движков, «адреса»): вход, регистрация, восстановление пароля.
-    Такие адреса — страницы сайта, а не зонды."""
-    names = {str(e).lower() for e in engines if e}
+    """Шаблоны служебных страниц движков с этими ролями (справочник движков, «адреса»): вход, регистрация, восстановление пароля —
+    страницы сайта, а не зонды; «переадресация» — обработчики переадресации по ссылке. engines=None — все движки справочника."""
+    names = {str(e).lower() for e in engines if e} if engines is not None else None
     out = []
     for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
         d = _read(path) or {}
-        if not ({str(d.get('название', '')).lower(), str(d.get('id', '')).lower()} & names): continue
+        if names is not None and not ({str(d.get('название', '')).lower(), str(d.get('id', '')).lower()} & names): continue
         out += [a['шаблон'] for a in d.get('адреса', []) if a.get('роль') in roles]
     return out
 

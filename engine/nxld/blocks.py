@@ -734,6 +734,35 @@ def constructs(c):
     return kg
 
 
+def norm_path(p, site_hosts):
+    """Путь обработчика: без схемы и хоста своего сайта, повторные «/» схлопнуты (//bitrix//redirect.php → /bitrix/redirect.php)."""
+    p = str(p)
+    m = re.match(r'(?i)^https?://([^/]+)', p)
+    if m and any(m.group(1).lower().removeprefix('www.') == h.lower().removeprefix('www.') for h in site_hosts): p = p[m.end():]
+    return re.sub(r'/{2,}', '/', p) or '/'
+
+
+def redirect_handlers(cats, site_hosts):
+    """Для каждой категории адреса: нормализованный путь и признак «известный обработчик переадресации движка» (справочник
+    движков, роль «переадресация»: у Битрикса redirect.php, rk.php, click.php)."""
+    from .reference import engine_pages
+    norm = pd.Series([norm_path(p, site_hosts) for p in cats], index=range(len(cats)))
+    rx = engine_pages(None, ('переадресация',))
+    hit = norm.str.contains('|'.join(f'(?:{x})' for x in rx), regex=True, case=False).values if rx else np.zeros(len(cats), bool)
+    return norm.values, hit
+
+
+def link_probe_rows(c):
+    """Запросы с параметром-ссылкой на чужой сайт к адресу, который не обработчик переадресации движка (/api/fetch?url=…,
+    /proxy, /webhook…) — зонд подмены адреса (SSRF и т. п.), а не открытый редирект. Булев массив по строкам R."""
+    R = c.R
+    hosts = c.m.get('site_hosts') or []
+    ext_q = open_redirect_queries(R['query'].cat.categories.to_series(), hosts)
+    if not ext_q.any(): return np.zeros(len(R), bool)
+    _, handler = redirect_handlers(R['base'].cat.categories.astype(str), hosts)
+    return ext_q[R['query'].cat.codes.values] & ~handler[R['base'].cat.codes.values]
+
+
 def open_redirect_queries(qc, site_hosts):
     """Строки запроса (по категориям) с параметром-ссылкой на чужой сайт: goto=https://другой-сайт/… (recon.is_link)."""
     from urllib.parse import unquote_plus, urlsplit
@@ -927,6 +956,7 @@ def load_security(c, F):
     # атаки в параметрах
     qc = R['query'].cat.categories.to_series()
     am = qc.str.contains(ATTACK, regex=True).values[R['query'].cat.codes.values] | vm & bs.str.contains(ATTACK, regex=True).values[R['base'].cat.codes.values]
+    am |= link_probe_rows(c)   # ссылка на чужой сайт в параметре произвольного адреса — зонд SSRF
     AQ = R.loc[am, ['ip', 'base', 'query', 'status', 'bytes', 'day']]
     if len(AQ):
         S['Атаки в параметрах'] = AQ.assign(запрос=AQ['query'].astype(str).str.slice(0, 200)).groupby(['base', 'status'], observed=True).agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), адрес=('ip', 'first'), пример=('запрос', 'first')).sort_values('запросов', ascending=False).reset_index().head(300)
@@ -963,17 +993,28 @@ def load_security(c, F):
         F.add('Нагрузка и безопасность', 'Важно', 'human_prober', 'actors', f'Человек систематически исследует сайт ({hr["ip"].nunique()} адресов)',
               '; '.join(f"{r['ip']} — {r['дней']} дн., {r['первый']}…{r['последний']}: {r['что_пробовал'] or r['признак']}" for _, r in hr.head(5).iterrows()),
               'сервер / настройки защиты', 'Проверить, кто это (свой разработчик или посторонний); постороннего ограничить по IP', int(hr['ip'].nunique()), 'Исследователи сайта')
-    # открытый редирект: адрес отвечает переадресацией (3xx) на запрос со ссылкой на чужой сайт (goto=, url=, redirect=…)
-    ext_q = open_redirect_queries(qc, c.m.get('site_hosts') or [])
+    # открытый редирект — только у известных обработчиков переадресации движков (справочник); путь нормализован: один обработчик —
+    # одна карточка. Ссылка в параметре у произвольного адреса — зонд SSRF (link_probe_rows, «Атаки в параметрах»).
+    # В логе нет заголовка Location: 3xx может быть переадресацией http → https — ответы того же размера, что у обычной переадресации
+    # сайта (3xx на адреса без ссылки в параметрах), не считаются.
+    hosts_ = c.m.get('site_hosts') or []
+    ext_q = open_redirect_queries(qc, hosts_)
     if ext_q.any():
-        orx = ext_q[R['query'].cat.codes.values] & np.isin(st, [301, 302, 303, 307, 308])
-        OR = R.loc[orx, ['base', 'query']].astype(str)
-        for b_, g_ in OR.groupby('base'):
-            n_all = int((ext_q[R['query'].cat.codes.values] & (R['base'].astype(str).values == b_)).sum())
-            F.add('Нагрузка и безопасность', 'Важно', 'open_redirect', b_, f'Открытый редирект: {b_} переадресует на чужие сайты',
-                  f"{len(g_)} переадресаций (3xx) на внешние адреса, например {b_}?{g_['query'].iloc[0][:150]}; всего запросов со ссылкой на чужой сайт — {n_all}",
-                  'код сайта / настройки движка', 'Переадресовывать только на свои адреса или по списку доверенных; в Битриксе — включить проверку подписи ссылок в redirect.php',
-                  len(g_), '')
+        bc_ = R['base'].cat.codes.values
+        norm_, handler_ = redirect_handlers(R['base'].cat.categories.astype(str), hosts_)
+        ext_r = ext_q[R['query'].cat.codes.values]
+        r3 = np.isin(st, [301, 302, 303, 307, 308])
+        sz = pd.Series(R['bytes'].values[r3 & ~ext_r]).value_counts()
+        https_sz = set(sz[sz >= 3].index)   # обычная переадресация сайта (на https, на адрес со «/»)
+        orx = ext_r & handler_[bc_] & r3 & ~np.isin(R['bytes'].values, list(https_sz))
+        OR = pd.DataFrame({'h': norm_[bc_[orx]], 'q': R['query'].astype(str).values[orx]})
+        n_h = pd.Series(norm_[bc_[ext_r & handler_[bc_]]]).value_counts()
+        for h_, g_ in OR.groupby('h'):
+            F.add('Нагрузка и безопасность', 'Важно', 'open_redirect', h_, f'Вероятно, открытый редирект: {h_} переадресует на чужие сайты',
+                  f"{len(g_)} ответов 3xx на запросы со ссылкой на чужой сайт, например {h_}?{g_['q'].iloc[0][:150]}; всего таких запросов — {int(n_h.get(h_, 0))}. "
+                  f"Вероятно: в логе нет заголовка Location, а 3xx бывает и переадресацией http → https — ответы того же размера, что у обычной переадресации сайта, не считались",
+                  'код сайта / настройки движка', 'Открыть пример из лога и проверить, куда ведёт переадресация; переадресовывать только на свои адреса или по списку доверенных; '
+                  'в Битриксе — включить проверку подписи ссылок в redirect.php', len(g_), '')
     tok = qc.str.contains(recon.SECRET_RX, regex=True).values[R['query'].cat.codes.values]   # список секретов — общий с маскировкой (recon)
     if tok.sum():
         S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(recon.SECRET_RX)[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')

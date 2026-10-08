@@ -338,6 +338,9 @@ class Wide(Sheet):
             if c.value: c.font = Font(name='Arial', size=c.font.sz if c.font and c.font.sz else 11, color=RED)
 
 
+SHOW_AUDIENCE = False   # «Основная страна» и предупреждение на сводке 01 — выключено до согласования; данные (res['audience']) считаются
+
+
 def build_index(wb, res, sheet_names, title='Обзор'):
     ws = wb.create_sheet(title, 0)
     S = Sheet(ws)
@@ -402,7 +405,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     total = sum(v for _, v, _ in grp) or 1
     S.table(['Кто', 'Визитов', 'Доля', 'Кто это'], [(g, int(v), v / total, cap(note)) for g, v, note in grp], ['B', 'C', 'D', 'EF'], num=(1, 2))
     S.r += 1
-    au = res.get('audience')
+    au = res.get('audience') if SHOW_AUDIENCE else None
     if au:   # доля людей из страны основной аудитории: низкая — в «люди» могли попасть боты
         S.pair('Основная страна', f"{au['страна']} — {str(au['доля']).replace('.', ',')}% визитов людей")
         if au['предупреждение']:

@@ -177,3 +177,18 @@ def test_page_parser_class(tmp_path):
     res, _, _ = synth.run(log, str(tmp_path))
     K = res['sheets']['Боты']['Боты: классы']
     assert 'парсер страниц' in set(K['класс']) and 'парсер' not in set(K['класс']), K
+
+
+def test_audience_not_shown_on_overview(tmp_path):
+    """Строка «Основная страна» и предупреждение на Обзоре 01 не выводятся (до согласования); данные считаются."""
+    import os
+    import openpyxl
+    log = synth.Log()
+    log.people()
+    for i in range(200):   # зарубежных «людей» больше, чем из России, — предупреждение было бы
+        ip = f'81.2.69.{i % 100 + 10}' if i < 100 else f'104.244.72.{i % 100 + 10}'   # GB и LU — по 100 визитов
+        log.visit(ip, synth.T0 + timedelta(days=i % 7, hours=19, minutes=i % 60, seconds=i))
+    res, out, _ = synth.run(log, str(tmp_path))
+    assert res['audience'] and res['audience']['предупреждение']
+    vals = [v for r in openpyxl.load_workbook(os.path.join(out, 'NXLD_01_Overview.xlsx'))['Обзор'].iter_rows(values_only=True) for v in r if isinstance(v, str)]
+    assert not any('Основная страна' in v or 'страны основной аудитории' in v for v in vals)

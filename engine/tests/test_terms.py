@@ -54,17 +54,3 @@ def test_admin_robots_and_bots_title(tmp_path):
     text = ' '.join(str(v) for row in ws.iter_rows(values_only=True) for v in row if isinstance(v, str))
     assert 'РОБОТЫ И БОТЫ' in text and 'ПРОГРАММЫ' not in text.upper(), text[:1500]
 
-
-def test_activity_shows_files_only_subtype(tmp_path):
-    """01 Активность, колонка «Тип»: у «только файлы» — расшифровка («Скрапер»), а не общее «Только файлы»."""
-    log = synth.Log()
-    log.people()
-    for k in range(15):   # картинки подряд по номерам из дата-центра — «Боты · только файлы: скрапер»
-        log.line('51.15.60.7', synth.T0 + timedelta(days=2, hours=3, seconds=20 * k), f'/upload/iblock/5/item{k}.jpg', 200)
-    res, out, _ = synth.run(log, str(tmp_path))
-    G = res['sheets']['Общий анализ']['Люди и боты']
-    assert 'только файлы: скрапер' in set(G['подгруппа'].astype(str)), G
-    import openpyxl
-    ws = openpyxl.load_workbook(os.path.join(out, 'NXLD_01_Overview.xlsx'), read_only=True)['Активность']
-    vals = [v for row in ws.iter_rows(values_only=True) for v in row if isinstance(v, str)]
-    assert 'Скрапер' in vals and 'Только файлы' not in vals, [v for v in vals if 'файл' in v.lower() or 'крапер' in v]

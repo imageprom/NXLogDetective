@@ -244,3 +244,62 @@ def test_thresholds_have_to_verify():
     new = [k for k in T if k.startswith(('files_', 'backup_'))]
     assert len(new) >= 10 and all(T[k].get('to_verify') and 'value' in T[k] for k in new), new
     assert 'внешний_сайт_запросов_с_адреса_от' not in T and 'только_файлы_скрапер_от' not in T and 'files_media_download_min_bytes' not in T
+
+
+# ---- раунд 5 ----
+def test_office_only_by_visits_with_pages(tmp_path):
+    """Офис: браузеры на IP считаются только по визитам «Люди» со страницами. Домашний прокси, который меняет браузер на каждом
+    запросе файла и не открывает страниц, — не офис: «Подозрительные лица», а не «Люди · открыл файл по прямой ссылке»."""
+    log = synth.Log()
+    log.people()
+    for k in range(6):   # вторник, рабочие часы, разные браузеры, только картинки без реферера
+        log.line(HOME(800), TUE + timedelta(hours=10, minutes=40 * k), f'/upload/iblock/6/x{k}.jpg', 200, ua=UA[k % 3].format(k))
+    res, _, _ = synth.run(log, str(tmp_path))
+    G, cnt = _groups(res)
+    assert cnt('Люди', 'открыл файл по прямой ссылке') == 0, G
+    sus = _v(res, [HOME(800)])
+    assert len(sus) == 6 and not sus['evidence_people'].str.contains('офис').any(), sus
+
+
+def test_image_search_beats_photo_size(tmp_path):
+    """Большое фото по рефереру поисковика — «Люди · из поиска по картинкам», а не скачивание; без реферера — скачивание."""
+    log = synth.Log()
+    log.people()
+    for i in range(5):
+        log.line(HOME(700 + i), TUE + timedelta(days=i, hours=21), '/upload/photo/big.jpg', 200, ua=UA[0].format(i), size=3_000_000,
+                 ref='https://yandex.ru/images/search?text=example')
+        log.line(HOME(710 + i), TUE + timedelta(days=i, hours=21), '/upload/photo/big.jpg', 200, ua=UA[0].format(i), size=3_000_000)
+    res, _, _ = synth.run(log, str(tmp_path))
+    G, cnt = _groups(res)
+    assert cnt('Люди', 'из поиска по картинкам') == 5, G
+    assert set(_v(res, [HOME(710 + i) for i in range(5)])['subgroup'].astype(str)) == {'скачал документ'}
+
+
+def test_impossible_ua_type_by_behaviour(tmp_path):
+    """Невозможная версия браузера — улика за бота; тип — по поведению: одни 404/410 — «запрашивает несуществующие файлы»,
+    403 или 200 — «скрапер»."""
+    imp = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20990101 Firefox/115.0'
+    log = synth.Log()
+    log.people()
+    for i in range(10):
+        log.line(HOME(820 + i), TUE + timedelta(days=i % 7, hours=4), f'/upload/iblock/8/a{i}.jpg', 404, ua=imp)
+        log.line(HOME(840 + i), TUE + timedelta(days=i % 7, hours=4), f'/upload/iblock/8/b{i}.jpg', 403, ua=imp)
+        log.line(HOME(860 + i), TUE + timedelta(days=i % 7, hours=4), f'/upload/iblock/8/c{i}.jpg', 200, ua=imp)
+    res, _, _ = synth.run(log, str(tmp_path))
+    G, cnt = _groups(res)
+    assert cnt('Боты', 'только файлы: запрашивает несуществующие файлы') == 10, G
+    assert cnt('Боты', 'только файлы: скрапер') == 20, G
+
+
+def test_backup_seeker_all_archives(tmp_path):
+    """IP «поиск бэкапов»: все его визиты к архивам и дампам в любом каталоге (/data/*.zip, /data/*.7z) — тот же ярлык,
+    а не «Подозрительные лица»."""
+    log = synth.Log()
+    log.people()
+    paths = ['/db/a1.zip', '/old/a2.tar.gz', '/data/a3.zip', '/data/a4.7z']   # нейтральные имена: словарь зондов их не знает
+    for k, p in enumerate(paths):
+        log.line(HOME(880), TUE + timedelta(hours=k * 2), p, 301, ua=UA[0].format(5))
+    res, _, _ = synth.run(log, str(tmp_path))
+    G, cnt = _groups(res)
+    assert not len(_v(res, [HOME(880)])), res['suspects']
+    assert cnt('Подозрительные лица') == 0 and cnt('Люди') == 7 * 20, G

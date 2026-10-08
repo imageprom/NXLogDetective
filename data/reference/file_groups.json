@@ -33,5 +33,6 @@
     "/restore\\.php$",
     "/\\.env"
   ],
+  "backup_ext": ["zip", "rar", "7z", "tar", "tar.gz", "tgz", "gz", "bz2", "sql", "dump", "bak", "wpress", "jpa"],
   "transfer": ["/restore\\.php$", "\\.(tar\\.gz|tgz|tar|zip)\\.\\d+$"]
 }

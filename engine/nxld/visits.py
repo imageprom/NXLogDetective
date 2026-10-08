@@ -516,6 +516,7 @@ def file_groups():
         G['service_rx'] = G['service_files'] + (f'|{wk}' if wk else '')
         G['sensitive_rx'] = '|'.join(f'(?:{x})' for x in G['sensitive'] + engine_backup_paths())
         G['transfer_rx'] = '|'.join(f'(?:{x})' for x in G['transfer'])
+        G['backup_ext_rx'] = r'\.(' + '|'.join(re.escape(e) for e in G['backup_ext']) + r')(\.\d+)?$'
         from .reference import engine_template_paths
         G['decor_rx'] = '|'.join(f'(?:{x})' for x in engine_template_paths() + [G['decor_pattern']])
         _FG = G
@@ -563,8 +564,9 @@ def mark_backups(V, R, staff_ips=(), admin_rx=None):
     S_ = pd.DataFrame({'ip': ips_all[sens], 'b': codes[sens], 'vid': R['vid'].values[sens]})
     n_sens = S_.groupby('ip')['b'].nunique()
     seekers = set(n_sens[n_sens >= lim_search].index)
-    if seekers:
-        sv = S_.loc[S_['ip'].isin(seekers), 'vid'].unique()
+    if seekers:   # все визиты такого IP к архивам и дампам (file_groups.json «backup_ext», в любом каталоге) — тот же ярлык
+        arch = _cat_mask(R, G['backup_ext_rx'])[codes] & np.isin(ips_all, list(seekers))
+        sv = np.union1d(S_.loc[S_['ip'].isin(seekers), 'vid'].unique(), R['vid'].values[arch])
         ms = V.index.isin(sv) & (V['group'] == 'Люди').values
         V.loc[ms, 'group'] = 'Боты'
         V.loc[ms, 'subgroup'] = _actors()['выводы']['сканер'] + ': поиск бэкапов'
@@ -627,9 +629,10 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
                 со многих IP растянуто по времени (сильно); дата-центр (слабо). 403 — отказ сайта: «закрыто сайтом (403)», ни за кого.
     Боты — сильная улика за бота и нет соседей по адресу; Люди — есть поведенческий признак людей и нет улик за бота (дата-центр —
     тоже улика); иначе — Подозрительные лица.
-    Ярлыки по порядку: невозможная версия → «Боты · только файлы: запрашивает несуществующие файлы»; реферер — хост из own_hosts →
+    Ярлыки по порядку: невозможная версия → «Боты · только файлы: запрашивает несуществующие файлы» (одни 404 и 410) или
+    «…: скрапер» (иначе); реферер — хост из own_hosts →
     «Свои · свои системы»; соседи по адресу → «Люди»; скачивание (file_groups.json; аудио и видео — целиком 200, фото — больше
-    обычной картинки страниц) → «Люди · скачал документ» / «Боты · только файлы: скрапер» (обход по списку или повторы) /
+    обычной картинки страниц, но не по рефереру поисковика) → «Люди · скачал документ» / «Боты · только файлы: скрапер» (обход по списку или повторы) /
     «Подозрительные лица · скачал документ»; обвес: поисковик → «Люди · из поиска по картинкам»; почти одни 404 → «Люди · старая
     ссылка» / «Боты · только файлы: запрашивает несуществующие файлы» / «Подозрительные лица»; страницы своего сайта → «Люди» /
     «Боты · только файлы: скрапер» / «Подозрительные лица»; внешний сайт → «Люди · хотлинк» / скрапер / «Внешние сайты · хотлинк»;
@@ -681,7 +684,6 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     pimg = img_c[codes] & page_v & (st == 200) & (R['bytes'].values > 0)
     med = float(np.median(R['bytes'].values[pimg])) if pimg.any() else np.inf
     big_photo = R['bytes'].values > value('files_photo_size_factor', 5) * med
-    dl = rows & ((dl_c[codes] & ok) | (av_c[codes] & (st == 200)) | (ph_c[codes] & (st == 200) & big_photo))
     asset = rows & np.isin(ext_c, G['page_assets'])[codes]
     gone = (st == 404) | (st == 410)   # 403 — отказ сайта (гео-фильтр, запрет): не «несуществующий файл»
     e4 = rows & gone
@@ -696,6 +698,8 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
         warnings.simplefilter('ignore', UserWarning)
         search_ref = rows & has_ref & ~inner & ~own_sys & rh.str.contains(SEARCH, regex=True).values
     ext_ref = rows & has_ref & ~inner & ~own_sys & ~search_ref
+    # фото по рефереру поисковика — «из поиска по картинкам» (правило 4), а не скачивание; прочие группы скачиваний — как были
+    dl = rows & ((dl_c[codes] & ok) | (av_c[codes] & (st == 200)) | (ph_c[codes] & (st == 200) & big_photo & ~search_ref))
     vany = lambda x: per(x).any().reindex(V.index).fillna(False).values
     vsum = lambda x: per(x).sum().reindex(V.index).fillna(0).values
     # улики по адресу (IP + браузер) за период — по файлам его визитов «только файлы»
@@ -772,7 +776,9 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
         hit = okj & (P['c'].values[jj] == cc) & (P['cmax'].values[jj] >= C['start'].values - W)
         neigh[np.where(m.values)[0]] = hit
     # офис: много браузеров на IP у визитов «Люди», рабочие часы, будни
-    nua = V[V['group'] == 'Люди'].groupby(V['ip'].astype(str))['ua'].nunique()
+    # браузеры на IP — только по визитам «Люди» со страницами: домашние прокси меняют браузер на каждом запросе «только файлы»
+    Hp = V[(V['group'] == 'Люди').values & has_page]
+    nua = Hp.groupby(Hp['ip'].astype(str))['ua'].nunique()
     h0, h1 = value('files_office_hours', [9, 19])
     office = ((V['ip'].astype(str).map(nua).fillna(0).values >= value('files_office_browsers_min', 3))
               & (V['hour'].values >= h0) & (V['hour'].values < h1) & (V['weekday'].values < 5))
@@ -807,7 +813,8 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
         put(mask & is_ppl, *ppl); put(mask & is_bot, *bot); put(mask, *other)
     SCR = ('Боты', 'только файлы: скрапер')
     NX = ('Боты', 'только файлы: запрашивает несуществующие файлы')
-    put(imp, *NX)                                                                                         # 1: невозможная версия — улика в evidence_bot
+    only_gone = (n4 >= 1) & (n4 == n_files)
+    put(imp & only_gone, *NX); put(imp, *SCR)                                                             # 1: невозможная версия — улика; тип — по поведению
     put(a_own, 'Свои', 'свои системы')                                                                    # 9: реферер — хост из own_hosts
     put(neigh, 'Люди', '')                                                                                # 2
     dlm = has_dl & left                                                                                   # 3

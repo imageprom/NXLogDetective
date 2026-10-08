@@ -12,15 +12,24 @@
     {"key": "books", "title": "Книги", "ext": ["epub", "fb2", "mobi", "djvu"]},
     {"key": "contacts", "title": "Календарь и контакты", "ext": ["ics", "vcf"]},
     {"key": "media", "title": "Медиа", "ext": ["mp3", "wav", "mp4", "mov", "webm"], "photo_ext": ["jpg", "jpeg", "png", "webp", "heic"],
-     "rule": "скачивание, только если файл взят целиком (200, не 206) и больше порога files_media_download_min_bytes; иначе — обвес"}
+     "rule": "аудио и видео — скачивание, если взяты целиком одним ответом 200 (206 — смотрел или слушал, обвес); фото — если больше files_photo_size_factor × медиана картинок в визитах со страницами; иначе — обвес"}
   ],
   "page_assets": ["css", "js", "mjs", "map", "woff", "woff2", "ttf", "otf", "eot"],
+  "asset_kinds": {
+    "styles": ["css"],
+    "scripts": ["js", "mjs"],
+    "fonts": ["woff", "woff2", "ttf", "otf", "eot"],
+    "images": ["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp"]
+  },
+  "content_images": ["jpg", "jpeg", "png", "webp", "gif", "avif"],
+  "decor_pattern": "logo|icon|sprite|favicon",
   "service_files": "^/(robots\\.txt|sitemap[^/]*|favicon[^/]*|apple-touch-icon[^/]*)$",
   "sensitive": [
     "/backups?(/|$|[._-])",
     "\\.(sql|dump)(\\.(gz|zip|bz2|7z))?$",
     "\\.(bak|wpress|jpa)$",
     "^/[^/]+\\.(zip|rar|7z|tar|tar\\.gz|tgz|gz)(\\.\\d+)?$",
+    "/(db|old|sql|dumps?|backups?|archives?)/[^/]*\\.(zip|rar|7z|tar|tar\\.gz|tgz|gz|bz2|sql|bak|dump)(\\.\\d+)?$",
     "/restore\\.php$",
     "/\\.env"
   ],

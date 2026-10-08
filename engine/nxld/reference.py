@@ -225,6 +225,14 @@ def engine_backup_paths():
     return out
 
 
+def engine_template_paths():
+    """Шаблоны адресов оформления всех движков справочника («template_paths»): /local/templates/, /wp-content/themes/ и т. п."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        out += (_read(path) or {}).get('template_paths', [])
+    return out
+
+
 def load(site_map, paths=(), site=''):
     engines = [e.get('движок') for e in (site_map or {}).get('engines') or [] if isinstance(e, dict)]
     return Reference(engines, paths, site)

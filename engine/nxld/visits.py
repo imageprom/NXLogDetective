@@ -516,6 +516,8 @@ def file_groups():
         G['service_rx'] = G['service_files'] + (f'|{wk}' if wk else '')
         G['sensitive_rx'] = '|'.join(f'(?:{x})' for x in G['sensitive'] + engine_backup_paths())
         G['transfer_rx'] = '|'.join(f'(?:{x})' for x in G['transfer'])
+        from .reference import engine_template_paths
+        G['decor_rx'] = '|'.join(f'(?:{x})' for x in engine_template_paths() + [G['decor_pattern']])
         _FG = G
     return _FG
 
@@ -537,10 +539,13 @@ def _page_form(R, page_form=None):
 
 def mark_backups(V, R, staff_ips=(), admin_rx=None):
     """Чувствительные адреса (file_groups.json «sensitive» и «backup_paths» движков: бэкапы, дампы, архивы сайта в корне,
-    restore.php, .env) с ответом 200 — раньше всех правил «только файлы». 403/404 на них — зонд, как и раньше (здесь не трогаются).
+    restore.php, .env) — раньше всех правил «только файлы».
+    - поиск бэкапов: с IP за весь период запрошено не меньше backup_search_min_paths разных чувствительных адресов при любом ответе
+      (в том числе 301 и 302) — перебор, зонд: визиты «Люди» с такими адресами — «Боты · <сканер>: поиск бэкапов» (в дела, как сканер);
+    - один чувствительный адрес без ответа 200 — как раньше (здесь не трогается); 200 — по поведению:
     - перед скачиванием с того же IP или тем же браузером — успешный вход в админку, затем перенос (restore.php, архив частями
       .tar.gz.1…) — «Свои · скачал бэкап»: обвинений нет (profiles снимает их);
-    - перед скачиванием искал бэкапы по разным адресам (403/404, порог backup_search_min_paths) или бэкап скачан многими IP
+    - искал бэкапы по разным адресам (по IP за весь период, порог backup_search_min_paths) или бэкап скачан многими IP
       (порог backup_many_ips) — дело: «Боты · скачал бэкап»; доступность бэкапа — находка «Сервер отдал служебные файлы»;
     - иначе (разовое скачивание без связи с админкой и без поиска) — «Подозрительные лица · скачал бэкап».
     Возвращает (V, список фактов для res['backups'])."""
@@ -551,6 +556,18 @@ def mark_backups(V, R, staff_ips=(), admin_rx=None):
     codes = R['base'].cat.codes.values
     st = R['status'].values
     sens = sens_c[codes]
+    if not sens.any(): return V, []
+    lim_search = value('backup_search_min_paths', 2)
+    ips_all = R['ip'].astype(str).values
+    # поиск бэкапов: разные чувствительные адреса с одного IP за весь период, при любом ответе
+    S_ = pd.DataFrame({'ip': ips_all[sens], 'b': codes[sens], 'vid': R['vid'].values[sens]})
+    n_sens = S_.groupby('ip')['b'].nunique()
+    seekers = set(n_sens[n_sens >= lim_search].index)
+    if seekers:
+        sv = S_.loc[S_['ip'].isin(seekers), 'vid'].unique()
+        ms = V.index.isin(sv) & (V['group'] == 'Люди').values
+        V.loc[ms, 'group'] = 'Боты'
+        V.loc[ms, 'subgroup'] = _actors()['выводы']['сканер'] + ': поиск бэкапов'
     got = sens & (st == 200) & (R['bytes'].values > 0)
     if not got.any(): return V, []
     V['evidence_people'] = V.get('evidence_people', pd.Series('', index=V.index)).fillna('')
@@ -566,24 +583,21 @@ def mark_backups(V, R, staff_ips=(), admin_rx=None):
     adm_ip, adm_ua = A.groupby('ip')['t'].min(), A.groupby('ua')['t'].min()
     tr = _cat_mask(R, G['transfer_rx'])[codes] & (st < 400)
     Tr = pd.DataFrame({'ip': ips[tr], 'ua': uas[tr], 't': ts[tr]})
-    probe_ = sens | _cat_mask(R, probe_rx(('однозначный', 'неоднозначный')))[codes]
-    miss = probe_ & ((st == 403) | (st == 404))
-    Mi = pd.DataFrame({'ip': ips[miss], 'b': codes[miss], 't': ts[miss]})
     D = pd.DataFrame({'ip': ips[got], 'ua': uas[got], 't': ts[got], 'b': codes[got], 'vid': vid[got]})
     many = D.groupby('b')['ip'].nunique()
-    lim_many, lim_search = value('backup_many_ips', 3), value('backup_search_min_paths', 2)
+    lim_many = value('backup_many_ips', 3)
     facts = []
     for (ip, ua, b), g in D.groupby(['ip', 'ua', 'b'], sort=False):
         t = int(g['t'].min())
         t_adm = min([x for x in (adm_ip.get(ip), adm_ua.get(ua)) if x is not None], default=None)
         admin_before = t_adm is not None and t_adm <= t
         transfer = admin_before and bool((Tr.loc[(Tr['ip'] == ip) | (Tr['ua'] == ua), 't'] >= t_adm).any())
-        searched = Mi.loc[(Mi['ip'] == ip) & (Mi['t'] < t), 'b'].nunique() >= lim_search
+        searched = S_.loc[(S_['ip'] == ip) & (S_['b'] != b), 'b'].nunique() >= lim_search   # другие чувствительные адреса за весь период
         crowd = int(many.get(b, 0)) >= lim_many
         if admin_before and transfer:
             grp, verdict = 'Свои', 'свой перенос: вход в админку, затем перенос'
         elif searched or crowd:
-            grp, verdict = 'Боты', ('искал бэкапы перед скачиванием' if searched else f'бэкап скачан многими IP ({int(many.get(b, 0))})')
+            grp, verdict = 'Боты', ('искал бэкапы по разным адресам' if searched else f'бэкап скачан многими IP ({int(many.get(b, 0))})')
         else:
             grp, verdict = 'Подозрительные лица', 'разовое скачивание без связи с админкой и без поиска бэкапов'
         vs = g['vid'].unique()
@@ -606,16 +620,20 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     """Визит «Людей» без страниц, без POST и подгружаемых блоков — только файлы (служебные файлы: robots.txt, sitemap*, favicon,
     apple-touch-icon, стандартные /.well-known/ — не в счёт; визиты с чувствительными адресами — mark_backups, не сюда).
     Решает поведение, сеть — слабая подсказка. Улики (пороги — data/thresholds.json, files_*):
-      за людей: соседи по адресу (сильно: с этого IP в окне смотрят страницы визиты «Люди»); офис (слабо: много браузеров на IP,
-                рабочие часы, будни); домашняя или мобильная сеть (слабо);
-      за бота:  выдуманный браузер (твёрдо); обход по списку, повторы, много 404 (сильно); дата-центр (слабо).
-    Боты — сильная улика за бота и нет сильной за людей; Люди — есть признаки людей и нет улик за бота; иначе — Подозрительные лица.
-    Ярлыки по порядку: выдуманный браузер → «Боты · только файлы: выдуманный браузер»; реферер — хост из own_hosts → «Свои · свои
-    системы»; соседи по адресу → «Люди»; скачивание (file_groups.json) → «Люди · скачал документ» / «Боты · только файлы: скрапер»
-    (обход по списку или повторы) / «Подозрительные лица · скачал документ»; обвес: поисковик → «Люди · из поиска по картинкам»;
-    почти одни 404 → «Люди» / «Боты · только файлы: запрашивает несуществующие файлы» / «Подозрительные лица»; страницы своего
-    сайта → «Люди» / «Боты · только файлы: скрапер» / «Подозрительные лица»; внешний сайт → «Люди · хотлинк» / скрапер /
-    «Внешние сайты · хотлинк»; без реферера → «Люди · открыл файл по прямой ссылке» / скрапер / «Подозрительные лица».
+      за людей: соседи по адресу (сильно: с этого IP в окне смотрят страницы визиты «Люди»); обвес одной страницы (средне: один
+                реферер, несколько видов обвеса, каждый файл один раз, короткое окно); офис (много браузеров на IP, рабочие часы,
+                будни); домашняя или мобильная сеть — только подсказка, «Людьми» одна не делает;
+      за бота:  невозможная версия браузера, обход по списку, повторы, много 404 (только 404 и 410), один содержательный файл
+                со многих IP растянуто по времени (сильно); дата-центр (слабо). 403 — отказ сайта: «закрыто сайтом (403)», ни за кого.
+    Боты — сильная улика за бота и нет соседей по адресу; Люди — есть поведенческий признак людей и нет улик за бота (дата-центр —
+    тоже улика); иначе — Подозрительные лица.
+    Ярлыки по порядку: невозможная версия → «Боты · только файлы: запрашивает несуществующие файлы»; реферер — хост из own_hosts →
+    «Свои · свои системы»; соседи по адресу → «Люди»; скачивание (file_groups.json; аудио и видео — целиком 200, фото — больше
+    обычной картинки страниц) → «Люди · скачал документ» / «Боты · только файлы: скрапер» (обход по списку или повторы) /
+    «Подозрительные лица · скачал документ»; обвес: поисковик → «Люди · из поиска по картинкам»; почти одни 404 → «Люди · старая
+    ссылка» / «Боты · только файлы: запрашивает несуществующие файлы» / «Подозрительные лица»; страницы своего сайта → «Люди» /
+    «Боты · только файлы: скрапер» / «Подозрительные лица»; внешний сайт → «Люди · хотлинк» / скрапер / «Внешние сайты · хотлинк»;
+    без реферера → «Люди · открыл файл по прямой ссылке» / скрапер / «Подозрительные лица».
     Улики за обе версии — в V['evidence_people'] и V['evidence_bot']."""
     from .thresholds import value
     import warnings
@@ -654,9 +672,20 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
             e_ &= ~lc.str.contains('|'.join(re.escape(d) for d in g['not_dirs']), regex=True).values
         dl_c |= e_
     ok = (st >= 200) & (st < 300)
-    dl = rows & ((dl_c[codes] & ok) | (media_c[codes] & (st == 200) & (R['bytes'].values >= value('files_media_download_min_bytes', 2000000))))
+    # медиа: аудио и видео — целиком одним ответом 200; фото — заметно больше обычной картинки страниц сайта; иначе — обвес
+    mg = next((g for g in G['download_groups'] if g['key'] == 'media'), {})
+    av_c = np.isin(ext_c, mg.get('ext', []))
+    ph_c = np.isin(ext_c, mg.get('photo_ext', []))
+    img_c = np.isin(ext_c, G['asset_kinds']['images'])
+    page_v = np.isin(vid, V.index[has_page])
+    pimg = img_c[codes] & page_v & (st == 200) & (R['bytes'].values > 0)
+    med = float(np.median(R['bytes'].values[pimg])) if pimg.any() else np.inf
+    big_photo = R['bytes'].values > value('files_photo_size_factor', 5) * med
+    dl = rows & ((dl_c[codes] & ok) | (av_c[codes] & (st == 200)) | (ph_c[codes] & (st == 200) & big_photo))
     asset = rows & np.isin(ext_c, G['page_assets'])[codes]
-    e4 = rows & (st >= 400) & (st < 500)
+    gone = (st == 404) | (st == 410)   # 403 — отказ сайта (гео-фильтр, запрет): не «несуществующий файл»
+    e4 = rows & gone
+    e403 = rows & (st == 403)
     # рефереры файлов визита
     rh = R['ref_host'].astype(str).str.lower().str.removeprefix('www.')
     has_ref = ~R['ref'].astype(str).isin(['-', '']).values
@@ -673,8 +702,9 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
     rk = key.reindex(vid[rows]).values
     F = pd.DataFrame({'k': rk, 'b': codes[rows], 't': R['ts'].values[rows], 'st': st[rows], 'asset': asset[rows],
-                      'day': R['ts'].values[rows] // 86400})
-    n404 = F[(F['st'] >= 400) & (F['st'] < 500)].groupby('k').size()
+                      'day': R['ts'].values[rows] // 86400, 'vid': vid[rows], 'ip': R['ip'].astype(str).values[rows],
+                      'ref': R['ref'].astype(str).values[rows]})
+    n404 = F[F['st'].isin([404, 410])].groupby('k').size()
     rep = F[F['st'] == 200].groupby(['k', 'b', 'day']).size().groupby(level=0).max()
     num = cats.str.extract(r'(\d+)(?=\.[A-Za-z0-9]+$)')[0].astype(float).values
     dir_c = cats.str.replace(r'[^/]*$', '', regex=True).values
@@ -694,6 +724,36 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     many404 = key.map(n404).fillna(0).values >= value('files_404_min', 5)
     year = int(pd.to_datetime(V['end'].max(), unit='s').year)
     imp = np.array([impossible_ua(u, year) if mm else False for u, mm in zip(V['ua'], m)])
+    # один и тот же содержательный файл (картинка товара или раздела, документ — не оформление шаблона, не логотип и не иконка)
+    # со многих IP в визитах «только этот файл или почти только он», запросы растянуты по времени (не всплеск после рассылки)
+    content_c = (np.isin(ext_c, G['content_images']) | dl_c) & ~_cat_mask(R, G['decor_rx'])
+    nfv = F.groupby('vid').size()
+    Fc = F[content_c[F['b'].values]]
+    same_v = np.zeros(len(V), bool)
+    if len(Fc):
+        per_vb = Fc.groupby(['vid', 'b']).size().rename('n').reset_index()
+        per_vb = per_vb[per_vb['n'] >= value('files_same_file_visit_share', 0.8) * per_vb['vid'].map(nfv).values]
+        Fq = Fc.merge(per_vb[['vid', 'b']], on=['vid', 'b'])
+        nip = Fq.groupby('b')['ip'].nunique()
+        cand_b = nip[nip >= value('files_same_file_ips_min', 20)].index
+        Wb, share_b = value('files_burst_window_hours', 6) * 3600, value('files_burst_share', 0.5)
+        spread_b = []
+        for b_ in cand_b:
+            t_ = np.sort(Fq.loc[Fq['b'] == b_, 't'].values)
+            peak = int((np.searchsorted(t_, t_ + Wb, 'right') - np.arange(len(t_))).max())
+            if peak < share_b * len(t_): spread_b.append(b_)
+        if spread_b:
+            same_v = V.index.isin(per_vb.loc[per_vb['b'].isin(spread_b), 'vid'].unique())
+    # обвес одной страницы: один реферер, не меньше N видов обвеса, каждый файл — один раз, всё в коротком окне
+    kind_c = np.full(len(cats), '', dtype=object)
+    for kname, exts in G['asset_kinds'].items():
+        kind_c[np.isin(ext_c, exts)] = kname
+    F['kind'] = kind_c[F['b'].values]
+    gv = F.groupby('vid').agg(nref=('ref', 'nunique'), ref0=('ref', 'first'), kinds=('kind', lambda x: len(set(x) - {''})),
+                              n=('b', 'size'), nu=('b', 'nunique'), t0=('t', 'min'), t1=('t', 'max'))
+    one = ((gv['nref'] == 1) & ~gv['ref0'].isin(['-', '']) & (gv['kinds'] >= value('files_onepage_kinds_min', 2))
+           & (gv['n'] == gv['nu']) & (gv['t1'] - gv['t0'] <= value('files_onepage_window_sec', 60)))
+    onepage = one.reindex(V.index).fillna(False).astype(bool).values & m.values
     # соседи по адресу: с этого IP в окне до и после визита смотрят страницы визиты «Люди» (браузер любой)
     W = value('files_neighbors_window_min', 30) * 60
     P = V[(V['group'] == 'Люди').values & has_page & ~m.values][['ip', 'start', 'end']]
@@ -719,16 +779,19 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     net = V['nettype'].astype(str)
     dc = net.str.startswith(DC_NETS).values
     home = net.isin(HOME_NETS).values
-    strong_bot = imp | crawl | repeats | many404
-    strong_ppl = neigh
-    any_bot = strong_bot | dc
-    any_ppl = strong_ppl | office | home
-    is_bot = strong_bot & ~strong_ppl
-    is_ppl = any_ppl & ~any_bot
-    ev_p = [', '.join(x for x, f in (('соседи по адресу', a), ('офис: много браузеров, рабочие часы, будни', b_), ('домашняя или мобильная сеть', c_)) if f)
-            for a, b_, c_ in zip(neigh, office, home)]
-    ev_b = [', '.join(x for x, f in (('выдуманный браузер', a), ('обход по списку', b_), ('повторы', c_), ('много 404', d_), ('дата-центр', e_)) if f)
-            for a, b_, c_, d_, e_ in zip(imp, crawl, repeats, many404, dc)]
+    # «Люди» — только при поведенческом признаке: соседи по адресу, офис, обвес одной страницы (переход из поисковика — правило 4);
+    # сеть — слабая подсказка: одна она людьми и ботами не делает
+    strong_bot = imp | crawl | repeats | many404 | same_v
+    behav_ppl = neigh | office | onepage
+    is_bot = strong_bot & ~neigh
+    is_ppl = behav_ppl & ~(strong_bot | dc)
+    n403 = vsum(e403)
+    ev_p = [', '.join(x for x, f in (('соседи по адресу', a), ('офис: много браузеров, рабочие часы, будни', b_), ('обвес одной страницы', o_),
+                                     ('домашняя или мобильная сеть', c_), ('закрыто сайтом (403)', z_)) if f)
+            for a, b_, o_, c_, z_ in zip(neigh, office, onepage, home, n403 > 0)]
+    ev_b = [', '.join(x for x, f in (('невозможная версия браузера', a), ('обход по списку', b_), ('повторы', c_), ('много 404', d_),
+                                     ('один файл со многих IP', s_), ('дата-центр', e_), ('закрыто сайтом (403)', z_)) if f)
+            for a, b_, c_, d_, s_, e_, z_ in zip(imp, crawl, repeats, many404, same_v, dc, n403 > 0)]
     V.loc[m, 'evidence_people'] = pd.Series(ev_p, index=V.index)[m]
     V.loc[m, 'evidence_bot'] = pd.Series(ev_b, index=V.index)[m]
     has_dl, n_files, n4 = vany(dl), vsum(rows), vsum(e4)
@@ -743,14 +806,15 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     def verdict(mask, ppl, bot, other):
         put(mask & is_ppl, *ppl); put(mask & is_bot, *bot); put(mask, *other)
     SCR = ('Боты', 'только файлы: скрапер')
-    put(imp, 'Боты', 'только файлы: выдуманный браузер')                                                 # 1
+    NX = ('Боты', 'только файлы: запрашивает несуществующие файлы')
+    put(imp, *NX)                                                                                         # 1: невозможная версия — улика в evidence_bot
     put(a_own, 'Свои', 'свои системы')                                                                    # 9: реферер — хост из own_hosts
     put(neigh, 'Люди', '')                                                                                # 2
     dlm = has_dl & left                                                                                   # 3
     put(dlm & is_ppl, 'Люди', 'скачал документ'); put(dlm & (crawl | repeats), *SCR); put(dlm, 'Подозрительные лица', 'скачал документ')
     put(a_search, 'Люди', 'из поиска по картинкам')                                                       # 4
     # 8 — раньше 5–7: те покрывают любой обвес (свой, внешний реферер, без реферера), и после них правило не сработало бы ни разу
-    verdict(almost404, ('Люди', ''), ('Боты', 'только файлы: запрашивает несуществующие файлы'), ('Подозрительные лица', ''))   # 8
+    verdict(almost404, ('Люди', 'старая ссылка'), NX, ('Подозрительные лица', ''))                         # 8
     verdict(a_inner, ('Люди', ''), SCR, ('Подозрительные лица', ''))                                       # 5
     verdict(a_ext, ('Люди', 'хотлинк'), SCR, ('Внешние сайты', 'хотлинк'))                                 # 6
     verdict(left, ('Люди', 'открыл файл по прямой ссылке'), SCR, ('Подозрительные лица', ''))              # 7

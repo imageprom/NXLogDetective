@@ -248,13 +248,30 @@ def _pd_kind(k, v):
     return None
 
 
-def has_pd(q):
+LINK_KEYS = re.compile(r'(?i)(goto|url|uri|redirect|redirect_?url|redirect_?uri|redir|back_?url|return|return_?url|return_?to|next|continue|target|dest|destination|link|to|u|r)')
+
+
+def is_link(k, v):
+    """Параметр-ссылка: ключ goto/url/redirect/backurl/return… или значение похоже на адрес (http…, //…, www.…).
+    Значение ссылки — чужой адрес: «@» и «email=» в нём не данные посетителя."""
+    from urllib.parse import unquote_plus
+    u = unquote_plus(unquote_plus(str(v))).strip()
+    return bool(LINK_KEYS.fullmatch(_key(k)) or re.match(r'(?i)(https?:|//|www\.)', u))
+
+
+def has_pd(q, links=False):
     """Персональные данные — по значениям, а не по имени параметра: телефон, почта или явное поле ФИО/телефона/почты.
     name=Квартал Заречный — это название проекта в загрузке формы, не данные человека.
-    Рекламные и поисковые идентификаторы (clid, yclid, gclid, utm_* …) — никогда не ПД."""
+    Рекламные и поисковые идентификаторы (clid, yclid, gclid, utm_* …) — никогда не ПД.
+    Параметры-ссылки (goto=, url=, backurl=…) не проверяются; если ссылка не закодирована и в ней свой «?», всё после неё —
+    параметры чужого адреса (goto=https://…/@канал?email=…), а не нашего. links=True — проверять и ссылки (маскировка в отчёте:
+    почта в чужой ссылке — тоже чья-то почта)."""
     from urllib.parse import unquote_plus
     for part in str(q).split('&'):
         k, _, v = part.partition('=')
+        if not links and is_link(k, v):
+            if '?' in unquote_plus(v): return False   # дальше — хвост чужого адреса
+            continue
         if _pd_kind(k, unquote_plus(v).strip()): return True
     return False
 

@@ -186,7 +186,9 @@ def overview(c, F):
         g['запрос'] = g['query'].astype(str).map(mask_pd)
         g['время'] = dt(g['ts'])
         S['GET-отправки'] = g[['время', 'ip', 'base', 'запрос', 'status', 'fam']].head(2000).rename(columns={'base': 'адрес', 'status': 'код', 'fam': 'робот'})
-        ppl = g[g['fam'].astype(str) == '']
+        # ПД — только в запросах людей и своих (формы сайта); боты, которые шлют спам-ссылки, — не утечка данных посетителей
+        grp_ = pd.Series(np.asarray(c.rg), index=R.index).reindex(g.index).astype(str)
+        ppl = g[grp_.isin(['Люди', 'Свои']).values]
         if len(ppl):   # даже один телефон или почта в адресе — уже утечка: адрес оседает в логах, истории и у сервисов аналитики
             F.add('Нагрузка и безопасность', 'Срочно' if len(ppl) >= 5 else 'Важно', 'pd_in_get', 'forms', 'Персональные данные уходят в адресе страницы (GET)',
                   f"{len(ppl)} запросов с {ppl['ip'].nunique()} адресов; адреса: {', '.join(ppl['base'].astype(str).value_counts().index[:3])}",
@@ -732,6 +734,23 @@ def constructs(c):
     return kg
 
 
+def open_redirect_queries(qc, site_hosts):
+    """Строки запроса (по категориям) с параметром-ссылкой на чужой сайт: goto=https://другой-сайт/… (recon.is_link)."""
+    from urllib.parse import unquote_plus, urlsplit
+    out = np.zeros(len(qc), bool)
+    own = {h.lower().removeprefix('www.') for h in site_hosts}
+    cand = qc.str.contains(r'(?i)(?:https?(?::|%3A)|//|%2F%2F)', regex=True).values
+    for i in np.flatnonzero(cand):
+        for part in str(qc.iloc[i]).split('&'):
+            k, _, v = part.partition('=')
+            if not v or not recon.is_link(k, v): continue
+            u = unquote_plus(unquote_plus(v)).strip()
+            host = (urlsplit(u if '://' in u else 'http:' + u if u.startswith('//') else 'http://' + u).hostname or '').lower().removeprefix('www.')
+            if host and not any(host == h or host.endswith('.' + h) for h in own):
+                out[i] = True; break
+    return out
+
+
 def load_security(c, F):
     R, V = c.R, c.V
     S = {}
@@ -949,6 +968,17 @@ def load_security(c, F):
         F.add('Нагрузка и безопасность', 'Важно', 'human_prober', 'actors', f'Человек систематически исследует сайт ({hr["ip"].nunique()} адресов)',
               '; '.join(f"{r['ip']} — {r['дней']} дн., {r['первый']}…{r['последний']}: {r['что_пробовал'] or r['признак']}" for _, r in hr.head(5).iterrows()),
               'сервер / настройки защиты', 'Проверить, кто это (свой разработчик или посторонний); постороннего ограничить по IP', int(hr['ip'].nunique()), 'Исследователи сайта')
+    # открытый редирект: адрес отвечает переадресацией (3xx) на запрос со ссылкой на чужой сайт (goto=, url=, redirect=…)
+    ext_q = open_redirect_queries(qc, c.m.get('site_hosts') or [])
+    if ext_q.any():
+        orx = ext_q[R['query'].cat.codes.values] & np.isin(st, [301, 302, 303, 307, 308])
+        OR = R.loc[orx, ['base', 'query']].astype(str)
+        for b_, g_ in OR.groupby('base'):
+            n_all = int((ext_q[R['query'].cat.codes.values] & (R['base'].astype(str).values == b_)).sum())
+            F.add('Нагрузка и безопасность', 'Важно', 'open_redirect', b_, f'Открытый редирект: {b_} переадресует на чужие сайты',
+                  f"{len(g_)} переадресаций (3xx) на внешние адреса, например {b_}?{g_['query'].iloc[0][:150]}; всего запросов со ссылкой на чужой сайт — {n_all}",
+                  'код сайта / настройки движка', 'Переадресовывать только на свои адреса или по списку доверенных; в Битриксе — включить проверку подписи ссылок в redirect.php',
+                  len(g_), '')
     tok = qc.str.contains(recon.SECRET_RX, regex=True).values[R['query'].cat.codes.values]   # список секретов — общий с маскировкой (recon)
     if tok.sum():
         S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(recon.SECRET_RX)[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')

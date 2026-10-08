@@ -1032,7 +1032,7 @@ def mask_pd_cells(wb, skip=('_snapshot',)):
                 out, hit = [], False
                 for p_ in parts:
                     q = p_.split('?', 1)[1] if '?' in p_ else p_
-                    if '=' in q and has_pd(q):
+                    if '=' in q and has_pd(q, links=True):
                         out.append(p_[:len(p_) - len(q)] + mask_pd(q)); hit = True
                     elif '=' in q and has_secret(q):
                         out.append(p_[:len(p_) - len(q)] + mask_secrets(q)); hit = True

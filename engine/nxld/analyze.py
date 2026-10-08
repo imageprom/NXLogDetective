@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, re, warnings
 import numpy as np, pandas as pd
-from . import coverage, profile, anatomy, visits, blocks, brief, recon, findings_meta, findings_text
+from . import coverage, profile, anatomy, visits, blocks, brief, recon, findings_meta, findings_text, ipdb
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -30,7 +30,7 @@ def important_ips(c, S_bots):
                              страна=t['cc'] if t is not None else '', тип_сети=t['nettype'] if t is not None else '',
                              визитов=len(vv), запросов=int(vv['n_req'].sum()), отправок=int(vv['n_goal'].sum()), принято=int(vv['n_conv'].sum()),
                              первый=blocks.dt(vv['start'].min()) if len(vv) else None, последний=blocks.dt(vv['end'].max()) if len(vv) else None,
-                             действие=action if t is None or t['nettype'] in ('хостинг/облако',) else ('проверить/метка' if action.startswith('бан') else action)))
+                             действие=action if t is None or ipdb.is_dc(t['nettype']) else ('проверить/метка' if action.startswith('бан') else action)))
     spam = V[V['subgroup'].str.startswith('спам форм')]['ip'].unique()
     add(spam, 'спам форм', 'бан')
     if 'Подделки' in S_bots: add(S_bots['Подделки']['ip'].astype(str).unique(), 'поддельный робот', 'бан')

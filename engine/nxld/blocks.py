@@ -2,7 +2,7 @@
 import re
 from collections import Counter, defaultdict
 import numpy as np, pandas as pd
-from . import recon
+from . import recon, ipdb
 from .recon import mask_pd
 from . import operators
 
@@ -1090,7 +1090,7 @@ def bots(c, F, check_ips=()):
         fq['org'] = T.reindex(fq['ip'])['org'].values
         S['Подделки'] = fq
         F.add('Боты', 'Важно', 'fake_crawlers', 'all', f"Поддельные поисковые роботы: {fq['ip'].nunique()} IP", f"Представлялись: {topn(fq['представлялся'])}; сети: {topn(fq['org'].astype(str))}",
-              'nginx (бан по IP/подсети хостингов)', 'Заблокировать', int(fq['ip'].nunique()), 'Подделки')
+              'nginx (бан по IP/подсети дата-центров)', 'Заблокировать', int(fq['ip'].nunique()), 'Подделки')
     ex = V[V['subgroup'] == 'явные (не браузер)']
     if len(ex):
         S['Явные боты'] = ex.groupby('ua').agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), запросов=('n_req', 'sum'), сети=('nettype', lambda s: topn(s, 2))).sort_values('запросов', ascending=False).head(300).reset_index()
@@ -1138,13 +1138,14 @@ def bots(c, F, check_ips=()):
     for o in ops:
         if o['оператор'].startswith('Оператор') and o['отправок'] > 0:
             F.add('Боты', 'Срочно' if o['принято'] else 'Важно', 'operator', o['_key'], f"{o['оператор']}: {o['IP_спама']} IP спама форм" + (f" и {o['IP_разведки']} IP разведки" if o['IP_разведки'] else '') + ', связанных между собой',
-                  f"Отправок {o['отправок']}, принято {o['принято']}; дни: {o['дни']}; сети: {o['сети']}; улики: {o['улики']}; общие битые входы: {o['битые_входы']}", 'защита форм + бан хостинговых подсетей', 'Защитить формы, отсеять заявки', o['принято'], 'Операторы')
+                  f"Отправок {o['отправок']}, принято {o['принято']}; дни: {o['дни']}; сети: {o['сети']}; улики: {o['улики']}; общие битые входы: {o['битые_входы']}", 'защита форм + бан подсетей дата-центров', 'Защитить формы, отсеять заявки', o['принято'], 'Операторы')
     # сети ботов
     bv = V[V['group'] == 'Боты']
     bn = bv.groupby(['asn', 'nettype']).agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), подгруппы=('subgroup', lambda s: topn(s, 2))).sort_values('IP', ascending=False).reset_index()
     bn['сеть'] = bn['asn'].map(c.T.drop_duplicates('asn').set_index('asn')['org'])
-    bn['что_делать_с_адресами'] = bn['nettype'].map({'хостинг/облако': 'можно банить подсетью', 'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
+    bn['что_делать_с_адресами'] = bn['nettype'].map({'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
                                                     'RU провайдер доступа': 'только по поведению', 'зарубежный провайдер доступа': 'по аудитории сайта'}).fillna('по ситуации')
+    bn.loc[bn['nettype'].astype(str).map(ipdb.is_dc), 'что_делать_с_адресами'] = 'можно банить подсетью'
     S['Бот-сети'] = bn.head(300)
     # проверка присланных IP
     if check_ips:

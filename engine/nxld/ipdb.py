@@ -54,13 +54,26 @@ BANK = re.compile(r'sber|tbank|tinkoff|vtb|alfa-bank|gazprombank|raiffeisen', re
 CDN_ASN = {13335: 'Cloudflare', 49612: 'DDoS-Guard', 57724: 'DDoS-Guard', 200449: 'Qrator', 197068: 'Qrator', 44094: 'StormWall', 59796: 'StormWall', 202001: 'ServicePipe', 20940: 'Akamai', 54113: 'Fastly'}
 
 
+DC = 'дата-центр'   # серверы и облака: подпись с названием компании, где оно есть — «дата-центр (Hetzner Online GmbH)»
+
+
+def dc_label(org):
+    org = str(org or '').strip()
+    return f'{DC} ({org[:40]})' if org and org.lower() not in ('nan', 'none') else DC
+
+
+def is_dc(net):
+    """Тип сети — дата-центр (с названием компании или без)."""
+    return str(net).startswith(DC)
+
+
 def nettype(asn, org, cc):
     if not asn: return 'неизвестно'
     if asn in RELAY_ASN: return 'VPN/прокси-релей'
     if asn in MOBILE_ASN: return 'мобильный оператор'
     if BANK.search(org or ''): return 'банк/корпорация'
     if asn == 13238: return 'Яндекс'
-    if asn in (15169, 396982, 8075, 16509, 14618) or HOST.search(org or ''): return 'хостинг/облако'
+    if asn in (15169, 396982, 8075, 16509, 14618) or HOST.search(org or ''): return dc_label(org)
     if cc == 'RU': return 'RU провайдер доступа'
     return 'зарубежный провайдер доступа'
 

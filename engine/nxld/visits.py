@@ -471,10 +471,10 @@ def actor_kind(V, R, m, probe):
     rot_ = g.index.str.split('|').str[0].map(nua).fillna(1).values > A.get('браузеров_с_IP_не_больше', 3)
     score = (H['грузит_ресурсы']['вес'] * (rend.reindex(g.index).fillna(0) >= 3)
              + H['живой_темп']['вес'] * (g['req'] / g['dur'].clip(lower=1) < H['живой_темп']['порог_запросов_в_секунду'])
-             + H['домашняя_сеть']['вес'] * ~g['net'].isin(['хостинг/облако', 'VPN/прокси-релей'])
+             + H['домашняя_сеть']['вес'] * ~(g['net'].astype(str).str.startswith('дата-центр') | (g['net'] == 'VPN/прокси-релей'))
              + H['браузер']['вес'] * g['br'].astype(bool)
              + H['ходит_по_сайту']['вес'] * (pages_ok.reindex(g.index).fillna(0) > 0))
-    human = (score >= A['человек_если_баллов_от']) & ~g['net'].isin(A.get('автомат_если_сеть', [])) & ~fast_.fillna(False) & ~common_ & ~rot_ & (probes_n.reindex(g.index).fillna(0) <= A['человек_не_больше_зондов'])
+    human = (score >= A['человек_если_баллов_от']) & ~g['net'].astype(str).str.startswith(tuple(A.get('автомат_если_сеть', [])) or ('\x00',)) & ~fast_.fillna(False) & ~common_ & ~rot_ & (probes_n.reindex(g.index).fillna(0) <= A['человек_не_больше_зондов'])
     regular = days_.reindex(g.index).fillna(0) >= A['регулярно_если_дней_от']
     lab = pd.Series(out['сканер'], index=g.index, dtype=object)
     lab[human & ~regular] = out['человек_разово']
@@ -495,7 +495,7 @@ def impossible_ua(ua, year=None):
     return False
 
 
-DC_NETS = ('хостинг/облако', 'Яндекс')   # дата-центры: серверы, а не люди
+DC_NETS = ('дата-центр', 'Яндекс')   # дата-центры (по началу подписи: «дата-центр (компания)»): серверы, а не люди
 HOME_NETS = ('мобильный оператор', 'RU провайдер доступа', 'зарубежный провайдер доступа')   # домашние и мобильные сети
 
 
@@ -539,7 +539,7 @@ def mark_files_only(V, R, own_hosts=()):
     ours = m & all_own
     V.loc[ours, 'group'] = 'Свои'; V.loc[ours, 'subgroup'] = 'свои системы'
     m &= ~ours
-    dc = V['nettype'].isin(DC_NETS).values
+    dc = V['nettype'].astype(str).str.startswith(DC_NETS).values
     home = V['nettype'].isin(HOME_NETS).values
     br = V['ua_browser'].astype(bool).values
     # хотлинк: сервер внешнего сайта — дата-центр, не браузер, или ровный темп и много файлов с одного адреса
@@ -604,7 +604,7 @@ def mark_form_spam(V, R):
             same_user[vid] = True
     cls[nopage & (V['n_static'] == 0) & ~same_user] = 'спам форм: отправка без просмотра страниц'
     # страница открыта другим IP: этот IP грузил только картинки/скрипты и отправил форму, а саму страницу не открывал (хостинг/VPN)
-    cls[nopage & (V['n_static'] > 0) & V['entry_ref_internal'] & ~same_user & V['nettype'].isin(['хостинг/облако', 'VPN/прокси-релей']) & (cls == '')] = 'спам форм: страницу открыл другой IP'
+    cls[nopage & (V['n_static'] > 0) & V['entry_ref_internal'] & ~same_user & (V['nettype'].astype(str).str.startswith('дата-центр') | (V['nettype'] == 'VPN/прокси-релей')) & (cls == '')] = 'спам форм: страницу открыл другой IP'
     fast = g & (V['n_goal'] >= 2) & (V['n_pages'] >= 5) & (V['n_pages'] / V['dur'].clip(lower=1) > 0.4)
     cls[fast & (cls == '')] = 'спам форм: быстрый обход и пачка отправок'
     # смена IP посреди визита: вход со страницы сайта, которую за <= 2 ч до этого открыл ДРУГОЙ IP и получил 404

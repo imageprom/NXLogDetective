@@ -106,6 +106,18 @@ def real_addresses(c):
     return (A['людям'] & (A['зонд'] != 'однозначный')).values
 
 
+def people_ips(c):
+    """IP, у которых за период есть обычные визиты людей: группа «Люди», страницы и файлы, подгруженные страницей визита
+    (visits.rendered_static). Одно правило для «Мер по IP», STIX и CSV больших листов: такой IP не блокируют и не
+    ограничивают — за ним покупатели (мобильная сеть, офис); в деле он остаётся только как улика."""
+    if getattr(c, '_people_ips', None) is None:
+        from .visits import rendered_static
+        V = c.V
+        rnd = rendered_static(c.R).reindex(V.index).fillna(0)
+        c._people_ips = set(V.loc[(V['group'] == 'Люди') & (V['n_pages'] >= 1) & (rnd > 0), 'ip'].astype(str))
+    return c._people_ips
+
+
 def not_probe(c):
     """Адреса, которые по шаблону похожи на зонд, но зондом не считаются (реестр адресов): страница сайта, которую получают
     люди или свои, и служебные страницы движка сайта (вход, регистрация). Булев массив по категориям R['base']."""

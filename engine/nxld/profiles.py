@@ -348,10 +348,12 @@ def build(c, res):
     for x in cases: x['сообщники'] = [(d, names.get(d, ''), why) for d, why in x['сообщники']]
     # состав по IP
     rows = []
+    ppl = common.people_ips(c)
     for x in cases:
         for ip in x['ips']:
             rows.append({'дело': x['дело'], 'кличка': x['кличка'], 'ip': ip, 'подсеть': subnet(ip), 'сеть': P['организация'].get(ip, ''), 'страна': P['страна'].get(ip, ''),
-                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': common.dmy(F.at[ip, 't0']), 'последний': common.dmy(F.at[ip, 't1'])})
+                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': common.dmy(F.at[ip, 't0']), 'последний': common.dmy(F.at[ip, 't1']),
+                         'пометка': 'есть человеческие визиты' if ip in ppl else ''})
     S = pd.DataFrame([dict(id=x['сигнатура']['id'], правило=x['сигнатура']['правило'], вид=x['вид'], дело=x['дело'], кличка=x['кличка'],
                            проверка=x['сигнатура']['проверка'], ложных=x['сигнатура']['ложных'], IP=x['состав']['IP'], запросов=x['запросов']) for x in cases])
     learn_signatures(cases, site, c)
@@ -376,6 +378,7 @@ def measures_by_ip(c, res, cases, P, F):
                          первый=common.dmy(F.at[ip, 't0']) if ip in F.index and pd.notna(F.at[ip, 't0']) else '',
                          последний=common.dmy(F.at[ip, 't1']) if ip in F.index and pd.notna(F.at[ip, 't1']) else ''))
     seen = set()
+    ppl = common.people_ips(c)   # за IP покупатели — не блокировать и не ограничивать (STIX и CSV — из этой же таблицы)
     for x in cases:
         main = x['обвинения'][0]['статья']
         people = x['сигнатура']['ложных']
@@ -383,7 +386,8 @@ def measures_by_ip(c, res, cases, P, F):
             if ip in seen: continue
             seen.add(ip)
             mobile = 'мобильн' in str(P['сеть'].get(ip, ''))
-            if x['важность'] == 'К сведению': v, why = 'наблюдать', f'{main}; дело к сведению'
+            if ip in ppl: v, why = 'не трогать', f'{main}; есть человеческие визиты — в деле только как улика'
+            elif x['важность'] == 'К сведению': v, why = 'наблюдать', f'{main}; дело к сведению'
             elif mobile: v, why = 'ограничить частоту', f'{main}; мобильный оператор — за одним IP много абонентов'
             elif people: v, why = 'ограничить частоту', f'{main}; из этой сети ходят люди ({nf(people)} визитов)'
             else: v, why = 'заблокировать', f'{main}; людей из этой сети нет'

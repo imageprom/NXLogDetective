@@ -127,6 +127,13 @@ def hotlink_ips(c):
     return set(g[g].index)
 
 
+def service_check_ips(c):
+    """IP, у которых все визиты — «Роботы · проверка сервиса» (/.well-known/ из сетей Google, Apple, Akamai…): не в дела, меры и STIX."""
+    V = c.V
+    g = (V['subgroup'].astype(str) == 'проверка сервиса').groupby(V['ip'].astype(str)).all()
+    return set(g[g].index)
+
+
 def not_probe(c):
     """Адреса, которые по шаблону похожи на зонд, но зондом не считаются (реестр адресов): страница сайта, которую получают
     люди или свои, и служебные страницы движка сайта (вход, регистрация). Булев массив по категориям R['base']."""

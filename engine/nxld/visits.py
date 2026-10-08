@@ -572,6 +572,25 @@ def mark_files_only(V, R, own_hosts=()):
     return V
 
 
+def mark_service_checks(V, R):
+    """Визит, в котором только запросы к стандартным файлам /.well-known/ (extensions.json, «Служебные (.well-known)»), из сети
+    самого сервиса (data/reference/service_checks.json: Google, Apple, Akamai…) — «Роботы · проверка сервиса», не зонд и не бот."""
+    import json, os
+    ref = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+    nets = {int(k) for k in json.load(open(os.path.join(ref, 'service_checks.json'), encoding='utf-8')).get('сети', {})}
+    ext = json.load(open(os.path.join(ref, 'extensions.json'), encoding='utf-8'))
+    rx = next((g['шаблон'] for g in ext.get('по_адресу', []) if g.get('группа') == 'Служебные (.well-known)'), None)
+    if rx is None: return V
+    V = V.copy()
+    cats = R['base'].cat.categories.to_series().astype(str)
+    wk = cats.str.contains(rx, regex=True).values[R['base'].cat.codes.values]
+    only_wk = pd.Series(wk).groupby(R['vid'].values).all().reindex(V.index).fillna(False).values
+    svc = only_wk & pd.to_numeric(V['asn'], errors='coerce').fillna(0).astype(int).isin(nets).values & (V['group'] != 'Свои').values
+    V.loc[svc, 'group'] = 'Роботы'
+    V.loc[svc, 'subgroup'] = 'проверка сервиса'
+    return V
+
+
 def audience(V):
     """Страна основной аудитории — самая частая среди визитов людей — и доля людей из неё; предупреждение, если доля ниже порога."""
     from .thresholds import value

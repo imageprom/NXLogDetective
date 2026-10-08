@@ -176,7 +176,8 @@ def build(c, res):
     grp = P['группа'].reindex(F.index).fillna('')
     strong = (F['leaks'] > 0) | (F['attacks'] > 0) | (F['probes'] >= 10) | (F['login_post'] >= 5) | (F['admin'] >= 5) | (F['odd'] >= 3) | (F['maxpm'] >= 30)
     cand = (grp.isin(['Боты', 'Утилиты']) | F.index.isin(list(ops)) | (strong & ~grp.isin(['Свои']))) & ~F.index.isin(list(staff))
-    cand &= ~F.index.isin(list(common.hotlink_ips(c)))   # хотлинк — посетители чужого сайта: в дела, меры и STIX не идут
+    cand &= ~F.index.isin(list(common.hotlink_ips(c)))   # хотлинк — посетители внешнего сайта: в дела, меры и STIX не идут
+    cand &= ~F.index.isin(list(common.service_check_ips(c)))   # проверка сервиса (/.well-known/ из сети сервиса) — не разведка
     C = F[cand].copy()
     if not len(C): return dict(дела=[], состав=pd.DataFrame(), сигнатуры=pd.DataFrame())
     C['key'] = keys_of(C.index, P, ops)

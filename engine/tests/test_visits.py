@@ -88,3 +88,42 @@ def test_scanner_with_static_is_not_people(tmp_path):
     assert int(G.loc[G['группа'] == 'Люди', 'визитов'].sum()) == 7 * 20, G   # обычные люди со статикой — по-прежнему люди
     sc = G[G['подгруппа'].astype(str).str.startswith('сканер')]
     assert int(sc['визитов'].sum()) >= 5, G   # однозначные зонды — «Боты: сканер», независимо от статики
+
+
+# ---- задача #1, уточнения: поиск по картинкам и хотлинк ----
+def test_image_search_is_people(tmp_path):
+    """Визит из одних файлов с реферером поисковика — человек из поиска по картинкам: «Люди»; 404 на такие файлы —
+    карточка «Люди приходят на несуществующие страницы: Поиск» остаётся."""
+    log = synth.Log()
+    log.people()
+    for i in range(300):
+        ip = f'95.165.{100 + i // 200}.{i % 200 + 1}'
+        log.line(ip, synth.T0 + timedelta(days=i % 7, hours=15, seconds=i), f'/upload/iblock/{i % 40}/photo{i}.jpg', 404 if i % 3 == 0 else 200,
+                 ref='https://yandex.ru/images/search?text=example', ua=UA_MODERN[i % 2].format(i % 9))
+    res, _, _ = synth.run(log, str(tmp_path))
+    G = res['sheets']['Общий анализ']['Люди и боты']
+    img = G[(G['группа'] == 'Люди') & (G['подгруппа'].astype(str) == 'из поиска по картинкам')]
+    assert int(img['визитов'].sum()) == 300, G
+    assert any(x['key'] == 'Ошибки:404_entry:Поиск' for x in res['findings'])
+
+
+def test_hotlink_is_not_bots(tmp_path):
+    """Хотлинк (реферер — чужой домен) — группа «Чужой сайт», не боты; их IP не попадают в дела, «Меры по IP» и STIX."""
+    log = synth.Log()
+    log.people()
+    hot = [f'95.165.{150 + i // 200}.{i % 200 + 1}' for i in range(200)]
+    for i, ip in enumerate(hot):
+        log.line(ip, synth.T0 + timedelta(days=i % 7, hours=16, seconds=i), f'/upload/iblock/{i % 40}/photo{i}.jpg', 200,
+                 ref='https://blog.example.org/post-1', ua=UA_MODERN[i % 2].format(i % 9))
+    for k in range(40):   # популярная запись в блоге: один IP подгружает 40 картинок за минуту — без исключения это «Массовые запросы»
+        log.line(hot[0], synth.T0 + timedelta(days=3, hours=17, seconds=k), f'/upload/iblock/7/gallery{k}.jpg', 200, ref='https://blog.example.org/post-2', ua=UA_MODERN[0].format(1))
+    res, _, _ = synth.run(log, str(tmp_path))
+    G = res['sheets']['Общий анализ']['Люди и боты']
+    hl = G[G['группа'] == 'Чужой сайт']
+    assert int(hl['визитов'].sum()) >= 200 and set(hl['подгруппа'].astype(str)) == {'хотлинк'}, G
+    assert not G['подгруппа'].astype(str).str.contains('хотлинк').loc[G['группа'] == 'Боты'].any(), G
+    Pf = res['profiles'] or {}
+    in_cases = {ip for d in Pf.get('дела', []) for ip in d.get('ips', [])}
+    MI = Pf.get('меры_ip')
+    in_mi = set(MI['ip'].astype(str)) if MI is not None and len(MI) else set()
+    assert not (in_cases | in_mi) & set(hot), sorted((in_cases | in_mi) & set(hot))[:5]

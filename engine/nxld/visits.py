@@ -496,27 +496,42 @@ def impossible_ua(ua, year=None):
 
 
 def mark_files_only(V, R):
-    """Визит без единой страницы, только файлы (без POST и подгружаемых блоков), — не «Люди»: хотлинк, скрапер картинок, превью.
-    Исключение — продолжение визита человека: файлы подгружены страницей сайта (реферер), и тот же IP с тем же браузером
-    смотрел страницы в соседнем визите (пауза больше 30 минут разрезала визит)."""
+    """Визит без единой страницы, только файлы (без POST и подгружаемых блоков), — не «Люди»: скрапер картинок, превью.
+    Исключения: продолжение визита человека (файлы подгружены страницей сайта, и тот же IP с тем же браузером смотрел страницы
+    в соседнем визите — пауза больше 30 минут разрезала визит) и человек из поиска по картинкам (реферер — поисковик):
+    оба остаются «Людьми». Хотлинк (файлы подгружает чужой сайт: реферер — чужой домен) — группа «Чужой сайт», не боты:
+    это посетители другого сайта, их IP не попадают в дела, «Меры по IP» и STIX."""
     V = V.copy()
     m = (V['group'] == 'Люди') & (V['n_pages_raw'] == 0) & (V['n_post'] == 0) & (V['n_embedded'] == 0) & (V['n_static'] > 0)
     if not m.any(): return V
     vid = R['vid'].values
     ext_ref = ~R['ref_internal'].values.astype(bool) & ~R['ref'].astype(str).isin(['-', '']).values
+    rh = R['ref_host'].astype(str)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)   # группы в шаблоне поисковиков — не для извлечения
+        search_ref = ext_ref & rh.str.contains(SEARCH, regex=True).values   # Яндекс/Google Картинки и другие поисковики
     own_ref = pd.Series(R['ref_internal'].values.astype(bool)).groupby(vid).all()
-    any_ext = pd.Series(ext_ref).groupby(vid).any()
+    any_ext = pd.Series(ext_ref & ~search_ref).groupby(vid).any()
+    any_search = pd.Series(search_ref).groupby(vid).any()
     only4 = pd.Series((R['status'].values >= 400) & (R['status'].values < 500)).groupby(vid).all()
     key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
     browsing = set(key[(V['group'] == 'Люди') & (V['n_pages'] > 0)])
     cont = m & own_ref.reindex(V.index).fillna(False).values & key.isin(browsing)
     m &= ~cont
+    img = m & any_search.reindex(V.index).fillna(False).values   # человек из поиска по картинкам — «Люди»
+    V.loc[img, 'subgroup'] = 'из поиска по картинкам'
+    m &= ~img
+    hot = m & any_ext.reindex(V.index).fillna(False).values   # хотлинк — посетители чужого сайта, не боты
+    V.loc[hot, 'group'] = 'Чужой сайт'
+    V.loc[hot, 'subgroup'] = 'хотлинк'
+    m &= ~hot
     year = int(pd.to_datetime(V['end'].max(), unit='s').year)
     imp = pd.Series([impossible_ua(u, year) for u in V['ua']], index=V.index)
-    sub = np.select([any_ext.reindex(V.index).fillna(False).values, imp.values,
+    sub = np.select([imp.values,
                      V['nettype'].isin(['хостинг/облако', 'VPN/прокси-релей']).values, only4.reindex(V.index).fillna(False).values,
                      (V['entry_ref'].isin(['-', ''])).values],
-                    ['хотлинк: файлы для чужого сайта', 'генератор User-Agent', 'скрапер с хостинга', 'только ошибки 4xx', 'прямой заход'], 'прочие')
+                    ['генератор User-Agent', 'скрапер с хостинга', 'только ошибки 4xx', 'прямой заход'], 'прочие')
     V.loc[m, 'group'] = 'Боты'
     V.loc[m, 'subgroup'] = 'файлы без страниц: ' + pd.Series(sub, index=V.index)[m]
     return V

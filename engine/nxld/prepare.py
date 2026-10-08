@@ -94,10 +94,8 @@ def run(paths, workdir, log=print, map_override=None):
     bases = R['base'].cat.categories.to_series()
     is_admin = bases.str.contains(admin_rx, regex=True).values[R['base'].cat.codes.values]
     R['is_admin'] = is_admin
-    A = R.loc[is_admin & R['ua_browser'].values]
-    ok_admin = A[(A['status'] == 200) & ~A['base'].astype(str).str.contains(r'login|auth', case=False)]
-    staff = ok_admin.groupby('ip', observed=True).size()
-    staff_ips = staff[staff >= 5].index.astype(str).tolist()
+    A = R.loc[is_admin & R['ua_browser'].values, ['ip', 'base', 'method', 'status', 'bytes']]
+    staff_ips = recon.admin_staff(A, admin_rx)   # вход или работа в админке; ответ размера формы входа — не сотрудник
     if map_override: staff_ips += map_override.get('staff_ips', [])
     if map_override and map_override.get('staff_ips_remove'):   # ошибочно найденные «сотрудники» (например, зонд формы входа)
         rm_ = set(map_override['staff_ips_remove'])

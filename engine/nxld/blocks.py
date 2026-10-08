@@ -828,14 +828,9 @@ def load_security(c, F):
         SE = {'YandexBot', 'Googlebot', 'Bingbot'}
         rows = []
         for sec_, g in GA.groupby('раздел'):
-            root = g[g['base'].isin([sec_, sec_ + 'index.php'])]
-            posters = set(root.loc[root['method'] == 'POST', 'ip'])
-            fp_src = root[(root['method'] == 'GET') & (root['status'] == 200) & (root['bytes'] > 0) & ~root['ip'].isin(posters)]['bytes']
-            fp = float(fp_src.median()) if len(fp_src) else 0.0
-            if not fp:   # корня раздела не открывали — отпечаток формы входа по самому частому ответу 200 посторонним внутри раздела
-                ok_ = g[(g['status'] == 200) & (g['bytes'] > 0) & ~g['ip'].isin(posters)]['bytes'] // 100 * 100
-                if len(ok_) >= 3 and ok_.value_counts().iloc[0] >= 0.5 * len(ok_): fp = float(ok_.value_counts().index[0] + 50)
-            tol = max(300.0, 0.05 * fp)
+            rm_ = g['base'].isin([sec_, sec_ + 'index.php']).values
+            root = g[rm_]
+            fp, tol = recon.login_form_fp(g, rm_)   # отпечаток формы входа — общий с поиском сотрудников (recon.admin_staff)
             r200 = root[(root['status'] == 200) & (root['bytes'] > 0)]
             logged = set(r200.loc[(r200['bytes'] - fp).abs() > tol, 'ip']) if fp else set()
             pr = root[root['method'] == 'POST']

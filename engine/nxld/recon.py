@@ -65,6 +65,46 @@ def build_templates(R, page_mask, min_children=30):
     return np.array(['/'.join(s) for s in segs], dtype=object)
 
 
+def login_form_fp(g, root):
+    """Отпечаток формы входа служебного раздела: медиана ответов 200 на корень раздела тем, кто не отправлял вход (POST);
+    корня не открывали — самый частый ответ 200 посторонним внутри раздела. Возвращает (размер или 0, допуск).
+    g — запросы раздела (ip, base, method, status, bytes), root — маска корня раздела (форма входа)."""
+    rt = g[root]
+    posters = set(rt.loc[rt['method'] == 'POST', 'ip'])
+    src = rt[(rt['method'] == 'GET') & (rt['status'] == 200) & (rt['bytes'] > 0) & ~rt['ip'].isin(posters)]['bytes']
+    fp = float(src.median()) if len(src) else 0.0
+    if not fp:
+        ok_ = g[(g['status'] == 200) & (g['bytes'] > 0) & ~g['ip'].isin(posters)]['bytes'] // 100 * 100
+        if len(ok_) >= 3 and ok_.value_counts().iloc[0] >= 0.5 * len(ok_): fp = float(ok_.value_counts().index[0] + 50)
+    return fp, max(300.0, 0.05 * fp)
+
+
+def admin_staff(A, admin_rx):
+    """Сотрудники — IP, которые работают в админке движка. Ответ 200 размера формы входа сервер отдаёт любому — это не вход.
+    Сотрудник: успешный вход (POST на вход, и корень админки отдаёт ему не форму) или работа на рабочих страницах
+    админки (заказы, инфоблоки…): ответов 200 не размера формы — от порога (data/thresholds.json), и их больше, чем ответов-форм.
+    A — запросы браузеров к админке: ip, base, method, status, bytes."""
+    from .thresholds import value
+    if not len(A): return []
+    A = A.assign(ip=A['ip'].astype(str), base=A['base'].astype(str))
+    sec = A['base'].map(lambda b: m_.group(0) if (m_ := re.match(admin_rx, b)) else '')   # /bitrix/admin/, /wp-admin/ …
+    A = A.assign(раздел=sec.str.replace(r'[^/]*$', '', regex=True))   # /wp-login.php → / (раздел — папка)
+    lim = value('сотрудник_рабочих_страниц_от', 5)
+    out = []
+    for s_, g in A.groupby('раздел'):
+        root = g['base'].isin([s_, s_ + 'index.php']).values
+        fp, tol = login_form_fp(g, root)
+        form = (g['status'] == 200) & ((g['bytes'] - fp).abs() <= tol) if fp else pd.Series(False, index=g.index)
+        ok = (g['status'] == 200) & (g['bytes'] > 0) & ~form
+        posters = set(g.loc[root & (g['method'] == 'POST').values, 'ip'])
+        logged = set(g.loc[root & ok.values & (g['method'] == 'GET').values, 'ip']) & posters   # вошёл: после POST корень — уже не форма
+        work = ok & ~root & ~g['base'].str.contains(r'login|auth', case=False)
+        n_work, n_form = work.groupby(g['ip']).sum(), form.groupby(g['ip']).sum()
+        busy = n_work[(n_work >= lim) & (n_work > n_form.reindex(n_work.index).fillna(0))].index
+        out += sorted(logged | set(busy))
+    return list(dict.fromkeys(out))
+
+
 def detect_engine(R):
     ok = R['ua_browser'].values & np.isin(R['status'].values, [200, 304])
     bases = R['base'].cat.categories.to_series()

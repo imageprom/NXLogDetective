@@ -106,6 +106,59 @@ def real_addresses(c):
     return (A['людям'] & (A['зонд'] != 'однозначный')).values
 
 
+def people_ips(c):
+    """IP, у которых за период есть обычные визиты людей: группа «Люди», страницы и файлы, подгруженные страницей визита
+    (visits.rendered_static). Одно правило для «Мер по IP», STIX и CSV больших листов: такой IP не блокируют и не
+    ограничивают — за ним покупатели (мобильная сеть, офис); в деле он остаётся только как улика."""
+    if getattr(c, '_people_ips', None) is None:
+        from .visits import rendered_static
+        V = c.V
+        rnd = rendered_static(c.R).reindex(V.index).fillna(0)
+        c._people_ips = set(V.loc[(V['group'] == 'Люди') & (V['n_pages'] >= 1) & (rnd > 0), 'ip'].astype(str))
+    return c._people_ips
+
+
+def hotlink_ips(c):
+    """IP, у которых все визиты — хотлинк-посетители («Люди · хотлинк», «Внешние сайты · хотлинк»): файлы показывает внешний сайт.
+    Такие IP никогда не попадают в дела, «Меры по IP» и STIX."""
+    V = c.V
+    h = (V['subgroup'].astype(str) == 'хотлинк') & V['group'].isin(['Люди', 'Внешние сайты'])
+    g = h.groupby(V['ip'].astype(str)).all()
+    return set(g[g].index)
+
+
+def suspect_ips(c):
+    """IP «Подозрительных лиц» (улики противоречат друг другу или их нет) и «Свои · скачал бэкап» (вход в админку, затем перенос):
+    в дела, обвинения, сигнатуры, «Меры по IP» и STIX не попадают. IP с визитами «Боты» или «Утилиты» — не сюда: их судят по тем визитам."""
+    V = c.V
+    g_ = V['group'].astype(str)
+    sus = (g_ == 'Подозрительные лица') | ((g_ == 'Свои') & (V['subgroup'].astype(str) == 'скачал бэкап'))
+    ip_ = V['ip'].astype(str)
+    bad = set(ip_[g_.isin(['Боты', 'Утилиты'])])
+    return set(ip_[sus]) - bad
+
+
+def own_backup_ips(c):
+    """IP «Свои · скачал бэкап»: обвинения с них снимаются всегда."""
+    V = c.V
+    return set(V.loc[(V['group'] == 'Свои') & (V['subgroup'].astype(str) == 'скачал бэкап'), 'ip'].astype(str))
+
+
+def service_check_ips(c):
+    """IP, у которых все визиты — «Роботы · проверка сервиса» (/.well-known/ из сетей Google, Apple, Akamai…): не в дела, меры и STIX."""
+    V = c.V
+    g = (V['subgroup'].astype(str) == 'проверка сервиса').groupby(V['ip'].astype(str)).all()
+    return set(g[g].index)
+
+
+def not_probe(c):
+    """Адреса, которые по шаблону похожи на зонд, но зондом не считаются (реестр адресов): страница сайта, которую получают
+    люди или свои, и служебные страницы движка сайта (вход, регистрация). Булев массив по категориям R['base']."""
+    A = getattr(c, 'addr', None)
+    if A is None: return np.zeros(len(c.R['base'].cat.categories), bool)
+    return ((A['зонд'] == '') & (A['людям'] | A['служебная_страница'])).values
+
+
 def codes_text(st):
     """Коды ответа (массив) → «404 (33), 200 (2)» по убыванию."""
     s = pd.Series(np.asarray(st)).value_counts()

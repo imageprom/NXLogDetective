@@ -12,7 +12,7 @@ THEME = {
     '5xx': 'Сайт', '5xx_section': 'Сайт', 'soft_errors': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
     'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'pd_in_get': 'Безопасность', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
-    'admin_foreign': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама',
+    'admin_foreign': 'Безопасность', 'open_redirect': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама',
     'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
     'search_errors': 'Поиск', 'no_service': 'Поиск', 'ai_index': 'Поиск', 'hotlink': 'Нагрузка', 'broken_labels': 'Реклама',
 }
@@ -202,7 +202,7 @@ def humanize(items, sheets, summary):
                 f = 'Файлы-описания сайта для ИИ-поиска не найдены (404): ' + re.sub(r' — (\d+) запросов', lambda m: f" — {nw(int(m.group(1)), 'запрос', 'запроса', 'запросов')}", x['факты'].split('; запрашивают')[0]).replace(';', ',') \
                     + ('; запрашивают ' + re.sub(r': (\d+)', r' (\1)', who.group(1)) + '.' if who else '.') + ' Стандарт необязательный: решить, нужен ли он сайту.'
             elif t == 'hotlink':
-                h = 'Чужие сайты показывают картинки сайта'
+                h = 'Внешние сайты показывают картинки сайта'
                 f = x['факты'].replace('; тестовые копии:', '. Похоже на тестовую копию сайта:') + '.'
             elif t == 'broken_labels':
                 h = 'Рекламные метки сломаны'

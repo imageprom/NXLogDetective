@@ -315,7 +315,7 @@ def regroup(V, R=None):
     return V
 
 
-UTIL_LABEL = {'Скрипты: прочие': 'Прочие программы'}
+UTIL_LABEL = {'Скрипты: прочие': 'Прочие утилиты'}
 
 
 def load_probes():
@@ -390,8 +390,46 @@ def mark_scanners(V, R, engines=()):
             why[key.isin(bad_) & (why == '').values] = sig.get('fan_404_ip', {}).get('название', 'Веер 404 с одного адреса')
     m = (why != '') & (V['group'] == 'Люди')
     kind = actor_kind(V, R, m, strong | weak)
+    # визит с N и больше запросов к однозначным зондам — сканер, сколько бы «статики» он ни грузил (N — data/thresholds.json)
+    from .thresholds import value
+    ns = pd.Series(np.bincount(vid[strong], minlength=int(vid.max()) + 1 if len(vid) else 0)).reindex(V.index).fillna(0)
+    many = m & (ns >= value('зондов_в_визите_сканер_от', 10))
+    kind[many] = _actors()['выводы']['сканер']
     V.loc[m, 'group'] = 'Боты'
     V.loc[m, 'subgroup'] = kind[m] + ': ' + why[m].str.lower()
+    return V
+
+
+def _actors():
+    import json, os
+    return json.load(open(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'actors.json')), encoding='utf-8'))
+
+
+def rendered_static(R):
+    """Сколько файлов в каждом визите подгрузила страница этого же визита: реферер — страница сайта, открытая в визите.
+    Только такая «статика» — признак, что браузер отрисовал страницу; файлы без реферера или со ссылкой на чужую страницу — нет."""
+    vid = R['vid'].values
+    cats = R['base'].cat.categories
+    codes = R['base'].cat.codes.values.astype(np.int64)
+    L = len(cats) + 1
+    opened = ~R['is_static'].values & np.isin(R['method'].values, ['GET', 'HEAD'])   # страницы визита (с повторами и переадресациями)
+    pages = np.unique(vid[opened].astype(np.int64) * L + codes[opened])
+    st = R['is_static'].values & R['ref_internal'].values.astype(bool)
+    rp = R['ref_path'].astype(str).values[st]
+    rc = pd.Index(cats).get_indexer(rp).astype(np.int64)
+    ok = (rc >= 0) & np.isin(vid[st].astype(np.int64) * L + rc, pages)
+    return pd.Series(vid[st][ok]).value_counts()
+
+
+def mark_unrendered(V, R):
+    """«Люди» со страницами, но без единого файла, подгруженного страницей визита, — не браузер, который отрисовал страницу
+    (сканер со «статикой» чужого движка). Так же, как визит без загрузки ресурсов вообще."""
+    V = V.copy()
+    m = (V['group'] == 'Люди') & (V['n_pages'] >= 1) & (V['n_static'] > 0) & (V['n_embedded'] == 0)
+    if not m.any(): return V
+    m &= rendered_static(R).reindex(V.index).fillna(0).values == 0
+    V.loc[m, 'group'] = 'Боты'
+    V.loc[m, 'subgroup'] = 'маскирующиеся: без загрузки ресурсов'
     return V
 
 
@@ -433,16 +471,411 @@ def actor_kind(V, R, m, probe):
     rot_ = g.index.str.split('|').str[0].map(nua).fillna(1).values > A.get('браузеров_с_IP_не_больше', 3)
     score = (H['грузит_ресурсы']['вес'] * (rend.reindex(g.index).fillna(0) >= 3)
              + H['живой_темп']['вес'] * (g['req'] / g['dur'].clip(lower=1) < H['живой_темп']['порог_запросов_в_секунду'])
-             + H['домашняя_сеть']['вес'] * ~g['net'].isin(['хостинг/облако', 'VPN/прокси-релей'])
+             + H['домашняя_сеть']['вес'] * ~(g['net'].astype(str).str.startswith('дата-центр') | (g['net'] == 'VPN/прокси-релей'))
              + H['браузер']['вес'] * g['br'].astype(bool)
              + H['ходит_по_сайту']['вес'] * (pages_ok.reindex(g.index).fillna(0) > 0))
-    human = (score >= A['человек_если_баллов_от']) & ~g['net'].isin(A.get('автомат_если_сеть', [])) & ~fast_.fillna(False) & ~common_ & ~rot_ & (probes_n.reindex(g.index).fillna(0) <= A['человек_не_больше_зондов'])
+    human = (score >= A['человек_если_баллов_от']) & ~g['net'].astype(str).str.startswith(tuple(A.get('автомат_если_сеть', [])) or ('\x00',)) & ~fast_.fillna(False) & ~common_ & ~rot_ & (probes_n.reindex(g.index).fillna(0) <= A['человек_не_больше_зондов'])
     regular = days_.reindex(g.index).fillna(0) >= A['регулярно_если_дней_от']
     lab = pd.Series(out['сканер'], index=g.index, dtype=object)
     lab[human & ~regular] = out['человек_разово']
     lab[human & regular] = out['человек_регулярно']
     kind[m] = key[m].map(lab).fillna(out['сканер'])
     return kind
+
+
+def impossible_ua(ua, year=None):
+    """Невозможная версия в User-Agent — признак генератора: Windows 95/98/NT 4, iPhone OS старше порога, Gecko/дата сборки из будущего."""
+    from .thresholds import value
+    ua = str(ua)
+    if re.search(r'Windows 95|Windows 98|Win 9x|Windows NT 4\.0', ua): return True
+    m = re.search(r'(?:iPhone|CPU) OS (\d+)_', ua)
+    if m and int(m.group(1)) < value('ua_ios_не_старше', 7): return True
+    m = re.search(r'Gecko/(20\d{2})(\d{2})(\d{2})\b', ua)   # Firefox пишет Gecko/20100101; дата сборки после года лога — выдумана
+    if m and year and int(m.group(1)) > year: return True
+    return False
+
+
+DC_NETS = ('дата-центр', 'Яндекс')   # дата-центры (по началу подписи: «дата-центр (компания)»): серверы, а не люди
+HOME_NETS = ('мобильный оператор', 'RU провайдер доступа', 'зарубежный провайдер доступа')   # домашние и мобильные сети
+
+
+_FG = None
+
+
+def file_groups():
+    """Справочник групп файлов (data/reference/file_groups.json) и составные шаблоны: служебные файлы, чувствительные адреса
+    (вместе с «backup_paths» движков), перенос сайта."""
+    global _FG
+    if _FG is None:
+        import json, os
+        from .reference import engine_backup_paths
+        ref = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+        G = json.load(open(os.path.join(ref, 'file_groups.json'), encoding='utf-8'))
+        ext = json.load(open(os.path.join(ref, 'extensions.json'), encoding='utf-8'))
+        wk = next((g['шаблон'] for g in ext.get('по_адресу', []) if g.get('группа') == 'Служебные (.well-known)'), None)
+        G['service_rx'] = G['service_files'] + (f'|{wk}' if wk else '')
+        G['sensitive_rx'] = '|'.join(f'(?:{x})' for x in G['sensitive'] + engine_backup_paths())
+        G['transfer_rx'] = '|'.join(f'(?:{x})' for x in G['transfer'])
+        G['backup_ext_rx'] = r'\.(' + '|'.join(re.escape(e) for e in G['backup_ext']) + r')(\.\d+)?$'
+        from .reference import engine_template_paths
+        G['decor_rx'] = '|'.join(f'(?:{x})' for x in engine_template_paths() + [G['decor_pattern']])
+        _FG = G
+    return _FG
+
+
+def _cat_mask(R, rx):
+    """Шаблон по категориям адресов R['base'] → булев массив по категориям."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        return R['base'].cat.categories.to_series().astype(str).str.contains(rx, regex=True, case=False).values
+
+
+def _page_form(R, page_form=None):
+    """Адрес — страница по реестру (classify.form_of) — булев массив по категориям R['base']."""
+    if page_form is not None: return np.asarray(page_form, bool)
+    from .classify import form_of
+    return np.array([form_of(p_)[0] == 'страница' for p_ in R['base'].cat.categories.astype(str)], bool)
+
+
+def mark_backups(V, R, staff_ips=(), admin_rx=None):
+    """Чувствительные адреса (file_groups.json «sensitive» и «backup_paths» движков: бэкапы, дампы, архивы сайта в корне,
+    restore.php, .env) — раньше всех правил «только файлы».
+    - поиск бэкапов: с IP за весь период запрошено не меньше backup_search_min_paths разных чувствительных адресов при любом ответе
+      (в том числе 301 и 302) — перебор, зонд: визиты «Люди» с такими адресами — «Боты · <сканер>: поиск бэкапов» (в дела, как сканер);
+    - один чувствительный адрес без ответа 200 — как раньше (здесь не трогается); 200 — по поведению:
+    - перед скачиванием с того же IP или тем же браузером — успешный вход в админку, затем перенос (restore.php, архив частями
+      .tar.gz.1…) — «Свои · скачал бэкап»: обвинений нет (profiles снимает их);
+    - искал бэкапы по разным адресам (по IP за весь период, порог backup_search_min_paths) или бэкап скачан многими IP
+      (порог backup_many_ips) — дело: «Боты · скачал бэкап»; доступность бэкапа — находка «Сервер отдал служебные файлы»;
+    - иначе (разовое скачивание без связи с админкой и без поиска) — «Подозрительные лица · скачал бэкап».
+    Возвращает (V, список фактов для res['backups'])."""
+    from .thresholds import value
+    V = V.copy()
+    G = file_groups()
+    sens_c = _cat_mask(R, G['sensitive_rx'])
+    codes = R['base'].cat.codes.values
+    st = R['status'].values
+    sens = sens_c[codes]
+    if not sens.any(): return V, []
+    lim_search = value('backup_search_min_paths', 2)
+    ips_all = R['ip'].astype(str).values
+    # поиск бэкапов: разные чувствительные адреса с одного IP за весь период, при любом ответе
+    S_ = pd.DataFrame({'ip': ips_all[sens], 'b': codes[sens], 'vid': R['vid'].values[sens]})
+    n_sens = S_.groupby('ip')['b'].nunique()
+    seekers = set(n_sens[n_sens >= lim_search].index)
+    if seekers:   # все визиты такого IP к архивам и дампам (file_groups.json «backup_ext», в любом каталоге) — тот же ярлык
+        arch = _cat_mask(R, G['backup_ext_rx'])[codes] & np.isin(ips_all, list(seekers))
+        sv = np.union1d(S_.loc[S_['ip'].isin(seekers), 'vid'].unique(), R['vid'].values[arch])
+        ms = V.index.isin(sv) & (V['group'] == 'Люди').values
+        V.loc[ms, 'group'] = 'Боты'
+        V.loc[ms, 'subgroup'] = _actors()['выводы']['сканер'] + ': поиск бэкапов'
+    got = sens & (st == 200) & (R['bytes'].values > 0)
+    if not got.any(): return V, []
+    V['evidence_people'] = V.get('evidence_people', pd.Series('', index=V.index)).fillna('')
+    V['evidence_bot'] = V.get('evidence_bot', pd.Series('', index=V.index)).fillna('')
+    cats = R['base'].cat.categories.astype(str)
+    ips, uas, ts, vid = R['ip'].astype(str).values, R['ua'].astype(str).values, R['ts'].values, R['vid'].values
+    # успешный вход в админку: IP сотрудников (recon.admin_staff) — их ответы 200 в админке; браузер — тот же User-Agent
+    staff = set(staff_ips)
+    adm = np.zeros(len(R), bool)
+    if admin_rx and staff:
+        adm = _cat_mask(R, admin_rx)[codes] & np.isin(ips, list(staff)) & (st == 200)
+    A = pd.DataFrame({'ip': ips[adm], 'ua': uas[adm], 't': ts[adm]})
+    adm_ip, adm_ua = A.groupby('ip')['t'].min(), A.groupby('ua')['t'].min()
+    tr = _cat_mask(R, G['transfer_rx'])[codes] & (st < 400)
+    Tr = pd.DataFrame({'ip': ips[tr], 'ua': uas[tr], 't': ts[tr]})
+    D = pd.DataFrame({'ip': ips[got], 'ua': uas[got], 't': ts[got], 'b': codes[got], 'vid': vid[got]})
+    many = D.groupby('b')['ip'].nunique()
+    lim_many = value('backup_many_ips', 3)
+    facts = []
+    for (ip, ua, b), g in D.groupby(['ip', 'ua', 'b'], sort=False):
+        t = int(g['t'].min())
+        t_adm = min([x for x in (adm_ip.get(ip), adm_ua.get(ua)) if x is not None], default=None)
+        admin_before = t_adm is not None and t_adm <= t
+        transfer = admin_before and bool((Tr.loc[(Tr['ip'] == ip) | (Tr['ua'] == ua), 't'] >= t_adm).any())
+        searched = S_.loc[(S_['ip'] == ip) & (S_['b'] != b), 'b'].nunique() >= lim_search   # другие чувствительные адреса за весь период
+        crowd = int(many.get(b, 0)) >= lim_many
+        if admin_before and transfer:
+            grp, verdict = 'Свои', 'свой перенос: вход в админку, затем перенос'
+        elif searched or crowd:
+            grp, verdict = 'Боты', ('искал бэкапы по разным адресам' if searched else f'бэкап скачан многими IP ({int(many.get(b, 0))})')
+        else:
+            grp, verdict = 'Подозрительные лица', 'разовое скачивание без связи с админкой и без поиска бэкапов'
+        vs = g['vid'].unique()
+        mv = V.index.isin(vs) & ~V['group'].isin(['Роботы', 'Системы мониторинга']).values
+        # одна и та же пара (IP, браузер) — один вывод; «дело» сильнее «подозрения», «свои» — сильнее всего
+        rank = {'Подозрительные лица': 0, 'Боты': 1, 'Свои': 2}
+        cur = V.loc[mv, 'subgroup'].astype(str) == 'скачал бэкап'
+        keep = cur & (V.loc[mv, 'group'].map(rank).fillna(-1) > rank[grp])
+        idx = V.index[mv][~keep.values]
+        V.loc[idx, 'group'] = grp; V.loc[idx, 'subgroup'] = 'скачал бэкап'
+        pe = ['вход в админку перед скачиванием'] if admin_before else []
+        pe += ['перенос: restore.php или архив частями'] if transfer else []
+        be = (['искал бэкапы по разным адресам'] if searched else []) + (['бэкап скачан многими IP'] if crowd else [])
+        V.loc[idx, 'evidence_people'] = '; '.join(pe); V.loc[idx, 'evidence_bot'] = '; '.join(be)
+        facts.append(dict(ip=ip, ua=ua, файл=cats[b], время=t, категория=grp, вывод=verdict, улики_за_людей='; '.join(pe), улики_за_бота='; '.join(be)))
+    return V, facts
+
+
+def mark_files_only(V, R, own_hosts=(), page_form=None):
+    """Визит «Людей» без страниц, без POST и подгружаемых блоков — только файлы (служебные файлы: robots.txt, sitemap*, favicon,
+    apple-touch-icon, стандартные /.well-known/ — не в счёт; визиты с чувствительными адресами — mark_backups, не сюда).
+    Решает поведение, сеть — слабая подсказка. Улики (пороги — data/thresholds.json, files_*):
+      за людей: соседи по адресу (сильно: с этого IP в окне смотрят страницы визиты «Люди»); обвес одной страницы (средне: один
+                реферер, несколько видов обвеса, каждый файл один раз, короткое окно); офис (много браузеров на IP, рабочие часы,
+                будни); домашняя или мобильная сеть — только подсказка, «Людьми» одна не делает;
+      за бота:  невозможная версия браузера, обход по списку, повторы, много 404 (только 404 и 410), один содержательный файл
+                со многих IP растянуто по времени (сильно); дата-центр (слабо). 403 — отказ сайта: «закрыто сайтом (403)», ни за кого.
+    Боты — сильная улика за бота и нет соседей по адресу; Люди — есть поведенческий признак людей и нет улик за бота (дата-центр —
+    тоже улика); иначе — Подозрительные лица.
+    Ярлыки по порядку: невозможная версия → «Боты · только файлы: запрашивает несуществующие файлы» (одни 404 и 410) или
+    «…: скрапер» (иначе); реферер — хост из own_hosts →
+    «Свои · свои системы»; соседи по адресу → «Люди»; скачивание (file_groups.json; аудио и видео — целиком 200, фото — больше
+    обычной картинки страниц, но не по рефереру поисковика) → «Люди · скачал документ» / «Боты · только файлы: скрапер» (обход по списку или повторы) /
+    «Подозрительные лица · скачал документ»; обвес: поисковик → «Люди · из поиска по картинкам»; почти одни 404 → «Люди · старая
+    ссылка» / «Боты · только файлы: запрашивает несуществующие файлы» / «Подозрительные лица»; страницы своего сайта → «Люди» /
+    «Боты · только файлы: скрапер» / «Подозрительные лица»; внешний сайт → «Люди · хотлинк» / скрапер / «Внешние сайты · хотлинк»;
+    без реферера → «Люди · открыл файл по прямой ссылке» / скрапер / «Подозрительные лица».
+    Улики за обе версии — в V['evidence_people'] и V['evidence_bot']."""
+    from .thresholds import value
+    import warnings
+    V = V.copy()
+    for col in ('evidence_people', 'evidence_bot'):
+        V[col] = V[col].fillna('') if col in V else ''
+    G = file_groups()
+    vid = R['vid'].values
+    codes = R['base'].cat.codes.values
+    st = R['status'].values
+    pagey = _page_form(R, page_form)[codes]
+    svc = _cat_mask(R, G['service_rx'])[codes]
+    sens = _cat_mask(R, G['sensitive_rx'])[codes]
+    per = lambda x: pd.Series(x).groupby(vid)
+    has_page = per(pagey).any().reindex(V.index).fillna(False).values
+    has_file = per(~pagey & ~svc).any().reindex(V.index).fillna(False).values
+    has_sens = per(sens).any().reindex(V.index).fillna(False).values
+    m = ((V['group'] == 'Люди').values & ~has_page & has_file & ~has_sens & (V['n_post'] == 0).values & (V['n_embedded'] == 0).values)
+    if not m.any(): return V
+    m = pd.Series(m, index=V.index)
+    rows = np.isin(vid, V.index[m]) & ~svc   # файлы визитов «только файлы», без служебных
+    cats = R['base'].cat.categories.to_series().astype(str).reset_index(drop=True)
+    # группы файлов: скачивание или обвес
+    leaf = cats.str.rsplit('/', n=1).str[-1].str.lower()
+    ext_c = np.where(leaf.str.endswith('.tar.gz'), 'tar.gz', leaf.str.extract(r'\.([a-z0-9]{1,10})$')[0].fillna('').values)
+    lc = cats.str.lower()
+    dl_c = np.zeros(len(cats), bool); media_c = np.zeros(len(cats), bool)
+    for g in G['download_groups']:
+        e_ = np.isin(ext_c, g['ext'])
+        if g['key'] == 'media':
+            media_c |= e_ | np.isin(ext_c, g.get('photo_ext', []))
+            continue
+        if g.get('dirs'):
+            e_ &= lc.str.contains('|'.join(re.escape(d) for d in g['dirs']), regex=True).values
+        if g.get('not_dirs'):
+            e_ &= ~lc.str.contains('|'.join(re.escape(d) for d in g['not_dirs']), regex=True).values
+        dl_c |= e_
+    ok = (st >= 200) & (st < 300)
+    # медиа: аудио и видео — целиком одним ответом 200; фото — заметно больше обычной картинки страниц сайта; иначе — обвес
+    mg = next((g for g in G['download_groups'] if g['key'] == 'media'), {})
+    av_c = np.isin(ext_c, mg.get('ext', []))
+    ph_c = np.isin(ext_c, mg.get('photo_ext', []))
+    img_c = np.isin(ext_c, G['asset_kinds']['images'])
+    page_v = np.isin(vid, V.index[has_page])
+    pimg = img_c[codes] & page_v & (st == 200) & (R['bytes'].values > 0)
+    med = float(np.median(R['bytes'].values[pimg])) if pimg.any() else np.inf
+    big_photo = R['bytes'].values > value('files_photo_size_factor', 5) * med
+    asset = rows & np.isin(ext_c, G['page_assets'])[codes]
+    gone = (st == 404) | (st == 410)   # 403 — отказ сайта (гео-фильтр, запрет): не «несуществующий файл»
+    e4 = rows & gone
+    e403 = rows & (st == 403)
+    # рефереры файлов визита
+    rh = R['ref_host'].astype(str).str.lower().str.removeprefix('www.')
+    has_ref = ~R['ref'].astype(str).isin(['-', '']).values
+    own = {h.lower().removeprefix('www.') for h in own_hosts}
+    own_sys = rows & has_ref & rh.isin(own).values
+    inner = rows & has_ref & R['ref_internal'].values.astype(bool) & ~own_sys
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)
+        search_ref = rows & has_ref & ~inner & ~own_sys & rh.str.contains(SEARCH, regex=True).values
+    ext_ref = rows & has_ref & ~inner & ~own_sys & ~search_ref
+    # фото по рефереру поисковика — «из поиска по картинкам» (правило 4), а не скачивание; прочие группы скачиваний — как были
+    dl = rows & ((dl_c[codes] & ok) | (av_c[codes] & (st == 200)) | (ph_c[codes] & (st == 200) & big_photo & ~search_ref))
+    vany = lambda x: per(x).any().reindex(V.index).fillna(False).values
+    vsum = lambda x: per(x).sum().reindex(V.index).fillna(0).values
+    # улики по адресу (IP + браузер) за период — по файлам его визитов «только файлы»
+    key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
+    rk = key.reindex(vid[rows]).values
+    F = pd.DataFrame({'k': rk, 'b': codes[rows], 't': R['ts'].values[rows], 'st': st[rows], 'asset': asset[rows],
+                      'day': R['ts'].values[rows] // 86400, 'vid': vid[rows], 'ip': R['ip'].astype(str).values[rows],
+                      'ref': R['ref'].astype(str).values[rows]})
+    n404 = F[F['st'].isin([404, 410])].groupby('k').size()
+    rep = F[F['st'] == 200].groupby(['k', 'b', 'day']).size().groupby(level=0).max()
+    num = cats.str.extract(r'(\d+)(?=\.[A-Za-z0-9]+$)')[0].astype(float).values
+    dir_c = cats.str.replace(r'[^/]*$', '', regex=True).values
+    lst_min, lst_share = value('files_list_min', 10), value('files_list_share', 0.8)
+    crawl_k = set()
+    Fo = F[(F['st'] >= 200) & (F['st'] < 300)]
+    no_assets = ~F.groupby('k')['asset'].any()
+    for k, g in Fo.groupby('k'):
+        u = g.sort_values('t').drop_duplicates('b')['b'].values
+        if len(u) < lst_min or not no_assets.get(k, True): continue
+        n_ = num[u]
+        seq = float(np.mean(np.diff(n_) == 1)) if len(n_) > 1 else 0.0
+        dshare = pd.Series(dir_c[u]).value_counts().iloc[0] / len(u)
+        if seq >= lst_share or dshare >= lst_share: crawl_k.add(k)
+    crawl = key.isin(crawl_k).values
+    repeats = key.map(rep).fillna(0).values >= value('files_repeat_min', 3)
+    many404 = key.map(n404).fillna(0).values >= value('files_404_min', 5)
+    year = int(pd.to_datetime(V['end'].max(), unit='s').year)
+    imp = np.array([impossible_ua(u, year) if mm else False for u, mm in zip(V['ua'], m)])
+    # один и тот же содержательный файл (картинка товара или раздела, документ — не оформление шаблона, не логотип и не иконка)
+    # со многих IP в визитах «только этот файл или почти только он», запросы растянуты по времени (не всплеск после рассылки)
+    content_c = (np.isin(ext_c, G['content_images']) | dl_c) & ~_cat_mask(R, G['decor_rx'])
+    nfv = F.groupby('vid').size()
+    Fc = F[content_c[F['b'].values]]
+    same_v = np.zeros(len(V), bool)
+    if len(Fc):
+        per_vb = Fc.groupby(['vid', 'b']).size().rename('n').reset_index()
+        per_vb = per_vb[per_vb['n'] >= value('files_same_file_visit_share', 0.8) * per_vb['vid'].map(nfv).values]
+        Fq = Fc.merge(per_vb[['vid', 'b']], on=['vid', 'b'])
+        nip = Fq.groupby('b')['ip'].nunique()
+        cand_b = nip[nip >= value('files_same_file_ips_min', 20)].index
+        Wb, share_b = value('files_burst_window_hours', 6) * 3600, value('files_burst_share', 0.5)
+        spread_b = []
+        for b_ in cand_b:
+            t_ = np.sort(Fq.loc[Fq['b'] == b_, 't'].values)
+            peak = int((np.searchsorted(t_, t_ + Wb, 'right') - np.arange(len(t_))).max())
+            if peak < share_b * len(t_): spread_b.append(b_)
+        if spread_b:
+            same_v = V.index.isin(per_vb.loc[per_vb['b'].isin(spread_b), 'vid'].unique())
+    # обвес одной страницы: один реферер, не меньше N видов обвеса, каждый файл — один раз, всё в коротком окне
+    kind_c = np.full(len(cats), '', dtype=object)
+    for kname, exts in G['asset_kinds'].items():
+        kind_c[np.isin(ext_c, exts)] = kname
+    F['kind'] = kind_c[F['b'].values]
+    gv = F.groupby('vid').agg(nref=('ref', 'nunique'), ref0=('ref', 'first'), kinds=('kind', lambda x: len(set(x) - {''})),
+                              n=('b', 'size'), nu=('b', 'nunique'), t0=('t', 'min'), t1=('t', 'max'))
+    one = ((gv['nref'] == 1) & ~gv['ref0'].isin(['-', '']) & (gv['kinds'] >= value('files_onepage_kinds_min', 2))
+           & (gv['n'] == gv['nu']) & (gv['t1'] - gv['t0'] <= value('files_onepage_window_sec', 60)))
+    onepage = one.reindex(V.index).fillna(False).astype(bool).values & m.values
+    # соседи по адресу: с этого IP в окне до и после визита смотрят страницы визиты «Люди» (браузер любой)
+    W = value('files_neighbors_window_min', 30) * 60
+    P = V[(V['group'] == 'Люди').values & has_page & ~m.values][['ip', 'start', 'end']]
+    neigh = np.zeros(len(V), bool)
+    if len(P):
+        ipcode = pd.Index(pd.unique(pd.concat([P['ip'], V.loc[m, 'ip']]).astype(str)))
+        P = P.assign(c=ipcode.get_indexer(P['ip'].astype(str))).sort_values(['c', 'start'])
+        P['cmax'] = P.groupby('c')['end'].cummax()
+        BIG = np.int64(10 ** 11)
+        pk = P['c'].values.astype(np.int64) * BIG + P['start'].values.astype(np.int64)
+        C = V.loc[m, ['ip', 'start', 'end']]
+        cc = ipcode.get_indexer(C['ip'].astype(str)).astype(np.int64)
+        j = np.searchsorted(pk, cc * BIG + C['end'].values.astype(np.int64) + W, 'right') - 1
+        okj = j >= 0
+        jj = np.clip(j, 0, None)
+        hit = okj & (P['c'].values[jj] == cc) & (P['cmax'].values[jj] >= C['start'].values - W)
+        neigh[np.where(m.values)[0]] = hit
+    # офис: много браузеров на IP у визитов «Люди», рабочие часы, будни
+    # браузеры на IP — только по визитам «Люди» со страницами: домашние прокси меняют браузер на каждом запросе «только файлы»
+    Hp = V[(V['group'] == 'Люди').values & has_page]
+    nua = Hp.groupby(Hp['ip'].astype(str))['ua'].nunique()
+    h0, h1 = value('files_office_hours', [9, 19])
+    office = ((V['ip'].astype(str).map(nua).fillna(0).values >= value('files_office_browsers_min', 3))
+              & (V['hour'].values >= h0) & (V['hour'].values < h1) & (V['weekday'].values < 5))
+    net = V['nettype'].astype(str)
+    dc = net.str.startswith(DC_NETS).values
+    home = net.isin(HOME_NETS).values
+    # «Люди» — только при поведенческом признаке: соседи по адресу, офис, обвес одной страницы (переход из поисковика — правило 4);
+    # сеть — слабая подсказка: одна она людьми и ботами не делает
+    strong_bot = imp | crawl | repeats | many404 | same_v
+    behav_ppl = neigh | office | onepage
+    is_bot = strong_bot & ~neigh
+    is_ppl = behav_ppl & ~(strong_bot | dc)
+    n403 = vsum(e403)
+    ev_p = [', '.join(x for x, f in (('соседи по адресу', a), ('офис: много браузеров, рабочие часы, будни', b_), ('обвес одной страницы', o_),
+                                     ('домашняя или мобильная сеть', c_), ('закрыто сайтом (403)', z_)) if f)
+            for a, b_, o_, c_, z_ in zip(neigh, office, onepage, home, n403 > 0)]
+    ev_b = [', '.join(x for x, f in (('невозможная версия браузера', a), ('обход по списку', b_), ('повторы', c_), ('много 404', d_),
+                                     ('один файл со многих IP', s_), ('дата-центр', e_), ('закрыто сайтом (403)', z_)) if f)
+            for a, b_, c_, d_, s_, e_, z_ in zip(imp, crawl, repeats, many404, same_v, dc, n403 > 0)]
+    V.loc[m, 'evidence_people'] = pd.Series(ev_p, index=V.index)[m]
+    V.loc[m, 'evidence_bot'] = pd.Series(ev_b, index=V.index)[m]
+    has_dl, n_files, n4 = vany(dl), vsum(rows), vsum(e4)
+    almost404 = (n4 >= 1) & (n4 >= value('files_almost_all_404_share', 0.8) * np.maximum(n_files, 1))
+    a_own, a_search, a_inner, a_ext = vany(own_sys), vany(search_ref), vany(inner), vany(ext_ref)
+    left = m.values.copy()
+    def put(mask, grp, sub):
+        nonlocal left
+        mask = mask & left
+        V.loc[mask, 'group'] = grp; V.loc[mask, 'subgroup'] = sub
+        left &= ~mask
+    def verdict(mask, ppl, bot, other):
+        put(mask & is_ppl, *ppl); put(mask & is_bot, *bot); put(mask, *other)
+    SCR = ('Боты', 'только файлы: скрапер')
+    NX = ('Боты', 'только файлы: запрашивает несуществующие файлы')
+    only_gone = (n4 >= 1) & (n4 == n_files)
+    put(imp & only_gone, *NX); put(imp, *SCR)                                                             # 1: невозможная версия — улика; тип — по поведению
+    put(a_own, 'Свои', 'свои системы')                                                                    # 9: реферер — хост из own_hosts
+    put(neigh, 'Люди', '')                                                                                # 2
+    dlm = has_dl & left                                                                                   # 3
+    put(dlm & is_ppl, 'Люди', 'скачал документ'); put(dlm & (crawl | repeats), *SCR); put(dlm, 'Подозрительные лица', 'скачал документ')
+    put(a_search, 'Люди', 'из поиска по картинкам')                                                       # 4
+    # 8 — раньше 5–7: те покрывают любой обвес (свой, внешний реферер, без реферера), и после них правило не сработало бы ни разу
+    verdict(almost404, ('Люди', 'старая ссылка'), NX, ('Подозрительные лица', ''))                         # 8
+    verdict(a_inner, ('Люди', ''), SCR, ('Подозрительные лица', ''))                                       # 5
+    verdict(a_ext, ('Люди', 'хотлинк'), SCR, ('Внешние сайты', 'хотлинк'))                                 # 6
+    verdict(left, ('Люди', 'открыл файл по прямой ссылке'), SCR, ('Подозрительные лица', ''))              # 7
+    return V
+
+
+def mark_system_agents(V, R):
+    """Системный агент на устройстве человека (data/reference/system_agents.json: автозаполнение паролей Apple и родственные),
+    который в визите запрашивает только стандартные /.well-known/ (extensions.json, «Служебные (.well-known)»), — «Люди».
+    Тот же UA с любым другим адресом — обычные правила."""
+    import json, os
+    ref = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+    A = json.load(open(os.path.join(ref, 'system_agents.json'), encoding='utf-8')).get('agents', [])
+    ext = json.load(open(os.path.join(ref, 'extensions.json'), encoding='utf-8'))
+    rx = next((g['шаблон'] for g in ext.get('по_адресу', []) if g.get('группа') == 'Служебные (.well-known)'), None)
+    if not A or rx is None: return V
+    V = V.copy()
+    only_wk = pd.Series(_cat_mask(R, rx)[R['base'].cat.codes.values]).groupby(R['vid'].values).all().reindex(V.index).fillna(False).values
+    ua_rx = '|'.join(f"(?:{a['ua_pattern']})" for a in A)
+    agent = V['ua'].astype(str).str.contains(ua_rx, regex=True).values
+    m = only_wk & agent & (V['group'] != 'Свои').values
+    V.loc[m, 'group'] = 'Люди'
+    V.loc[m, 'subgroup'] = ''
+    return V
+
+
+def mark_service_checks(V, R):
+    """Визит, в котором только запросы к стандартным файлам /.well-known/ (extensions.json, «Служебные (.well-known)»), из сети
+    самого сервиса (data/reference/service_checks.json: Google, Apple, Akamai…) — «Роботы · проверка сервиса», не зонд и не бот."""
+    import json, os
+    ref = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+    nets = {int(k) for k in json.load(open(os.path.join(ref, 'service_checks.json'), encoding='utf-8')).get('сети', {})}
+    ext = json.load(open(os.path.join(ref, 'extensions.json'), encoding='utf-8'))
+    rx = next((g['шаблон'] for g in ext.get('по_адресу', []) if g.get('группа') == 'Служебные (.well-known)'), None)
+    if rx is None: return V
+    V = V.copy()
+    cats = R['base'].cat.categories.to_series().astype(str)
+    wk = cats.str.contains(rx, regex=True).values[R['base'].cat.codes.values]
+    only_wk = pd.Series(wk).groupby(R['vid'].values).all().reindex(V.index).fillna(False).values
+    svc = only_wk & pd.to_numeric(V['asn'], errors='coerce').fillna(0).astype(int).isin(nets).values & (V['group'] != 'Свои').values
+    V.loc[svc, 'group'] = 'Роботы'
+    V.loc[svc, 'subgroup'] = 'проверка сервиса'
+    return V
+
+
+def audience(V):
+    """Страна основной аудитории — самая частая среди визитов людей — и доля людей из неё; предупреждение, если доля ниже порога."""
+    from .thresholds import value
+    H = V[V['group'] == 'Люди']
+    if not len(H): return None
+    cc = H['cc'].astype(str).replace('', '?').value_counts()
+    share = round(float(cc.iloc[0]) / len(H) * 100, 1)
+    lim = value('люди_из_основной_страны_%', 50)
+    return dict(страна=cc.index[0], доля=share, порог=lim, предупреждение=share < lim)
 
 
 def mark_form_spam(V, R):
@@ -466,7 +899,7 @@ def mark_form_spam(V, R):
             same_user[vid] = True
     cls[nopage & (V['n_static'] == 0) & ~same_user] = 'спам форм: отправка без просмотра страниц'
     # страница открыта другим IP: этот IP грузил только картинки/скрипты и отправил форму, а саму страницу не открывал (хостинг/VPN)
-    cls[nopage & (V['n_static'] > 0) & V['entry_ref_internal'] & ~same_user & V['nettype'].isin(['хостинг/облако', 'VPN/прокси-релей']) & (cls == '')] = 'спам форм: страницу открыл другой IP'
+    cls[nopage & (V['n_static'] > 0) & V['entry_ref_internal'] & ~same_user & (V['nettype'].astype(str).str.startswith('дата-центр') | (V['nettype'] == 'VPN/прокси-релей')) & (cls == '')] = 'спам форм: страницу открыл другой IP'
     fast = g & (V['n_goal'] >= 2) & (V['n_pages'] >= 5) & (V['n_pages'] / V['dur'].clip(lower=1) > 0.4)
     cls[fast & (cls == '')] = 'спам форм: быстрый обход и пачка отправок'
     # смена IP посреди визита: вход со страницы сайта, которую за <= 2 ч до этого открыл ДРУГОЙ IP и получил 404

@@ -65,6 +65,46 @@ def build_templates(R, page_mask, min_children=30):
     return np.array(['/'.join(s) for s in segs], dtype=object)
 
 
+def login_form_fp(g, root):
+    """Отпечаток формы входа служебного раздела: медиана ответов 200 на корень раздела тем, кто не отправлял вход (POST);
+    корня не открывали — самый частый ответ 200 посторонним внутри раздела. Возвращает (размер или 0, допуск).
+    g — запросы раздела (ip, base, method, status, bytes), root — маска корня раздела (форма входа)."""
+    rt = g[root]
+    posters = set(rt.loc[rt['method'] == 'POST', 'ip'])
+    src = rt[(rt['method'] == 'GET') & (rt['status'] == 200) & (rt['bytes'] > 0) & ~rt['ip'].isin(posters)]['bytes']
+    fp = float(src.median()) if len(src) else 0.0
+    if not fp:
+        ok_ = g[(g['status'] == 200) & (g['bytes'] > 0) & ~g['ip'].isin(posters)]['bytes'] // 100 * 100
+        if len(ok_) >= 3 and ok_.value_counts().iloc[0] >= 0.5 * len(ok_): fp = float(ok_.value_counts().index[0] + 50)
+    return fp, max(300.0, 0.05 * fp)
+
+
+def admin_staff(A, admin_rx):
+    """Сотрудники — IP, которые работают в админке движка. Ответ 200 размера формы входа сервер отдаёт любому — это не вход.
+    Сотрудник: успешный вход (POST на вход, и корень админки отдаёт ему не форму) или работа на рабочих страницах
+    админки (заказы, инфоблоки…): ответов 200 не размера формы — от порога (data/thresholds.json), и их больше, чем ответов-форм.
+    A — запросы браузеров к админке: ip, base, method, status, bytes."""
+    from .thresholds import value
+    if not len(A): return []
+    A = A.assign(ip=A['ip'].astype(str), base=A['base'].astype(str))
+    sec = A['base'].map(lambda b: m_.group(0) if (m_ := re.match(admin_rx, b)) else '')   # /bitrix/admin/, /wp-admin/ …
+    A = A.assign(раздел=sec.str.replace(r'[^/]*$', '', regex=True))   # /wp-login.php → / (раздел — папка)
+    lim = value('сотрудник_рабочих_страниц_от', 5)
+    out = []
+    for s_, g in A.groupby('раздел'):
+        root = g['base'].isin([s_, s_ + 'index.php']).values
+        fp, tol = login_form_fp(g, root)
+        form = (g['status'] == 200) & ((g['bytes'] - fp).abs() <= tol) if fp else pd.Series(False, index=g.index)
+        ok = (g['status'] == 200) & (g['bytes'] > 0) & ~form
+        posters = set(g.loc[root & (g['method'] == 'POST').values, 'ip'])
+        logged = set(g.loc[root & ok.values & (g['method'] == 'GET').values, 'ip']) & posters   # вошёл: после POST корень — уже не форма
+        work = ok & ~root & ~g['base'].str.contains(r'login|auth', case=False)
+        n_work, n_form = work.groupby(g['ip']).sum(), form.groupby(g['ip']).sum()
+        busy = n_work[(n_work >= lim) & (n_work > n_form.reindex(n_work.index).fillna(0))].index
+        out += sorted(logged | set(busy))
+    return list(dict.fromkeys(out))
+
+
 def detect_engine(R):
     ok = R['ua_browser'].values & np.isin(R['status'].values, [200, 304])
     bases = R['base'].cat.categories.to_series()
@@ -248,13 +288,30 @@ def _pd_kind(k, v):
     return None
 
 
-def has_pd(q):
+LINK_KEYS = re.compile(r'(?i)(goto|url|uri|redirect|redirect_?url|redirect_?uri|redir|back_?url|return|return_?url|return_?to|next|continue|target|dest|destination|link|to|u|r)')
+
+
+def is_link(k, v):
+    """Параметр-ссылка: ключ goto/url/redirect/backurl/return… или значение похоже на адрес (http…, //…, www.…).
+    Значение ссылки — чужой адрес: «@» и «email=» в нём не данные посетителя."""
+    from urllib.parse import unquote_plus
+    u = unquote_plus(unquote_plus(str(v))).strip()
+    return bool(LINK_KEYS.fullmatch(_key(k)) or re.match(r'(?i)(https?:|//|www\.)', u))
+
+
+def has_pd(q, links=False):
     """Персональные данные — по значениям, а не по имени параметра: телефон, почта или явное поле ФИО/телефона/почты.
     name=Квартал Заречный — это название проекта в загрузке формы, не данные человека.
-    Рекламные и поисковые идентификаторы (clid, yclid, gclid, utm_* …) — никогда не ПД."""
+    Рекламные и поисковые идентификаторы (clid, yclid, gclid, utm_* …) — никогда не ПД.
+    Параметры-ссылки (goto=, url=, backurl=…) не проверяются; если ссылка не закодирована и в ней свой «?», всё после неё —
+    параметры чужого адреса (goto=https://…/@канал?email=…), а не нашего. links=True — проверять и ссылки (маскировка в отчёте:
+    почта в чужой ссылке — тоже чья-то почта)."""
     from urllib.parse import unquote_plus
     for part in str(q).split('&'):
         k, _, v = part.partition('=')
+        if not links and is_link(k, v):
+            if '?' in unquote_plus(v): return False   # дальше — хвост чужого адреса
+            continue
         if _pd_kind(k, unquote_plus(v).strip()): return True
     return False
 

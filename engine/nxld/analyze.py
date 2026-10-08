@@ -1,7 +1,7 @@
 """NXLD: расчёт выбранных блоков по подготовленным таблицам. Результат — results.pkl (листы, сводки, проблемы)."""
 import json, os, pickle, re, warnings
 import numpy as np, pandas as pd
-from . import coverage, profile, anatomy, visits, blocks, brief, recon, findings_meta, findings_text
+from . import coverage, profile, anatomy, visits, blocks, brief, recon, findings_meta, findings_text, ipdb
 from .findings import Findings, calibrate
 
 warnings.filterwarnings('ignore')
@@ -30,7 +30,7 @@ def important_ips(c, S_bots):
                              страна=t['cc'] if t is not None else '', тип_сети=t['nettype'] if t is not None else '',
                              визитов=len(vv), запросов=int(vv['n_req'].sum()), отправок=int(vv['n_goal'].sum()), принято=int(vv['n_conv'].sum()),
                              первый=blocks.dt(vv['start'].min()) if len(vv) else None, последний=blocks.dt(vv['end'].max()) if len(vv) else None,
-                             действие=action if t is None or t['nettype'] in ('хостинг/облако',) else ('проверить/метка' if action.startswith('бан') else action)))
+                             действие=action if t is None or ipdb.is_dc(t['nettype']) else ('проверить/метка' if action.startswith('бан') else action)))
     spam = V[V['subgroup'].str.startswith('спам форм')]['ip'].unique()
     add(spam, 'спам форм', 'бан')
     if 'Подделки' in S_bots: add(S_bots['Подделки']['ip'].astype(str).unique(), 'поддельный робот', 'бан')
@@ -81,17 +81,28 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
+    V, backups_ = visits.mark_backups(V, R, m.get('staff_ips') or [], m.get('admin_regex'))   # бэкапы и дампы с ответом 200 — раньше всех правил
+    V = visits.mark_files_only(V, R, m.get('own_hosts') or [], form_ == 'страница')   # визит из одних файлов: кто (категория) и что делает (тип)
+    V = visits.mark_unrendered(V, R)   # «статика» считается, только если её подгрузила страница визита
+    V = visits.mark_service_checks(V, R)   # /.well-known/ из сетей самих сервисов — «Роботы · проверка сервиса»
+    V = visits.mark_system_agents(V, R)   # агент автозаполнения паролей Apple только с /.well-known/ — «Люди» (system_agents.json)
     V, server_ips = visits.own_server(V, R)   # сервер сайта проверяет сам себя — его IP «Свои — сервер сайта»
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
     c = blocks.Ctx(R, V, E, T, m, inv, G)
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
-    c.addr = classify.build(R, c.human, np.asarray(c.rg == 'Свои'), engines_)   # реестр адресов — общий для всех листов
+    # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе скачивания
+    # того же бэкапа чужими не считались бы утечкой и не шли бы в дела
+    c.addr = classify.build(R, c.human, np.asarray((c.rg == 'Свои') & (np.asarray(c.rsub) != 'скачал бэкап')), engines_)
     F = Findings()
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
-           'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None}
+           'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None,
+           'audience': visits.audience(V),
+           'backups': backups_,   # скачанные бэкапы: кто, что, вывод и улики за обе версии (profiles дописывает снятые обвинения)
+           'suspects': V.loc[V['group'] == 'Подозрительные лица', ['ip', 'ua', 'start', 'subgroup', 'evidence_people', 'evidence_bot']].reset_index(drop=True)
+           if 'evidence_people' in V else pd.DataFrame()}   # «Подозрительные лица»: улики за людей и за бота   # страна основной аудитории и доля людей из неё — на сводку 01
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
           'Маркетинг': lambda: blocks.marketing(c, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)

@@ -7,6 +7,8 @@
   "источники": [
     "https://docs.joomla.org/"
   ],
+  "template_paths": ["^/templates/", "^/media/templates/"],
+  "backup_paths": ["^/administrator/components/com_akeeba(backup)?/backup/", "\\.jpa$"],
   "признаки": [
     "^/components/com_",
     "^/media/jui/",

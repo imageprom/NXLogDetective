@@ -297,7 +297,7 @@ def embedding(c, res, S):
         elif h in set(c.m.get('server_ips', [])): why = 'лежит на нашем сервере (IP сервера сайта)'
         elif re.fullmatch(r'[\d.]+', h): why = 'IP без домена'
         elif re.search(r'dev|test|stage|staging|demo|local', h): why = 'похоже на тестовую копию — сверить IP с нашим сервером'
-        else: why = 'чужой сайт'
+        else: why = 'внешний сайт'
         rows.append({'сайт': h, 'запросов': int(r['запросов']), 'байт': int(r['байт']), 'файлы': files, 'вывод': why,
                      'первый': sub['d'].min() if len(sub) else '', 'последний': sub['d'].max() if len(sub) else ''})
     return pd.DataFrame(rows)
@@ -344,7 +344,7 @@ def scanners(c, S):
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        vm_c = pd.Series(bc).str.contains(VULN, regex=True, case=False).values
+        vm_c = pd.Series(bc).str.contains(VULN, regex=True, case=False).values & ~common.not_probe(c)   # страница сайта и вход движка — не зонд
     vm = vm_c[bcode]
     if not vm.any(): return pd.DataFrame(), pd.DataFrame()
     st = R['status'].values[vm]
@@ -456,7 +456,9 @@ def attacks(c):
         warnings.simplefilter('ignore', UserWarning)
         qa = pd.Series(qc).str.contains(ATTACK, regex=True).values
         ba = pd.Series(bc).str.contains(ATTACK, regex=True).values
-    am = qa[qcode] | ba[bcode]
+    from .blocks import link_probe_rows
+    ssrf = link_probe_rows(c)   # ссылка на чужой сайт в параметре произвольного адреса (/api/fetch?url=…) — зонд подмены адреса
+    am = qa[qcode] | ba[bcode] | ssrf
     if not am.any(): return pd.DataFrame()
     st = R['status'].values
     by = R['bytes'].values
@@ -466,6 +468,7 @@ def attacks(c):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
             kind[pd.Series(full).str.contains(rx, regex=True).values] = nm
+    kind[ssrf[am] & (kind == 'Прочее')] = 'SSRF / подмена адреса'
     X = pd.DataFrame({'b': bcode[am], 'k': kind, 'st': st[am], 'by': by[am], 'ip': _sv(R, 'ip', am), 'q': qc[qcode[am]], 'ts': R['ts'].values[am]})
     # обычные размеры страницы: все ответы 200 этого адреса без атаки. Атака проигнорирована, если её ответ по размеру (±2%)
     # совпадает хоть с одним обычным ответом: сайт показал свою обычную страницу.

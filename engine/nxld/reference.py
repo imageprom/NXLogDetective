@@ -205,6 +205,34 @@ def all_engine_names():
     return [(_read(p) or {}).get('название', '') for p in glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))]
 
 
+def engine_pages(engines, roles=('вход',)):
+    """Шаблоны служебных страниц движков с этими ролями (справочник движков, «адреса»): вход, регистрация, восстановление пароля —
+    страницы сайта, а не зонды; «переадресация» — обработчики переадресации по ссылке. engines=None — все движки справочника."""
+    names = {str(e).lower() for e in engines if e} if engines is not None else None
+    out = []
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        d = _read(path) or {}
+        if names is not None and not ({str(d.get('название', '')).lower(), str(d.get('id', '')).lower()} & names): continue
+        out += [a['шаблон'] for a in d.get('адреса', []) if a.get('роль') in roles]
+    return out
+
+
+def engine_backup_paths():
+    """Шаблоны адресов бэкапов всех движков справочника («backup_paths»): Битрикс /bitrix/backup/, WordPress updraft и ai1wm, Joomla Akeeba."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        out += (_read(path) or {}).get('backup_paths', [])
+    return out
+
+
+def engine_template_paths():
+    """Шаблоны адресов оформления всех движков справочника («template_paths»): /local/templates/, /wp-content/themes/ и т. п."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        out += (_read(path) or {}).get('template_paths', [])
+    return out
+
+
 def load(site_map, paths=(), site=''):
     engines = [e.get('движок') for e in (site_map or {}).get('engines') or [] if isinstance(e, dict)]
     return Reference(engines, paths, site)

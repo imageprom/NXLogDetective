@@ -9,6 +9,8 @@
     "https://woocommerce.com/document/",
     "https://cashruflow.ru/blog/clean-param"
   ],
+  "template_paths": ["^/wp-content/themes/", "^/wp-includes/"],
+  "backup_paths": ["^/wp-content/updraft/", "^/wp-content/ai1wm-backups/", "\\.wpress$"],
   "признаки": [
     "^/wp-content/",
     "^/wp-includes/",

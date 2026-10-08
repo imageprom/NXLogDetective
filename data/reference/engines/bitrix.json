@@ -9,6 +9,8 @@
     "https://dev.1c-bitrix.ru/learning/",
     "https://cashruflow.ru/blog/clean-param"
   ],
+  "template_paths": ["^/local/templates/", "^/bitrix/templates/"],
+  "backup_paths": ["^/bitrix/backup/"],
   "признаки": [
     "^/bitrix/",
     "^/local/(templates|components|js|php_interface)/",
@@ -97,6 +99,16 @@
       "роль": "оформление заказа",
       "что": "типовое оформление заказа",
       "заметка": "путь по умолчанию"
+    },
+    {
+      "шаблон": "^/auth/(index\\.php)?$",
+      "роль": "вход",
+      "что": "страница входа, регистрации и восстановления пароля (компонент system.auth; backurl, forgot_password, register, login)"
+    },
+    {
+      "шаблон": "^/bitrix/(redirect|rk|click)\\.php$",
+      "роль": "переадресация",
+      "что": "обработчик переадресации по ссылке (goto=): счётчик переходов и кликов по баннерам"
     },
     {
       "шаблон": "^/bitrix/tools/public_session\\.php$",

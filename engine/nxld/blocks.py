@@ -2,7 +2,7 @@
 import re
 from collections import Counter, defaultdict
 import numpy as np, pandas as pd
-from . import recon
+from . import recon, ipdb
 from .recon import mask_pd
 from . import operators
 
@@ -186,7 +186,9 @@ def overview(c, F):
         g['запрос'] = g['query'].astype(str).map(mask_pd)
         g['время'] = dt(g['ts'])
         S['GET-отправки'] = g[['время', 'ip', 'base', 'запрос', 'status', 'fam']].head(2000).rename(columns={'base': 'адрес', 'status': 'код', 'fam': 'робот'})
-        ppl = g[g['fam'].astype(str) == '']
+        # ПД — только в запросах людей и своих (формы сайта); боты, которые шлют спам-ссылки, — не утечка данных посетителей
+        grp_ = pd.Series(np.asarray(c.rg), index=R.index).reindex(g.index).astype(str)
+        ppl = g[grp_.isin(['Люди', 'Свои']).values]
         if len(ppl):   # даже один телефон или почта в адресе — уже утечка: адрес оседает в логах, истории и у сервисов аналитики
             F.add('Нагрузка и безопасность', 'Срочно' if len(ppl) >= 5 else 'Важно', 'pd_in_get', 'forms', 'Персональные данные уходят в адресе страницы (GET)',
                   f"{len(ppl)} запросов с {ppl['ip'].nunique()} адресов; адреса: {', '.join(ppl['base'].astype(str).value_counts().index[:3])}",
@@ -199,7 +201,7 @@ def overview(c, F):
          'Отправок целей всего': int(len(P)), 'Принято от людей': int((acc['группа'] == 'Люди').sum()),
          'Принято от ботов': int((acc['группа'] == 'Боты').sum()), 'Принято от своих (тесты)': int((acc['группа'] == 'Свои').sum()),
          'Конверсия людей (визит → принятая цель), %': round((acc['группа'] == 'Люди').sum() / max(1, hv) * 100, 3)}
-    for gname in ['Роботы', 'Системы мониторинга', 'Утилиты', 'Боты', 'Свои']:
+    for gname in ['Роботы', 'Системы мониторинга', 'Утилиты', 'Боты', 'Свои', 'Внешние сайты', 'Подозрительные лица']:
         s[f'Визитов: {gname}'] = int((V['group'] == gname).sum())
     # черновые проблемы
     bot_ok = acc[acc['группа'] == 'Боты']
@@ -732,6 +734,52 @@ def constructs(c):
     return kg
 
 
+def norm_path(p, site_hosts):
+    """Путь обработчика: без схемы и хоста своего сайта, повторные «/» схлопнуты (//bitrix//redirect.php → /bitrix/redirect.php)."""
+    p = str(p)
+    m = re.match(r'(?i)^https?://([^/]+)', p)
+    if m and any(m.group(1).lower().removeprefix('www.') == h.lower().removeprefix('www.') for h in site_hosts): p = p[m.end():]
+    return re.sub(r'/{2,}', '/', p) or '/'
+
+
+def redirect_handlers(cats, site_hosts):
+    """Для каждой категории адреса: нормализованный путь и признак «известный обработчик переадресации движка» (справочник
+    движков, роль «переадресация»: у Битрикса redirect.php, rk.php, click.php)."""
+    from .reference import engine_pages
+    norm = pd.Series([norm_path(p, site_hosts) for p in cats], index=range(len(cats)))
+    rx = engine_pages(None, ('переадресация',))
+    hit = norm.str.contains('|'.join(f'(?:{x})' for x in rx), regex=True, case=False).values if rx else np.zeros(len(cats), bool)
+    return norm.values, hit
+
+
+def link_probe_rows(c):
+    """Запросы с параметром-ссылкой на чужой сайт к адресу, который не обработчик переадресации движка (/api/fetch?url=…,
+    /proxy, /webhook…) — зонд подмены адреса (SSRF и т. п.), а не открытый редирект. Булев массив по строкам R."""
+    R = c.R
+    hosts = c.m.get('site_hosts') or []
+    ext_q = open_redirect_queries(R['query'].cat.categories.to_series(), hosts)
+    if not ext_q.any(): return np.zeros(len(R), bool)
+    _, handler = redirect_handlers(R['base'].cat.categories.astype(str), hosts)
+    return ext_q[R['query'].cat.codes.values] & ~handler[R['base'].cat.codes.values]
+
+
+def open_redirect_queries(qc, site_hosts):
+    """Строки запроса (по категориям) с параметром-ссылкой на чужой сайт: goto=https://другой-сайт/… (recon.is_link)."""
+    from urllib.parse import unquote_plus, urlsplit
+    out = np.zeros(len(qc), bool)
+    own = {h.lower().removeprefix('www.') for h in site_hosts}
+    cand = qc.str.contains(r'(?i)(?:https?(?::|%3A)|//|%2F%2F)', regex=True).values
+    for i in np.flatnonzero(cand):
+        for part in str(qc.iloc[i]).split('&'):
+            k, _, v = part.partition('=')
+            if not v or not recon.is_link(k, v): continue
+            u = unquote_plus(unquote_plus(v)).strip()
+            host = (urlsplit(u if '://' in u else 'http:' + u if u.startswith('//') else 'http://' + u).hostname or '').lower().removeprefix('www.')
+            if host and not any(host == h or host.endswith('.' + h) for h in own):
+                out[i] = True; break
+    return out
+
+
 def load_security(c, F):
     R, V = c.R, c.V
     S = {}
@@ -780,9 +828,9 @@ def load_security(c, F):
         hk = S['Хотлинк']; big = hk[hk['байт'] >= 50 * 1024 ** 2]
         if len(big):
             dev = big[big['ref_host'].astype(str).str.contains(r'dev|test|stage|staging|demo|local', regex=True)]
-            F.add('Нагрузка и безопасность', 'К сведению', 'hotlink', 'site', f'Чужие сайты показывают картинки сайта: {len(big)}',
+            F.add('Нагрузка и безопасность', 'К сведению', 'hotlink', 'site', f'Внешние сайты показывают картинки сайта: {len(big)}',
                   '; '.join(f"{r['ref_host']} — {r['байт'] / 1024 ** 2:.0f} МБ" for _, r in big.head(5).iterrows()) + (f"; тестовые копии: {', '.join(dev['ref_host'].astype(str))}" if len(dev) else ''),
-                  'nginx (защита от хотлинка)', 'Запретить отдачу картинок чужим сайтам; тестовой копии — брать картинки со своего сервера', int(big['байт'].sum() / 1024 ** 2), 'Хотлинк')
+                  'nginx (защита от хотлинка)', 'Запретить отдачу картинок внешним сайтам; тестовой копии — брать картинки со своего сервера', int(big['байт'].sum() / 1024 ** 2), 'Хотлинк')
     # админка
     A = R.loc[R['is_admin'].values, ['ip', 'status', 'method', 'base', 'day', 'nettype', 'cc', 'fam']]
     if len(A):
@@ -809,14 +857,9 @@ def load_security(c, F):
         SE = {'YandexBot', 'Googlebot', 'Bingbot'}
         rows = []
         for sec_, g in GA.groupby('раздел'):
-            root = g[g['base'].isin([sec_, sec_ + 'index.php'])]
-            posters = set(root.loc[root['method'] == 'POST', 'ip'])
-            fp_src = root[(root['method'] == 'GET') & (root['status'] == 200) & (root['bytes'] > 0) & ~root['ip'].isin(posters)]['bytes']
-            fp = float(fp_src.median()) if len(fp_src) else 0.0
-            if not fp:   # корня раздела не открывали — отпечаток формы входа по самому частому ответу 200 посторонним внутри раздела
-                ok_ = g[(g['status'] == 200) & (g['bytes'] > 0) & ~g['ip'].isin(posters)]['bytes'] // 100 * 100
-                if len(ok_) >= 3 and ok_.value_counts().iloc[0] >= 0.5 * len(ok_): fp = float(ok_.value_counts().index[0] + 50)
-            tol = max(300.0, 0.05 * fp)
+            rm_ = g['base'].isin([sec_, sec_ + 'index.php']).values
+            root = g[rm_]
+            fp, tol = recon.login_form_fp(g, rm_)   # отпечаток формы входа — общий с поиском сотрудников (recon.admin_staff)
             r200 = root[(root['status'] == 200) & (root['bytes'] > 0)]
             logged = set(r200.loc[(r200['bytes'] - fp).abs() > tol, 'ip']) if fp else set()
             pr = root[root['method'] == 'POST']
@@ -913,6 +956,7 @@ def load_security(c, F):
     # атаки в параметрах
     qc = R['query'].cat.categories.to_series()
     am = qc.str.contains(ATTACK, regex=True).values[R['query'].cat.codes.values] | vm & bs.str.contains(ATTACK, regex=True).values[R['base'].cat.codes.values]
+    am |= link_probe_rows(c)   # ссылка на чужой сайт в параметре произвольного адреса — зонд SSRF
     AQ = R.loc[am, ['ip', 'base', 'query', 'status', 'bytes', 'day']]
     if len(AQ):
         S['Атаки в параметрах'] = AQ.assign(запрос=AQ['query'].astype(str).str.slice(0, 200)).groupby(['base', 'status'], observed=True).agg(запросов=('ip', 'size'), IP=('ip', 'nunique'), адрес=('ip', 'first'), пример=('запрос', 'first')).sort_values('запросов', ascending=False).reset_index().head(300)
@@ -949,6 +993,28 @@ def load_security(c, F):
         F.add('Нагрузка и безопасность', 'Важно', 'human_prober', 'actors', f'Человек систематически исследует сайт ({hr["ip"].nunique()} адресов)',
               '; '.join(f"{r['ip']} — {r['дней']} дн., {r['первый']}…{r['последний']}: {r['что_пробовал'] or r['признак']}" for _, r in hr.head(5).iterrows()),
               'сервер / настройки защиты', 'Проверить, кто это (свой разработчик или посторонний); постороннего ограничить по IP', int(hr['ip'].nunique()), 'Исследователи сайта')
+    # открытый редирект — только у известных обработчиков переадресации движков (справочник); путь нормализован: один обработчик —
+    # одна карточка. Ссылка в параметре у произвольного адреса — зонд SSRF (link_probe_rows, «Атаки в параметрах»).
+    # В логе нет заголовка Location: 3xx может быть переадресацией http → https — ответы того же размера, что у обычной переадресации
+    # сайта (3xx на адреса без ссылки в параметрах), не считаются.
+    hosts_ = c.m.get('site_hosts') or []
+    ext_q = open_redirect_queries(qc, hosts_)
+    if ext_q.any():
+        bc_ = R['base'].cat.codes.values
+        norm_, handler_ = redirect_handlers(R['base'].cat.categories.astype(str), hosts_)
+        ext_r = ext_q[R['query'].cat.codes.values]
+        r3 = np.isin(st, [301, 302, 303, 307, 308])
+        sz = pd.Series(R['bytes'].values[r3 & ~ext_r]).value_counts()
+        https_sz = set(sz[sz >= 3].index)   # обычная переадресация сайта (на https, на адрес со «/»)
+        orx = ext_r & handler_[bc_] & r3 & ~np.isin(R['bytes'].values, list(https_sz))
+        OR = pd.DataFrame({'h': norm_[bc_[orx]], 'q': R['query'].astype(str).values[orx]})
+        n_h = pd.Series(norm_[bc_[ext_r & handler_[bc_]]]).value_counts()
+        for h_, g_ in OR.groupby('h'):
+            F.add('Нагрузка и безопасность', 'Важно', 'open_redirect', h_, f'Вероятно, открытый редирект: {h_} переадресует на внешние сайты',
+                  f"{len(g_)} ответов 3xx на запросы со ссылкой на внешний сайт, например {h_}?{g_['q'].iloc[0][:150]}; всего таких запросов — {int(n_h.get(h_, 0))}. "
+                  f"Вероятно: в логе нет заголовка Location, а 3xx бывает и переадресацией http → https — ответы того же размера, что у обычной переадресации сайта, не считались",
+                  'код сайта / настройки движка', 'Открыть пример из лога и проверить, куда ведёт переадресация; переадресовывать только на свои адреса или по списку доверенных; '
+                  'в Битриксе — включить проверку подписи ссылок в redirect.php', len(g_), '')
     tok = qc.str.contains(recon.SECRET_RX, regex=True).values[R['query'].cat.codes.values]   # список секретов — общий с маскировкой (recon)
     if tok.sum():
         S['Токены в адресах'] = R.loc[tok, ['base', 'query']].assign(параметр=lambda d: d['query'].astype(str).str.extract(recon.SECRET_RX)[0]).groupby(['base', 'параметр'], observed=True).size().sort_values(ascending=False).head(100).reset_index(name='запросов')
@@ -1024,7 +1090,7 @@ def bots(c, F, check_ips=()):
         fq['org'] = T.reindex(fq['ip'])['org'].values
         S['Подделки'] = fq
         F.add('Боты', 'Важно', 'fake_crawlers', 'all', f"Поддельные поисковые роботы: {fq['ip'].nunique()} IP", f"Представлялись: {topn(fq['представлялся'])}; сети: {topn(fq['org'].astype(str))}",
-              'nginx (бан по IP/подсети хостингов)', 'Заблокировать', int(fq['ip'].nunique()), 'Подделки')
+              'nginx (бан по IP/подсети дата-центров)', 'Заблокировать', int(fq['ip'].nunique()), 'Подделки')
     ex = V[V['subgroup'] == 'явные (не браузер)']
     if len(ex):
         S['Явные боты'] = ex.groupby('ua').agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), запросов=('n_req', 'sum'), сети=('nettype', lambda s: topn(s, 2))).sort_values('запросов', ascending=False).head(300).reset_index()
@@ -1035,7 +1101,7 @@ def bots(c, F, check_ips=()):
     cls = np.where((B['n_goal'] > 0) & (B['n_pages'] == 0), 'спам форм: отправка без просмотра страниц', cls)
     cls = np.where((B['n_goal'] > 0) & e404 & (B['n_pages'] <= 4) & (cls == ''), 'спам форм: битый адрес → главная → форма', cls)
     cls = np.where((B['n_goal'] >= 3) & (B['dur'] < 120) & (cls == ''), 'спам форм: пачка отправок', cls)
-    cls = np.where((B['n_pages'] >= 10) & (B['n_static'] == 0) & (cls == ''), 'парсер', cls)
+    cls = np.where((B['n_pages'] >= 10) & (B['n_static'] == 0) & (cls == ''), 'парсер страниц', cls)
     cls = np.where(B['ua'].str.contains('HeadlessChrome|Puppeteer|Playwright|PhantomJS|Lightpanda', regex=True) & (cls == ''), 'headless', cls)
     cls = np.where((B['subgroup'] == 'маскирующиеся: без загрузки ресурсов') & (cls == ''), 'без загрузки ресурсов', cls)
     B['класс'] = cls
@@ -1072,13 +1138,14 @@ def bots(c, F, check_ips=()):
     for o in ops:
         if o['оператор'].startswith('Оператор') and o['отправок'] > 0:
             F.add('Боты', 'Срочно' if o['принято'] else 'Важно', 'operator', o['_key'], f"{o['оператор']}: {o['IP_спама']} IP спама форм" + (f" и {o['IP_разведки']} IP разведки" if o['IP_разведки'] else '') + ', связанных между собой',
-                  f"Отправок {o['отправок']}, принято {o['принято']}; дни: {o['дни']}; сети: {o['сети']}; улики: {o['улики']}; общие битые входы: {o['битые_входы']}", 'защита форм + бан хостинговых подсетей', 'Защитить формы, отсеять заявки', o['принято'], 'Операторы')
+                  f"Отправок {o['отправок']}, принято {o['принято']}; дни: {o['дни']}; сети: {o['сети']}; улики: {o['улики']}; общие битые входы: {o['битые_входы']}", 'защита форм + бан подсетей дата-центров', 'Защитить формы, отсеять заявки', o['принято'], 'Операторы')
     # сети ботов
     bv = V[V['group'] == 'Боты']
     bn = bv.groupby(['asn', 'nettype']).agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), подгруппы=('subgroup', lambda s: topn(s, 2))).sort_values('IP', ascending=False).reset_index()
     bn['сеть'] = bn['asn'].map(c.T.drop_duplicates('asn').set_index('asn')['org'])
-    bn['что_делать_с_адресами'] = bn['nettype'].map({'хостинг/облако': 'можно банить подсетью', 'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
+    bn['что_делать_с_адресами'] = bn['nettype'].map({'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
                                                     'RU провайдер доступа': 'только по поведению', 'зарубежный провайдер доступа': 'по аудитории сайта'}).fillna('по ситуации')
+    bn.loc[bn['nettype'].astype(str).map(ipdb.is_dc), 'что_делать_с_адресами'] = 'можно банить подсетью'
     S['Бот-сети'] = bn.head(300)
     # проверка присланных IP
     if check_ips:

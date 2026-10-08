@@ -47,7 +47,7 @@ def status(verdict, nettype):
 
 def valid_until(start, nettype):
     """Домашние и мобильные адреса меняются быстро — короткий срок; хостинги — дольше."""
-    days = 90 if 'хостинг' in str(nettype) else 30
+    days = 90 if str(nettype).startswith('дата-центр') else 30
     return ts(pd.Timestamp(start) + timedelta(days=days))
 
 
@@ -167,7 +167,7 @@ def build(res, site, version='0.2.0'):
                     a['belongs_to_refs'] = [seen_as[asn]['id']]
                 seen_ip[ip] = a; objs.append(a); n_ip += 1
             st_ = status(r['приговор'], r['тип_сети'])
-            groups.setdefault((st_, 90 if 'хостинг' in str(r['тип_сети']) else 30), []).append(r)
+            groups.setdefault((st_, 90 if str(r['тип_сети']).startswith('дата-центр') else 30), []).append(r)
         for (st_, days), rs in groups.items():
             for k0 in range(0, len(rs), MAX_IP_PATTERN):
                 part = rs[k0:k0 + MAX_IP_PATTERN]

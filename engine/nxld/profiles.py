@@ -48,7 +48,8 @@ def ip_features(c, res):
     st = R['status'].values
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        vm = bc.str.contains(VULN, regex=True, case=False).values[bcode]
+        from .common import not_probe
+        vm = (bc.str.contains(VULN, regex=True, case=False).values & ~not_probe(c))[bcode]   # страница сайта и вход движка — не зонд
         ab = bc.str.contains(ATTACK, regex=True).values[bcode]
         aq = R['query'].cat.categories.to_series().astype(str).str.contains(ATTACK, regex=True).values[R['query'].cat.codes.values]
         adm = bc.str.contains(ADMIN_RX, regex=True).values[bcode]
@@ -175,6 +176,15 @@ def build(c, res):
     grp = P['группа'].reindex(F.index).fillna('')
     strong = (F['leaks'] > 0) | (F['attacks'] > 0) | (F['probes'] >= 10) | (F['login_post'] >= 5) | (F['admin'] >= 5) | (F['odd'] >= 3) | (F['maxpm'] >= 30)
     cand = (grp.isin(['Боты', 'Утилиты']) | F.index.isin(list(ops)) | (strong & ~grp.isin(['Свои']))) & ~F.index.isin(list(staff))
+    cand &= ~F.index.isin(list(common.hotlink_ips(c)))   # хотлинк — посетители внешнего сайта: в дела, меры и STIX не идут
+    cand &= ~F.index.isin(list(common.service_check_ips(c)))   # проверка сервиса (/.well-known/ из сети сервиса) — не разведка
+    # «Подозрительные лица» и «Свои · скачал бэкап» — без дел и обвинений; предъявленные правилами обвинения снимаются (факт — в res['backups'])
+    own_bk = common.own_backup_ips(c)
+    off = (common.suspect_ips(c) | own_bk)
+    lifted = set(F.index[cand & strong & F.index.isin(list(off))])
+    for b_ in res.get('backups') or []:
+        b_['обвинения_сняты'] = b_['ip'] in lifted and b_['ip'] in own_bk
+    cand &= ~F.index.isin(list(off))
     C = F[cand].copy()
     if not len(C): return dict(дела=[], состав=pd.DataFrame(), сигнатуры=pd.DataFrame())
     C['key'] = keys_of(C.index, P, ops)
@@ -217,6 +227,8 @@ def build(c, res):
     Vip_ = V['ip'].astype(str)   # один раз на все дела: на 2,5 млн визитов это минуты на каждое дело
     orgV_ = Vip_.map(P['организация'])
     Vhuman_ = (V['group'] == 'Люди').values
+    from .common import not_probe
+    site_pages = set(R['base'].cat.categories.astype(str)[not_probe(c)])   # страница сайта и вход движка — не зонд (в примерах обвинений тоже)
     for key, g in C.groupby('key'):
         agg = {f: (g[f].max() if f == 'maxpm' else g[f].sum()) for f in FEATURES if f in g}
         orgs = P['организация'].reindex(g.index).replace('', np.nan).fillna(P['сеть'].reindex(g.index))
@@ -236,7 +248,7 @@ def build(c, res):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
             bs = sub['base'].astype(str)
-            ctx['top_probes'] = top_paths(bs.str.contains(VULN, regex=True, case=False).values)
+            ctx['top_probes'] = top_paths(bs.str.contains(VULN, regex=True, case=False).values & ~bs.isin(site_pages).values)
             ctx['top_attacks'] = top_paths((bs.str.contains(ATTACK, regex=True) | sub['query'].astype(str).str.contains(ATTACK, regex=True)).values)
             ctx['top_login'] = top_paths((bs.str.contains(LOGIN_RX, regex=True) & (sub['method'].astype(str) == 'POST')).values)
         lk = getattr(c, 'leaks', None)
@@ -345,10 +357,12 @@ def build(c, res):
     for x in cases: x['сообщники'] = [(d, names.get(d, ''), why) for d, why in x['сообщники']]
     # состав по IP
     rows = []
+    ppl = common.people_ips(c)
     for x in cases:
         for ip in x['ips']:
             rows.append({'дело': x['дело'], 'кличка': x['кличка'], 'ip': ip, 'подсеть': subnet(ip), 'сеть': P['организация'].get(ip, ''), 'страна': P['страна'].get(ip, ''),
-                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': common.dmy(F.at[ip, 't0']), 'последний': common.dmy(F.at[ip, 't1'])})
+                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': common.dmy(F.at[ip, 't0']), 'последний': common.dmy(F.at[ip, 't1']),
+                         'пометка': 'есть человеческие визиты' if ip in ppl else ''})
     S = pd.DataFrame([dict(id=x['сигнатура']['id'], правило=x['сигнатура']['правило'], вид=x['вид'], дело=x['дело'], кличка=x['кличка'],
                            проверка=x['сигнатура']['проверка'], ложных=x['сигнатура']['ложных'], IP=x['состав']['IP'], запросов=x['запросов']) for x in cases])
     learn_signatures(cases, site, c)
@@ -373,6 +387,7 @@ def measures_by_ip(c, res, cases, P, F):
                          первый=common.dmy(F.at[ip, 't0']) if ip in F.index and pd.notna(F.at[ip, 't0']) else '',
                          последний=common.dmy(F.at[ip, 't1']) if ip in F.index and pd.notna(F.at[ip, 't1']) else ''))
     seen = set()
+    ppl = common.people_ips(c)   # за IP покупатели — не блокировать и не ограничивать (STIX и CSV — из этой же таблицы)
     for x in cases:
         main = x['обвинения'][0]['статья']
         people = x['сигнатура']['ложных']
@@ -380,7 +395,8 @@ def measures_by_ip(c, res, cases, P, F):
             if ip in seen: continue
             seen.add(ip)
             mobile = 'мобильн' in str(P['сеть'].get(ip, ''))
-            if x['важность'] == 'К сведению': v, why = 'наблюдать', f'{main}; дело к сведению'
+            if ip in ppl: v, why = 'не трогать', f'{main}; есть человеческие визиты — в деле только как улика'
+            elif x['важность'] == 'К сведению': v, why = 'наблюдать', f'{main}; дело к сведению'
             elif mobile: v, why = 'ограничить частоту', f'{main}; мобильный оператор — за одним IP много абонентов'
             elif people: v, why = 'ограничить частоту', f'{main}; из этой сети ходят люди ({nf(people)} визитов)'
             else: v, why = 'заблокировать', f'{main}; людей из этой сети нет'

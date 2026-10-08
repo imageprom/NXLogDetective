@@ -81,6 +81,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
+    V = visits.mark_files_only(V, R)   # визит из одних файлов, без страниц, — не люди (хотлинк, скрапер картинок)
     V, server_ips = visits.own_server(V, R)   # сервер сайта проверяет сам себя — его IP «Свои — сервер сайта»
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
@@ -91,7 +92,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     F = Findings()
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
-           'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None}
+           'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None,
+           'audience': visits.audience(V)}   # страна основной аудитории и доля людей из неё — на сводку 01
     fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
           'Маркетинг': lambda: blocks.marketing(c, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)

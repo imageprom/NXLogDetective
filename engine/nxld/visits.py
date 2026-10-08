@@ -445,6 +445,56 @@ def actor_kind(V, R, m, probe):
     return kind
 
 
+def impossible_ua(ua, year=None):
+    """Невозможная версия в User-Agent — признак генератора: Windows 95/98/NT 4, iPhone OS старше порога, Gecko/дата сборки из будущего."""
+    from .thresholds import value
+    ua = str(ua)
+    if re.search(r'Windows 95|Windows 98|Win 9x|Windows NT 4\.0', ua): return True
+    m = re.search(r'(?:iPhone|CPU) OS (\d+)_', ua)
+    if m and int(m.group(1)) < value('ua_ios_не_старше', 7): return True
+    m = re.search(r'Gecko/(20\d{2})(\d{2})(\d{2})\b', ua)   # Firefox пишет Gecko/20100101; дата сборки после года лога — выдумана
+    if m and year and int(m.group(1)) > year: return True
+    return False
+
+
+def mark_files_only(V, R):
+    """Визит без единой страницы, только файлы (без POST и подгружаемых блоков), — не «Люди»: хотлинк, скрапер картинок, превью.
+    Исключение — продолжение визита человека: файлы подгружены страницей сайта (реферер), и тот же IP с тем же браузером
+    смотрел страницы в соседнем визите (пауза больше 30 минут разрезала визит)."""
+    V = V.copy()
+    m = (V['group'] == 'Люди') & (V['n_pages_raw'] == 0) & (V['n_post'] == 0) & (V['n_embedded'] == 0) & (V['n_static'] > 0)
+    if not m.any(): return V
+    vid = R['vid'].values
+    ext_ref = ~R['ref_internal'].values.astype(bool) & ~R['ref'].astype(str).isin(['-', '']).values
+    own_ref = pd.Series(R['ref_internal'].values.astype(bool)).groupby(vid).all()
+    any_ext = pd.Series(ext_ref).groupby(vid).any()
+    only4 = pd.Series((R['status'].values >= 400) & (R['status'].values < 500)).groupby(vid).all()
+    key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
+    browsing = set(key[(V['group'] == 'Люди') & (V['n_pages'] > 0)])
+    cont = m & own_ref.reindex(V.index).fillna(False).values & key.isin(browsing)
+    m &= ~cont
+    year = int(pd.to_datetime(V['end'].max(), unit='s').year)
+    imp = pd.Series([impossible_ua(u, year) for u in V['ua']], index=V.index)
+    sub = np.select([any_ext.reindex(V.index).fillna(False).values, imp.values,
+                     V['nettype'].isin(['хостинг/облако', 'VPN/прокси-релей']).values, only4.reindex(V.index).fillna(False).values,
+                     (V['entry_ref'].isin(['-', ''])).values],
+                    ['хотлинк: файлы для чужого сайта', 'генератор User-Agent', 'скрапер с хостинга', 'только ошибки 4xx', 'прямой заход'], 'прочие')
+    V.loc[m, 'group'] = 'Боты'
+    V.loc[m, 'subgroup'] = 'файлы без страниц: ' + pd.Series(sub, index=V.index)[m]
+    return V
+
+
+def audience(V):
+    """Страна основной аудитории — самая частая среди визитов людей — и доля людей из неё; предупреждение, если доля ниже порога."""
+    from .thresholds import value
+    H = V[V['group'] == 'Люди']
+    if not len(H): return None
+    cc = H['cc'].astype(str).replace('', '?').value_counts()
+    share = round(float(cc.iloc[0]) / len(H) * 100, 1)
+    lim = value('люди_из_основной_страны_%', 50)
+    return dict(страна=cc.index[0], доля=share, порог=lim, предупреждение=share < lim)
+
+
 def mark_form_spam(V, R):
     """Поведенческие признаки спама форм (универсальные). Переводит такие визиты в группу «Боты»."""
     V = V.copy()

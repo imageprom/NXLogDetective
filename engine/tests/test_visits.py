@@ -51,3 +51,40 @@ def test_audience_warning():
     assert a['страна'] == 'RU' and a['доля'] == 40.0 and a['предупреждение']
     V.loc[4:6, 'cc'] = 'RU'
     assert not audience(V)['предупреждение']
+
+
+# ---- задача #3: сканер со «статикой» ----
+STRONG = [f'/{p}' for p in ('.env', '.git/config', '.env.local', '.env.prod', 'wp-config.php.bak', '.aws/credentials', 'phpinfo.php', '.git/HEAD',
+                            'server-status', 'wp-login.php', 'xmlrpc.php', '.svn/entries', 'backup.sql', 'dump.sql', 'wp-admin/', 'phpmyadmin/')]
+FOREIGN_STATIC = [f'/wp-includes/js/jquery/jquery{i}.js' for i in range(8)] + [f'/media/jui/js/bootstrap{i}.min.js' for i in range(8)]
+
+
+def cloud_ip(n, net):
+    return f'34.{net}.10.{n + 5}'   # облако
+
+
+def scanner_visit(log, ip, t0, paths, static_ref='-', static=FOREIGN_STATIC):
+    """Отпечаток визита: 256 путей-зондов + 16 «статики» чужого движка, ни одна не подгружена страницей визита."""
+    k = 0
+    for p in paths:
+        log.line(ip, t0 + timedelta(seconds=k), p, 404); k += 1
+    for s in static:
+        log.line(ip, t0 + timedelta(seconds=k), s, 404, ref=static_ref); k += 1
+    log.line(ip, t0 + timedelta(seconds=k), '/', 200)   # одна живая страница — «веер 404» не срабатывает
+
+
+def test_scanner_with_static_is_not_people(tmp_path):
+    log = synth.Log()
+    log.people()
+    strong = [STRONG[i % 16] if i < 16 else f'/{i}{STRONG[i % 16]}' for i in range(256)]
+    unknown = [f'/components/com_{w}{i}/' for i, w in zip(range(256), ['jce', 'fabrik', 'media', 'user'] * 64)]   # чужой движок, путей нет в probes.json
+    for n in range(5):   # однозначные зонды + статика без реферера-страницы
+        scanner_visit(log, cloud_ip(n, 90), synth.T0 + timedelta(days=n, hours=2), strong)
+    for n in range(5):   # неизвестные справочнику зонды + статика с реферером-страницей, которую визит не открывал
+        scanner_visit(log, cloud_ip(n, 120), synth.T0 + timedelta(days=n, hours=4), unknown, static_ref='https://site.ru/catalog/',
+                      static=[f'/media/jui/js/bootstrap{i}.min.js' for i in range(16)])   # статика Joomla — её нет в probes.json
+    res, _, _ = synth.run(log, str(tmp_path))
+    G = res['sheets']['Общий анализ']['Люди и боты']
+    assert int(G.loc[G['группа'] == 'Люди', 'визитов'].sum()) == 7 * 20, G   # обычные люди со статикой — по-прежнему люди
+    sc = G[G['подгруппа'].astype(str).str.startswith('сканер')]
+    assert int(sc['визитов'].sum()) >= 5, G   # однозначные зонды — «Боты: сканер», независимо от статики

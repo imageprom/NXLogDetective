@@ -390,8 +390,46 @@ def mark_scanners(V, R, engines=()):
             why[key.isin(bad_) & (why == '').values] = sig.get('fan_404_ip', {}).get('название', 'Веер 404 с одного адреса')
     m = (why != '') & (V['group'] == 'Люди')
     kind = actor_kind(V, R, m, strong | weak)
+    # визит с N и больше запросов к однозначным зондам — сканер, сколько бы «статики» он ни грузил (N — data/thresholds.json)
+    from .thresholds import value
+    ns = pd.Series(np.bincount(vid[strong], minlength=int(vid.max()) + 1 if len(vid) else 0)).reindex(V.index).fillna(0)
+    many = m & (ns >= value('зондов_в_визите_сканер_от', 10))
+    kind[many] = _actors()['выводы']['сканер']
     V.loc[m, 'group'] = 'Боты'
     V.loc[m, 'subgroup'] = kind[m] + ': ' + why[m].str.lower()
+    return V
+
+
+def _actors():
+    import json, os
+    return json.load(open(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference', 'actors.json')), encoding='utf-8'))
+
+
+def rendered_static(R):
+    """Сколько файлов в каждом визите подгрузила страница этого же визита: реферер — страница сайта, открытая в визите.
+    Только такая «статика» — признак, что браузер отрисовал страницу; файлы без реферера или со ссылкой на чужую страницу — нет."""
+    vid = R['vid'].values
+    cats = R['base'].cat.categories
+    codes = R['base'].cat.codes.values.astype(np.int64)
+    L = len(cats) + 1
+    opened = ~R['is_static'].values & np.isin(R['method'].values, ['GET', 'HEAD'])   # страницы визита (с повторами и переадресациями)
+    pages = np.unique(vid[opened].astype(np.int64) * L + codes[opened])
+    st = R['is_static'].values & R['ref_internal'].values.astype(bool)
+    rp = R['ref_path'].astype(str).values[st]
+    rc = pd.Index(cats).get_indexer(rp).astype(np.int64)
+    ok = (rc >= 0) & np.isin(vid[st].astype(np.int64) * L + rc, pages)
+    return pd.Series(vid[st][ok]).value_counts()
+
+
+def mark_unrendered(V, R):
+    """«Люди» со страницами, но без единого файла, подгруженного страницей визита, — не браузер, который отрисовал страницу
+    (сканер со «статикой» чужого движка). Так же, как визит без загрузки ресурсов вообще."""
+    V = V.copy()
+    m = (V['group'] == 'Люди') & (V['n_pages'] >= 1) & (V['n_static'] > 0) & (V['n_embedded'] == 0)
+    if not m.any(): return V
+    m &= rendered_static(R).reindex(V.index).fillna(0).values == 0
+    V.loc[m, 'group'] = 'Боты'
+    V.loc[m, 'subgroup'] = 'маскирующиеся: без загрузки ресурсов'
     return V
 
 

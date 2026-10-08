@@ -48,7 +48,8 @@ def ip_features(c, res):
     st = R['status'].values
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        vm = bc.str.contains(VULN, regex=True, case=False).values[bcode]
+        from .common import not_probe
+        vm = (bc.str.contains(VULN, regex=True, case=False).values & ~not_probe(c))[bcode]   # страница сайта и вход движка — не зонд
         ab = bc.str.contains(ATTACK, regex=True).values[bcode]
         aq = R['query'].cat.categories.to_series().astype(str).str.contains(ATTACK, regex=True).values[R['query'].cat.codes.values]
         adm = bc.str.contains(ADMIN_RX, regex=True).values[bcode]
@@ -217,6 +218,8 @@ def build(c, res):
     Vip_ = V['ip'].astype(str)   # один раз на все дела: на 2,5 млн визитов это минуты на каждое дело
     orgV_ = Vip_.map(P['организация'])
     Vhuman_ = (V['group'] == 'Люди').values
+    from .common import not_probe
+    site_pages = set(R['base'].cat.categories.astype(str)[not_probe(c)])   # страница сайта и вход движка — не зонд (в примерах обвинений тоже)
     for key, g in C.groupby('key'):
         agg = {f: (g[f].max() if f == 'maxpm' else g[f].sum()) for f in FEATURES if f in g}
         orgs = P['организация'].reindex(g.index).replace('', np.nan).fillna(P['сеть'].reindex(g.index))
@@ -236,7 +239,7 @@ def build(c, res):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
             bs = sub['base'].astype(str)
-            ctx['top_probes'] = top_paths(bs.str.contains(VULN, regex=True, case=False).values)
+            ctx['top_probes'] = top_paths(bs.str.contains(VULN, regex=True, case=False).values & ~bs.isin(site_pages).values)
             ctx['top_attacks'] = top_paths((bs.str.contains(ATTACK, regex=True) | sub['query'].astype(str).str.contains(ATTACK, regex=True)).values)
             ctx['top_login'] = top_paths((bs.str.contains(LOGIN_RX, regex=True) & (sub['method'].astype(str) == 'POST')).values)
         lk = getattr(c, 'leaks', None)

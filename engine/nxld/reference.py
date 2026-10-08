@@ -205,6 +205,18 @@ def all_engine_names():
     return [(_read(p) or {}).get('название', '') for p in glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))]
 
 
+def engine_pages(engines, roles=('вход',)):
+    """Шаблоны служебных страниц найденных движков с этими ролями (справочник движков, «адреса»): вход, регистрация, восстановление пароля.
+    Такие адреса — страницы сайта, а не зонды."""
+    names = {str(e).lower() for e in engines if e}
+    out = []
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        d = _read(path) or {}
+        if not ({str(d.get('название', '')).lower(), str(d.get('id', '')).lower()} & names): continue
+        out += [a['шаблон'] for a in d.get('адреса', []) if a.get('роль') in roles]
+    return out
+
+
 def load(site_map, paths=(), site=''):
     engines = [e.get('движок') for e in (site_map or {}).get('engines') or [] if isinstance(e, dict)]
     return Reference(engines, paths, site)

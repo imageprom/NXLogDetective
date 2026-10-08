@@ -344,7 +344,7 @@ def scanners(c, S):
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        vm_c = pd.Series(bc).str.contains(VULN, regex=True, case=False).values
+        vm_c = pd.Series(bc).str.contains(VULN, regex=True, case=False).values & ~common.not_probe(c)   # страница сайта и вход движка — не зонд
     vm = vm_c[bcode]
     if not vm.any(): return pd.DataFrame(), pd.DataFrame()
     st = R['status'].values[vm]

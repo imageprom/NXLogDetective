@@ -113,6 +113,13 @@ def build(R, human, staff=None, engines=()):
     wk = F['адрес'].str.startswith('/.well-known/') & ~F['группа'].isin(['Служебные (.well-known)', 'Подтверждение прав'])
     F['чужое_в_well_known'] = wk & (ok_any > 0)
     F['людям'] = ok > 0   # полный ответ получали люди или свои — это адрес сайта, а не находка сканера
+    # зонд — путь, которого на сайте нет, или путь чужого движка. Неоднозначный «зонд», который отвечает людям и своим 2xx
+    # как обычная страница, — страница сайта; страницы входа, регистрации и восстановления пароля движка сайта — тоже
+    from .reference import engine_pages
+    eng = engine_pages(engines)
+    svc = cats.str.contains('|'.join(f'(?:{x})' for x in eng), regex=True, case=False).values if eng else np.zeros(L, bool)
+    F['служебная_страница'] = svc
+    F.loc[(F['зонд'] == 'неоднозначный') & (F['людям'] | svc), 'зонд'] = ''
     F['раздел'] = cats.str.extract(r'^(/[^/]*/?)')[0].values
     return F
 

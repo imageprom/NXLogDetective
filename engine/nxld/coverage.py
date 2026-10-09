@@ -127,6 +127,7 @@ REGISTRY = [
     ('operator', 'Оператор спама форм', 'Боты', _has_forms, None),
     ('fake_crawlers', 'Подделки поисковых роботов', 'Боты', None, sig_flood),
     ('unknown_robot', 'Неопознанные роботы и мониторинги', 'Боты', None, None),
+    ('monitor_denied', 'Система мониторинга сама получает отказы фильтра', 'Боты', None, None),
     ('ad_landing_errors', 'Реклама ведёт на ошибки', 'Маркетинг', _has_ads, None),
     ('campaign_zero', 'Кампании без заявок', 'Маркетинг', _has_ads, None),
     ('placements_off', 'Площадки без заявок', 'Маркетинг', _has_ads, None),

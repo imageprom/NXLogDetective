@@ -1095,6 +1095,18 @@ def bots(c, F, check_ips=()):
         heavy = fam[fam['категория'].isin(['SEO-сервис']) & (fam['запросов'] >= 20000)]
         for f, r in heavy.iterrows():
             F.add('Нагрузка и безопасность', 'Важно', 'heavy_robot', f, f'SEO-робот {f} создаёт заметную нагрузку', f"{int(r['запросов'])} запросов, {r['МБ']} МБ", 'robots.txt (Crawl-delay/Disallow) или nginx', 'Ограничить или запретить', int(r['запросов']), 'Кто нагружает', also=('Боты',))
+    # система мониторинга (опознанная или по ритму) сама получает отказы фильтра: шлёт ложные тревоги или не видит, что сайт работает
+    from .thresholds import value
+    mm = np.asarray(c.rg == 'Системы мониторинга')
+    if mm.any():
+        MQ = pd.DataFrame({'sys': np.asarray(c.rsub).astype(str)[mm], 'st': R['status'].values[mm]})
+        for sys_, g in MQ.groupby('sys'):
+            den = g['st'].isin([403, 429, 444, 503])
+            if len(g) >= value('monitor_denied_min_checks', 20) and den.mean() >= value('monitor_denied_share', 0.2):
+                F.add('Боты', 'К сведению', 'monitor_denied', sys_, f'Система мониторинга {sys_} получает отказы сайта',
+                      f"{sys_}: {len(g)} проверок, отказов {round(den.mean() * 100):d}% ({int(den.sum())}); коды: {topn(g.loc[den, 'st'])}",
+                      'фильтр сервера / настройки мониторинга',
+                      'Добавить адреса мониторинга в исключения фильтра или отключить мониторинг, если он не нужен', int(den.sum()), '')
     # подделки
     fk = V[V['subgroup'] == 'подделки роботов']
     if len(fk):

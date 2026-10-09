@@ -1,5 +1,5 @@
 {
-  "description": "Системные агенты на устройстве человека: сами запрашивают стандартные файлы /.well-known/ (менеджер паролей, связь приложения с сайтом). Визит такого агента только к стандартным /.well-known/ — «Люди»; если тот же UA просит что-то ещё — обычные правила.",
+  "description": "Системные агенты и встроенные браузеры приложений на устройстве человека. scope «well_known» (по умолчанию): визит агента только к стандартным /.well-known/ — «Люди», если тот же UA просит что-то ещё — обычные правила. scope «any_visit»: любой визит с таким UA — «Люди» и дальше по правилам для людей (сканеры, «только файлы»); «Свои» — только по правилам о сотрудниках.",
   "to_verify": "проверить заново на новых данных",
   "agents": [
     {
@@ -8,6 +8,13 @@
       "ua_pattern": "com\\.apple\\.AuthenticationServicesCore\\.AuthenticationServicesAgent|AuthenticationServicesAgent/|^swcd \\(|com\\.apple\\.Passwords",
       "paths": ["passkey-endpoints", "apple-app-site-association", "change-password", "webcredentials"],
       "source": "https://developer.apple.com/documentation/xcode/supporting-associated-domains"
+    },
+    {
+      "key": "bitrix24_app",
+      "title": "мобильное приложение Битрикс24 (встроенный браузер: ссылка из CRM или чата портала)",
+      "ua_pattern": "^bitrix24app/|BitrixMobile/",
+      "scope": "any_visit",
+      "to_verify": "проверить заново на новых данных"
     }
   ]
 }

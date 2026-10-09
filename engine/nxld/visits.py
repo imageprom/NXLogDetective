@@ -828,6 +828,20 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     return V
 
 
+def mark_app_agents(V):
+    """Встроенный браузер приложения на устройстве человека (system_agents.json, scope «any_visit»: мобильное приложение
+    Битрикс24) — любой визит с таким UA — «Люди»; дальше работают обычные правила для людей. «Свои» не трогаются."""
+    import json, os
+    ref = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'reference'))
+    A = [a for a in json.load(open(os.path.join(ref, 'system_agents.json'), encoding='utf-8')).get('agents', []) if a.get('scope') == 'any_visit']
+    if not A: return V
+    V = V.copy()
+    m = V['ua'].astype(str).str.contains('|'.join(f"(?:{a['ua_pattern']})" for a in A), regex=True).values & (V['group'] != 'Свои').values
+    V.loc[m, 'group'] = 'Люди'
+    V.loc[m, 'subgroup'] = ''
+    return V
+
+
 def mark_system_agents(V, R):
     """Системный агент на устройстве человека (data/reference/system_agents.json: автозаполнение паролей Apple и родственные),
     который в визите запрашивает только стандартные /.well-known/ (extensions.json, «Служебные (.well-known)»), — «Люди».
@@ -837,6 +851,7 @@ def mark_system_agents(V, R):
     A = json.load(open(os.path.join(ref, 'system_agents.json'), encoding='utf-8')).get('agents', [])
     ext = json.load(open(os.path.join(ref, 'extensions.json'), encoding='utf-8'))
     rx = next((g['шаблон'] for g in ext.get('по_адресу', []) if g.get('группа') == 'Служебные (.well-known)'), None)
+    A = [a for a in A if a.get('scope', 'well_known') == 'well_known']
     if not A or rx is None: return V
     V = V.copy()
     only_wk = pd.Series(_cat_mask(R, rx)[R['base'].cat.codes.values]).groupby(R['vid'].values).all().reindex(V.index).fillna(False).values

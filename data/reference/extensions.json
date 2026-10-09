@@ -56,6 +56,14 @@
     "app",
     "dev"
   ],
+  "optional_files": {
+    "description": "Необязательные стандартные файлы: их сами ищут браузеры, роботы и нейросети. 404 на них — норма: ни карточки, ни рекомендации; карточка — только при «криминале» (5xx, ссылки со страниц сайта). Файлы для ИИ — «Замечание», мягко.",
+    "to_verify": "список собран по известным стандартам, сверить на новых логах",
+    "paths": ["^/llms(-full)?\\.txt$", "^/ai\\.txt$", "^/ads\\.txt$", "^/app-ads\\.txt$", "^/humans\\.txt$", "^/security\\.txt$",
+              "^/\\.well-known/security\\.txt$", "^/\\.well-known/traffic-advice$", "^/\\.well-known/passkey-endpoints$", "^/\\.well-known/change-password$",
+              "^/apple-touch-icon[\\w.-]*\\.png$", "^/browserconfig\\.xml$", "^/manifest\\.json$", "^/site\\.webmanifest$"],
+    "ai": ["^/llms(-full)?\\.txt$", "^/ai\\.txt$"]
+  },
   "по_адресу": [
     {
       "группа": "Для роботов",

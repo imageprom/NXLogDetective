@@ -6,7 +6,8 @@
 ИИ-роботы — блок 04: в своих файлах эти листы при 06 не повторяются, там — ссылка «Связанное в других отчётах»."""
 from . import sheets
 import pandas as pd
-from .report_index import Wide, brand_header, F_NOTE
+from .report_index import Wide, brand_header, F_NOTE, GREY
+from .seo import OPTIONAL_MISSING
 from .report_tables import data_sheet, journal_sheet, extra_table, split_codes
 from .report_bots import notes, ai_sheet
 from .report_load import parasites_sheet
@@ -23,10 +24,10 @@ def relink(findings):
         if x.get('блок') == 'SEO' and x.get('лист') in LINK: x['лист'] = LINK[x['лист']]
 
 
-def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, row_rule=None, links=()):
+def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, row_rule=None, links=(), font_rule=None):
     if d is None or not len(d): return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
-    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, row_rule=row_rule, links=links, red=('Ошибки',))   # ошибки — красным
+    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, row_rule=row_rule, links=links, red=('Ошибки',), font_rule=font_rule)   # ошибки — красным
     return wb[nm]
 
 
@@ -67,7 +68,8 @@ def build_sheets(wb, res):
                           'Проверка из сети': Fl['проверка'] if 'проверка' in Fl else ''})
         ws = _sheet(wb, 'Файлы для роботов', d, 'robots.txt, карты сайта, llms.txt и другие файлы, которые роботы ищут по стандартным адресам', {'Файл': 36, 'Вывод': 26, 'Ответы': 30, 'Ошибки': 30, 'Проверка из сети': 34},
                     ('Файл', 'Ответы', 'Ошибки', 'Проверка из сети'), [('Файлов', len(d)), ('Не отвечают', int((d['Вывод'] == 'не отвечает').sum()))], 'Последний ответ',
-                    row_rule=lambda r: F_NOTE if r.get('Вывод') != 'отвечает' else None)
+                    row_rule=lambda r: F_NOTE if r.get('Вывод') not in ('отвечает', OPTIONAL_MISSING) else None,
+                    font_rule=lambda r: GREY if r.get('Вывод') == OPTIONAL_MISSING else None)   # необязательный файл без ответа — норма, серым
         notes(ws, ['Здесь только файлы, которые просили поисковики или которые запрашивали не меньше 20 раз: перебор имён сканерами (sitemap-pt-post-1.xml и подобные) — не файлы для роботов.',
                    'Через переадресацию — робот сначала получил 301/302 и только потом файл: обычно так бывает на зеркалах (http, www).'])
     X = res.get('security') or {}

@@ -593,14 +593,24 @@ def errors(c, F):
                     if x['key'] == f'Ошибки:missing_static:{gname}':
                         x['файлы'] = mt[mt['группа'] == gname].index.astype(str).tolist()[:20]
     # индексы для ИИ-поиска: спрашивают, а файла нет — замечание, не проблема
-    ai = R['base'].cat.categories.to_series().str.fullmatch(r'/(llms(-full)?\.txt|ai\.txt)').fillna(False).values[R['base'].cat.codes.values]
+    from .classify import optional_files
+    opt_rx, ai_rx = optional_files()
+    ai = R['base'].cat.categories.to_series().str.contains(ai_rx, regex=True).fillna(False).values[R['base'].cat.codes.values]
     AI = R.loc[ai, ['base', 'status', 'fam']]
     if len(AI) and not (AI['status'].between(200, 299)).any():
         per = AI.groupby('base', observed=True).size().sort_values(ascending=False)
         per = per[per > 0]
         F.add('Ошибки', 'Замечание', 'ai_index', 'site', 'Нет файлов для ИИ-поиска: ' + ', '.join(per.index.astype(str)),
               '; '.join(f'{b} — {int(k)} запросов' for b, k in per.items()) + f"; запрашивают: {topn(AI['fam'].astype(str).replace('', 'браузеры'), 3)}",
-              'сайт', 'Решить, нужен ли сайту llms.txt; если нужен — создать', int(len(AI)), '')
+              'сайт', 'По желанию; практической пользы для большинства сайтов нет', int(len(AI)), '')
+    # необязательные стандартные файлы (extensions.json, «optional_files»): 404 — норма, без карточки; «криминал» — 5xx
+    op = R['base'].cat.categories.to_series().str.contains(opt_rx, regex=True).fillna(False).values[R['base'].cat.codes.values]
+    OP = R.loc[op, ['base', 'status', 'fam']]
+    for b, g in OP.groupby('base', observed=True):
+        if (g['status'] >= 500).mean() >= 0.5:
+            F.add('Ошибки', 'Важно', 'service_err', str(b), f'Служебный файл {b} отдаёт ошибку',
+                  f"{len(g)} запросов, коды {topn(g['status'])}; кто запрашивает: {topn(g['fam'].astype(str).replace('', 'браузеры'), 3)}",
+                  'сайт / сервер', 'Убрать ошибку: отдавать файл или честный 404', len(g), 'Служебные файлы')
     # служебные файлы по дням
     sv = R['base'].cat.categories.to_series().str.contains(r'^/robots\.txt$|sitemap[\w-]*\.xml|\.yml$|/export/|feed|\.xml$', regex=True, case=False).values[R['base'].cat.codes.values]
     SV = R.loc[sv, ['base', 'day', 'status', 'bytes', 'fam']]

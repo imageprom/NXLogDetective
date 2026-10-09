@@ -305,9 +305,6 @@ def overview(wb, res, S, site):
         if fg is None: fg = pd.DataFrame(Fe).groupby('группа').agg(файлов=('файлов', 'sum'), запросов=('запросов', 'sum'), примеры=('адрес', lambda s: list(s)[:2])).sort_values('запросов', ascending=False)
         rows = [[g, int(r['файлов']), int(r['запросов']), '\n'.join(map(str, r['примеры']))] for g, r in fg.iterrows()]
         W.table(['Группа', 'Файлов', 'Запросов', 'Например'], rows, ['B', 'C', 'D', 'EFGHI'], num=(1, 2), wrap=0.95)
-        if res.get('files_optional'):
-            W.note('Можно добавить: ' + ', '.join(res['files_optional'][:6]) + (' и др.' if len(res['files_optional']) > 6 else '') +
-                   ' — необязательные файлы для роботов, нейросетей и устройств. Их нет, и это не ошибка: рекомендация.')
         W.link('Каждый файл', 'Ошибки файлов', names)
     BI = E.get('битые_внутренние')
     if BI is not None and len(BI):
@@ -389,8 +386,6 @@ def build(wb, res, S, site):
         service_files(wb, dict(res, files=res['files_errors']), 'Ошибки файлов', title='Ошибки файлов',
                       note='Файлы, которые запрашивают страницы сайта, реклама, фиды и другие сайты, а сервер их не отдаёт',
                       links=[('Сводка ошибок', 'Обзор'), ('Все адреса с 404', '404')], errors_mode=E.get('с_дня', True))
-        if res.get('files_optional'):
-            notes(wb['Ошибки файлов'], ['Можно добавить (необязательные, не ошибка): ' + ', '.join(res['files_optional']) + '.'])
     links_sheets(wb, E)
     full_sheets(wb, S, E.get('с_дня', ''), E.get('сбои'))
     overview(wb, res, S, site)

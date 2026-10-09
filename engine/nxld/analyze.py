@@ -203,7 +203,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             Sr_ = res['errors'].get('источники')
             fb = set(T_c.loc[(T_c['форма'] == 'файл') & (T_c['код'] != 499), 'b'])
             linked = set(Sr_.loc[Sr_['вид'].isin(['страницы сайта', 'реклама', 'сайты', 'поиск']), 'b']) if Sr_ is not None and len(Sr_) else set()
-            OPT_ = r'^/(llms(-full)?\.txt|ai\.txt|ads\.txt|app-ads\.txt|humans\.txt|security\.txt|\.well-known/security\.txt|apple-touch-icon[\w.-]*\.png|browserconfig\.xml|manifest\.json|site\.webmanifest)$'
+            OPT_ = classify.optional_files()[0]   # необязательные стандартные файлы — справочник extensions.json, «optional_files»
             A_c = c.addr
             from_site = set(Sr_.loc[Sr_['вид'] == 'страницы сайта', 'b']) if Sr_ is not None and len(Sr_) else set()
             opt = {b for b in fb - from_site if re.search(OPT_, str(A_c['адрес'].values[b]))}   # нужны не сайту, а роботам и нейросетям

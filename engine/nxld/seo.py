@@ -11,6 +11,7 @@ from .common import codes_text
 BLOCK = 'SEO'
 ROBOT_FILES = re.compile(r'^/(robots\.txt|sitemap[^/]*\.xml(\.gz)?|sitemap[^/]*/.*\.xml|llms(-full)?\.txt|ads\.txt|security\.txt|\.well-known/.*)$', re.I)
 MOVE_KINDS = {'parasites', 'trap', 'search_errors', 'login_indexed', 'ai_index'}   # карточки, которые переезжают в 06 (ключ прежний)
+OPTIONAL_MISSING = 'необязательный, отсутствует — норма'   # 404 на необязательный стандартный файл (#10)
 ROBOT_SERVICE = re.compile(r'sitemap|robots\.txt|llms', re.I)
 ENGINE = {'YandexBot': 'Яндекс', 'YandexRenderResourcesBot': 'Яндекс', 'YandexImages': 'Яндекс', 'Googlebot': 'Google', 'Googlebot-Image': 'Google', 'Bingbot': 'Bing'}
 
@@ -105,7 +106,9 @@ def robot_files(c, ok):
     """Файлы для роботов: кто просит, что отвечает сервер, сколько раз через переадресацию."""
     R = c.R
     bc, bcode = _cats(R, 'base')
-    hit = np.array([bool(ROBOT_FILES.match(b)) for b in bc])
+    from .classify import optional_files
+    OPT = re.compile(optional_files()[0], re.I)   # необязательные стандартные файлы — справочник extensions.json
+    hit = np.array([bool(ROBOT_FILES.match(b) or OPT.search(b)) for b in bc])
     m = hit[bcode]
     if not m.any(): return pd.DataFrame()
     X = pd.DataFrame({'b': bc[bcode[m]], 'st': R['status'].values[m], 'ok': ok[m], 'ts': R['ts'].values[m], 'norm': redirect_followed(R, m)[m]})
@@ -117,7 +120,8 @@ def robot_files(c, ok):
         bad3 = r3 & ~g['norm']   # переадресация не на тот же путь с ответом 200 (другой путь, чужой хост, цепочка, петля, ошибка)
         rows.append({'файл': b, 'запросов': len(g), 'от_поисковиков': len(se), 'коды': codes_text(g['st']), 'последний_код': int(g['st'].iloc[-1]),
                      'через_переадресацию': int(r3.sum()), 'переадресаций_с_проблемой': int(bad3.sum()), 'ошибок': int((g['st'] >= 400).sum()),
-                     'вывод': ('не отвечает' if (g['st'] >= 400).mean() >= 0.5 else ('отвечает через переадресацию' if bad3.mean() >= 0.5 else 'отвечает'))})
+                     'вывод': (OPTIONAL_MISSING if OPT.search(b) and (g['st'] >= 400).all() and not (g['st'] >= 500).any() else
+                               'не отвечает' if (g['st'] >= 400).mean() >= 0.5 else ('отвечает через переадресацию' if bad3.mean() >= 0.5 else 'отвечает'))})
     t = pd.DataFrame(rows)
     t = t[(t['от_поисковиков'] > 0) | (t['запросов'] >= 20)]   # перебор имён сканерами (sitemap-pt-post-1.xml …) — не файлы для роботов
     return t.sort_values('запросов', ascending=False).reset_index(drop=True)

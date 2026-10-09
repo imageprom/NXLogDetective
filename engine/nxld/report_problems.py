@@ -63,6 +63,8 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     sub = (f"Тревога — {cnt['Тревога']} · " if cnt['Тревога'] else '') + f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}" + (f" · Замечания — {cnt['Замечание']}" if cnt['Замечание'] else '')
     if not with_block: sub = f"Блок «{items[0]['блок'] if items else ''}» · " + sub
     S.cell('B', sub, Font(name='Comfortaa', size=11, bold=True, color=GREY), row=3)   # подзаголовок — как на обзоре
+    from .catalog import mark
+    mark(ws, 'B2', 'B3', counts=sub)   # заголовок — из каталога; подзаголовок — счётчики (auto)
     ws.row_dimensions[3].height = 20
     S.r = 4
     order = list(BLOCK_FILES)

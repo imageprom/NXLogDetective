@@ -50,6 +50,8 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     S.r = 3
     ws.merge_cells('B3:I3')
     S.cell('B', 'Кто заходит на сайт и откуда', Font(name='Comfortaa', size=11, bold=True, color='666666')); ws.row_dimensions[3].height = 22
+    from .catalog import mark
+    mark(ws, 'B2', 'B3')   # заголовок и подзаголовок — из каталога (catalog.finalize)
     S.r = 4
     # 1. каналы
     ch = A.get('каналы')

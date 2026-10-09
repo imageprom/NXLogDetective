@@ -60,6 +60,8 @@ def build_files(wb, res, title='Логи'):
     S.cell('B', 'ЛОГИ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     ws.merge_cells('B3:F3')
     S.cell('B', 'Какие файлы логов разобраны, за какой период и что в них не так', Font(name='Comfortaa', size=11, bold=True, color='666666'), row=3)
+    from .catalog import mark
+    mark(ws, 'B2', 'B3')   # заголовок и подзаголовок — из каталога (catalog.finalize)
     ws.row_dimensions[3].height = 22
     S.r = 4
     dup = {d['source']: int(d.get('lines_duplicate', 0)) for d in inv.get('duplicates', []) if d.get('lines_duplicate')}

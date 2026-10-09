@@ -4,6 +4,7 @@
 → Пострадавшие страницы → Файлы с ошибками → полные листы. Данные — из реестров (errors.py, classify, actors), без своих условий.
 Подсветка везде одна: работает — белым, пострадавшее — персиковым, чужое и норма — серым."""
 from . import sheets
+from .catalog import order as catalog_order
 import pandas as pd
 from openpyxl.styles import Font
 from .report_index import Wide, brand_header, GREY, ORANGE
@@ -17,7 +18,6 @@ DROP = ('Коды ответа', 'Служебные файлы', 'Отсутс�
 RENAME = sheets.RENAME_02
 # старые имена листов в карточках → новые
 LINK = sheets.LINK_02
-ORDER = sheets.ORDER_02
 
 
 def relink(findings):
@@ -218,14 +218,7 @@ def full_sheets(wb, S, recent='', OUT=None):
                    row_rule=lambda r, _it=iter(act): F_NOTE if next(_it) else None, font_rule=lambda r, _it=iter(act): None if next(_it) else T_GREY)
         notes(wb['Битые из скриптов'], ['Скрипт подставляет в адрес переменную, которой нет (${marker.image}, \' + href +), и браузер запрашивает несуществующий адрес. Править — в коде указанной страницы.'])
         legend(wb['Битые из скриптов'], ['люди', 'неактуально'])
-    SE = S.get('Ошибки у поисковиков')
-    if SE is not None and len(SE):
-        SE = SE.assign(коды=SE['коды'].map(fmt_codes))
-        put('Поисковые ошибки', SE, 'Страницы, которые поисковые роботы получают с ошибкой, — они выпадают из поиска',
-            {'робот': 'Робот', 'шаблон': 'Тип страницы', 'коды': 'Ошибки', 'запросов': 'Запросов', 'ошибок': 'Ошибок'}, {'Тип страницы': 55, 'Ошибки': 24}, wrap=('Тип страницы', 'Ошибки'),
-            rule=lambda r: F_NOTE if any(t.strip().startswith('5') for t in str(r.get('Ошибки', '')).split(',')) else None)
-        notes(wb['Поисковые ошибки'], ['5xx — сервер отказывает роботу: страница может выпасть из поиска, даже если она существует. 404 — страницы нет, робот её забудет.'])
-        legend(wb['Поисковые ошибки'], ['5xx', 'обычно'])
+    # «Поисковые ошибки» — только в 06 «SEO» (каталог #8: запасных мест SEO-листов в 02–05 нет)
     A = S.get('Реклама: посадочные с ошибками')
     if A is not None and len(A):
         act = list(A['актуально']) if 'актуально' in A else [str(v) >= recent for v in A['последний']]   # признаки — из движка (derive)
@@ -271,7 +264,7 @@ def overview(wb, res, S, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — ОШИБКИ САЙТА {site.upper()}', 'Что сломано на сайте, кто на это наткнулся и где это исправить', last='I')
+    brand_header(ws, W, res, f'NX LOG DETECTIVE — ОШИБКИ САЙТА {site.upper()}', 'Что сломано на сайте, кто на это наткнулся и где это исправить', last='I', site=site.upper())
     names = set(wb.sheetnames)
     K = sm.get('коды')
     if K is not None and len(K):
@@ -388,8 +381,10 @@ def build(wb, res, S, site):
                       links=[('Сводка ошибок', 'Обзор'), ('Все адреса с 404', '404')], errors_mode=E.get('с_дня', True))
     links_sheets(wb, E)
     full_sheets(wb, S, E.get('с_дня', ''), E.get('сбои'))
+    from .catalog import prune
+    prune(wb, 'Ошибки')   # до Обзора: строки на невыведенные листы не появляются (#8)
     overview(wb, res, S, site)
     redden_codes(wb, only=('Битые внутренние', 'Битые внешние', 'Поисковые ошибки', 'Пострадавшие страницы', '5xx', '403 и прочие 4xx', 'Битые из скриптов'), rx=r'^Ошибки$')   # красный — где он различает 404 и 5xx
     byname = {w.title: w for w in wb._sheets}
-    head_ = [byname[n_] for n_ in ORDER if n_ in byname]
+    head_ = [byname[n_] for n_ in catalog_order('Ошибки') if n_ in byname]   # порядок — из каталога (#8)
     wb._sheets = head_ + [w for w in wb._sheets if w not in head_]

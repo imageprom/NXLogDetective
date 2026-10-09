@@ -4,6 +4,7 @@
 подробные списки в конце. Данные — profiles.build и profiles.extras (дела, сигнатуры, журнал, расписание, реклама),
 листы расчёта блока «Боты» и реестр обращающихся (actors)."""
 from . import sheets
+from .catalog import order as catalog_order
 import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, Side
 from .report_index import Sheet, Wide, brand_header, ORANGE, ORANGE2, GREY, INK, F_NOTE, F_CARD, row_height, cap, plural
@@ -11,7 +12,6 @@ from .report_tables import data_sheet, journal_sheet, legend, heat_sheet, extra_
 from .report_problems import plaque, OLINE, F_LIGHT
 
 F_GREY = 'EFEFEF'
-ORDER = sheets.ORDER_04
 LINK = sheets.LINK_04
 KEEP = ('IP',)
 
@@ -93,6 +93,8 @@ def wanted(wb, Pf):
     ws.merge_cells('B3:F3')
     S.cell('B', "Атакующие профили: в чём обвиняем, как узнать и что делать · " + (f"Тревога — {cnt['Тревога']} · " if cnt['Тревога'] else '') + f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}",
            Font(name='Comfortaa', size=11, bold=True, color=GREY), row=3)
+    from .catalog import mark
+    mark(ws, 'B2', 'B3', counts=(f"Тревога — {cnt['Тревога']} · " if cnt['Тревога'] else '') + f"Приоритетные — {cnt['Срочно']} · Важные — {cnt['Важно']} · Остальные — {cnt['К сведению']}")
     S.r = 4
     for sev in ('Тревога', 'Срочно', 'Важно', 'К сведению'):
         xs = [x for x in D if x['важность'] == sev]
@@ -265,7 +267,7 @@ def build_sheets(wb, res, S):
                           'Что запрашивали чаще всего': U['что'].astype(str).str.replace(', ', '\n'), 'Похоже на (по IP)': U['похоже'].astype(str).str.replace(', ', '\n')})
         data_sheet(wb, nm, d, nm, 'Утилиты без браузера: curl, wget, Python, PHP и другие — вывод по поведению каждого IP', {'Утилита': 22, 'Что запрашивали чаще всего': 50, 'Похоже на (по IP)': 40},
                    wrap=('Что запрашивали чаще всего', 'Похоже на (по IP)'), kpi=[('Утилит', len(d))], kpi_col='Зондов', red=())
-    ai_sheet(wb, BS.get('ИИ-роботы'), BS.get('ИИ: страницы по запросам людей'))
+    # «ИИ-роботы» — только в 06 «SEO» как «ИИ-видимость» (каталог #8: запасных мест SEO-листов в 02–05 нет)
     # Проверка IP и сети ботов
     CI = BS.get('Проверка IP')
     if CI is not None and len(CI):
@@ -316,7 +318,7 @@ def overview(wb, res, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — БОТЫ НА САЙТЕ {site.upper()}', 'Кто атакует сайт, в чём мы его обвиняем и как его узнать', last='I')
+    brand_header(ws, W, res, f'NX LOG DETECTIVE — БОТЫ НА САЙТЕ {site.upper()}', 'Кто атакует сайт, в чём мы его обвиняем и как его узнать', last='I', site=site.upper())
     names = set(wb.sheetnames)
     D = Pf.get('дела') or []
     W.r += 1
@@ -383,7 +385,9 @@ def build(wb, res, S, site):
     build_sheets(wb, res, S)
     from . import report_load
     report_load.scanner_ips_sheet(wb, res, name='IP сканеров')
+    from .catalog import prune
+    prune(wb, 'Боты')   # до Обзора: строки на невыведенные листы не появляются (#8)
     overview(wb, res, site)
     byname = {w.title: w for w in wb._sheets}
-    head_ = [byname[n_] for n_ in ORDER if n_ in byname]
+    head_ = [byname[n_] for n_ in catalog_order('Боты') if n_ in byname]   # порядок — из каталога (#8)
     wb._sheets = head_ + [w for w in wb._sheets if w not in head_]

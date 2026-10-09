@@ -33,7 +33,7 @@ def write_big_csv(outdir):
 WHITE = Side(style='thin', color='FFFFFF')
 
 
-def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None, red=('Ошибки',), font_rule=None):
+def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None, red=('Ошибки',), font_rule=None, auto=None):
     """Пересобирает лист name: строка 1 — заголовок, 2 — пояснение, 4 — шапка, дальше данные.
     widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None."""
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
@@ -46,6 +46,8 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     cols = list(df.columns)
     ws.column_dimensions['A'].width = 2.5          # поле слева, как на остальных листах
     ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE)
+    from .catalog import mark
+    mark(ws, 'B1', 'B2', note=note, **(auto or {}))   # заголовок и подзаголовок — из каталога (catalog.finalize); auto — динамические части
     ws.row_dimensions[1].height = 34
     if note:   # подзаголовок — фирменным Comfortaa, как на обзоре
         ws['B2'] = note; ws['B2'].font = Font(name='Comfortaa', size=11, bold=True, color=GREY)
@@ -869,6 +871,8 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
     ws.column_dimensions['A'].width = 2.5
     ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE); ws.row_dimensions[1].height = 34
     ws['B2'] = subtitle; ws['B2'].font = Font(name='Comfortaa', size=11, bold=True, color=GREY); ws.row_dimensions[2].height = 24
+    from .catalog import mark
+    mark(ws, 'B1', 'B2', note=subtitle)   # заголовок и подзаголовок — из каталога (catalog.finalize)
     r = 4
     for t_ in intro:   # заметка перед картами — персиковая плашка на всю ширину
         ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=28)

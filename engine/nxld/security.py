@@ -338,13 +338,13 @@ SCAN_EXTRA = [('Служебные файлы движка', r'/\.ht(access|pass
 def scanners(c, S):
     """Цели сканеров: сколько попыток, сколько сервер выполнил (200) и что именно отдал. Обычные страницы сайта,
     которые сканеры просто перебирали, — отдельно: это не улика."""
-    from .blocks import VULN, TARGETS
+    from .blocks import TARGETS
     R = c.R
     bc, bcode = _cat(R, 'base')
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        vm_c = pd.Series(bc).str.contains(VULN, regex=True, case=False).values & ~common.not_probe(c)   # страница сайта и вход движка — не зонд
+        vm_c = common.probe_mask(c)   # зонд: VULN и не страница сайта / вход движка
     vm = vm_c[bcode]
     if not vm.any(): return pd.DataFrame(), pd.DataFrame()
     st = R['status'].values[vm]
@@ -527,12 +527,11 @@ def server_filter(c):
     """Отказы защиты сервера (403/429/444/503) подлинным поисковым роботам, роботам проверки объявлений и людям.
     Зонды сканеров и уязвимые адреса не считаются. Строка — (группа, кто, код, тип сети, страна).
     Возвращает словарь: таблица, группы (итоги для Обзора), кто (итоги по роботам и людям для карточек), вывод, что_сделать, гео."""
-    from .blocks import VULN
     R = c.R
     st = R['status'].values
     codes = R['base'].cat.codes.values
     bcat = R['base'].cat.categories.to_series()
-    vuln_b = bcat.str.contains(VULN, regex=True, case=False).values[codes]
+    vuln_b = common.probe_rows(c)   # зонд: VULN и не страница сайта / вход движка (#7)
     probe = bcat.str.contains(r'\.log$|/logs?/|^/(upload|uploads|images|files|bitrix|local)/$', regex=True, case=False).values[codes]   # логи и листинги папок ищут сканеры
     # «люди» — только визиты, которые смотрели сайт (есть страница с ответом 200); сканер служебных файлов — не человек
     browsing = np.isin(R['vid'].values, np.unique(R['vid'].values[c.human & R['is_page'].values & (st == 200)]))
@@ -644,7 +643,6 @@ def leaks(c, S, checks=None):
 
 def journal(c, res):
     """По дням: запросы по группам, трафик, пик в минуту, сканеры и их находки. Шапка в два уровня, как в журналах 01 и 02."""
-    from .blocks import VULN
     R = c.R
     J0 = (res.get('errors') or {}).get('журнал')
     if J0 is None or not len(J0): return None
@@ -654,7 +652,7 @@ def journal(c, res):
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        vm = pd.Series(bc).str.contains(VULN, regex=True, case=False).values[bcode]
+        vm = common.probe_mask(c)[bcode]   # зонд: VULN и не страница сайта / вход движка (#7)
     lk = getattr(c, 'leaks', None)
     leak = np.isin(bc, list(lk['base'].astype(str)))[bcode] if lk is not None and len(lk) else np.zeros(len(R), bool)
     st = R['status'].values

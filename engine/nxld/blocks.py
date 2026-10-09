@@ -561,7 +561,8 @@ def errors(c, F):
                       f"{n} визитов; адреса: {', '.join(ex['адрес'].astype(str))}", 'редиректы (nginx/.htaccess) или ссылки в источнике',
                       'Поставить 301 на живые адреса или исправить ссылки', int(n), '404: входы извне', also=('Маркетинг',) if chn == 'Реклама' else ())
     # битые ссылки на сайте
-    vuln_b = R['base'].cat.categories.to_series().str.contains(VULN, regex=True, case=False).values[R['base'].cat.codes.values]
+    from .common import probe_rows
+    vuln_b = probe_rows(c)   # зонд: VULN и не страница сайта / вход движка (#7)
     bl = c.human & (st == 404) & R['ref_internal'].values & ~R['is_static'].values & ~vuln_b
     B = R.loc[bl, ['tpl', 'base', 'ref_path', 'vid']]
     if len(B):
@@ -896,7 +897,8 @@ def load_security(c, F):
                       f"{int(r['ответов_200'])} ответов 200 для {int(r['IP_с_200'])} адресов; формы входа по логу не видно", 'настройки доступа', 'Открыть адрес и проверить, что он показывает', int(r['IP']), 'Открытые служебные разделы')
     # служебные файлы и сканеры
     bs = R['base'].cat.categories.to_series()
-    vm = bs.str.contains(VULN, regex=True, case=False).values[R['base'].cat.codes.values]
+    from .common import probe_rows
+    vm = probe_rows(c)   # зонд: VULN и не страница сайта / вход движка (#7)
     VQ = R.loc[vm, ['ip', 'base', 'status', 'bytes', 'nettype', 'cc', 'day', 'fam']]
     if len(VQ):
         tgt = pd.Series('Прочее', index=VQ.index)

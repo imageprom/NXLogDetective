@@ -159,6 +159,24 @@ def not_probe(c):
     return ((A['зонд'] == '') & (A['людям'] | A['служебная_страница'])).values
 
 
+def probe_mask(c):
+    """Зонд — одно правило для всех листов: адрес похож на зонд (blocks.VULN) и это не страница сайта или вход движка
+    (not_probe, реестр адресов). Булев массив по категориям R['base']."""
+    if getattr(c, '_probe_mask', None) is None:
+        import warnings
+        from .blocks import VULN
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            vm = c.R['base'].cat.categories.to_series().astype(str).str.contains(VULN, regex=True, case=False).values
+        c._probe_mask = vm & ~not_probe(c)
+    return c._probe_mask
+
+
+def probe_rows(c):
+    """Зонд по строкам R — probe_mask по коду адреса."""
+    return probe_mask(c)[c.R['base'].cat.codes.values]
+
+
 def codes_text(st):
     """Коды ответа (массив) → «404 (33), 200 (2)» по убыванию."""
     s = pd.Series(np.asarray(st)).value_counts()

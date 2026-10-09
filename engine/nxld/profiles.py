@@ -38,7 +38,7 @@ def charges_ref():
 
 def ip_features(c, res):
     """Признаки по каждому IP лога (индекс — код IP в R['ip']) — счётчики без строк на каждый запрос."""
-    from .blocks import VULN, ATTACK
+    from .blocks import ATTACK
     import warnings
     R, V = c.R, c.V
     ipc = R['ip'].cat.codes.values
@@ -48,8 +48,8 @@ def ip_features(c, res):
     st = R['status'].values
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        from .common import not_probe
-        vm = (bc.str.contains(VULN, regex=True, case=False).values & ~not_probe(c))[bcode]   # страница сайта и вход движка — не зонд
+        from .common import probe_mask
+        vm = probe_mask(c)[bcode]   # зонд: VULN и не страница сайта / вход движка
         ab = bc.str.contains(ATTACK, regex=True).values[bcode]
         aq = R['query'].cat.categories.to_series().astype(str).str.contains(ATTACK, regex=True).values[R['query'].cat.codes.values]
         adm = bc.str.contains(ADMIN_RX, regex=True).values[bcode]
@@ -227,8 +227,6 @@ def build(c, res):
     Vip_ = V['ip'].astype(str)   # один раз на все дела: на 2,5 млн визитов это минуты на каждое дело
     orgV_ = Vip_.map(P['организация'])
     Vhuman_ = (V['group'] == 'Люди').values
-    from .common import not_probe
-    site_pages = set(R['base'].cat.categories.astype(str)[not_probe(c)])   # страница сайта и вход движка — не зонд (в примерах обвинений тоже)
     for key, g in C.groupby('key'):
         agg = {f: (g[f].max() if f == 'maxpm' else g[f].sum()) for f in FEATURES if f in g}
         orgs = P['организация'].reindex(g.index).replace('', np.nan).fillna(P['сеть'].reindex(g.index))
@@ -243,12 +241,12 @@ def build(c, res):
         def top_paths(mask, n=3):
             s = sub.loc[mask, 'base'].astype(str).value_counts().head(n)
             return ', '.join(f"{k} ({v})" for k, v in s.items())
-        from .blocks import VULN, ATTACK
+        from .blocks import ATTACK
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
             bs = sub['base'].astype(str)
-            ctx['top_probes'] = top_paths(bs.str.contains(VULN, regex=True, case=False).values & ~bs.isin(site_pages).values)
+            ctx['top_probes'] = top_paths(common.probe_mask(c)[sub['base'].cat.codes.values])   # то же правило, что для признака probes
             ctx['top_attacks'] = top_paths((bs.str.contains(ATTACK, regex=True) | sub['query'].astype(str).str.contains(ATTACK, regex=True)).values)
             ctx['top_login'] = top_paths((bs.str.contains(LOGIN_RX, regex=True) & (sub['method'].astype(str) == 'POST')).values)
         lk = getattr(c, 'leaks', None)

@@ -78,27 +78,48 @@ def by_section(c, ok):
 
 
 def redirect_followed(R, m):
-    """Переадресация 3xx по строкам m, после которой тот же клиент (IP + браузер) в пределах robots_redirect_followup_sec секунд
-    и robots_redirect_followup_steps следующих своих запросов взял тот же путь с ответом 200: http → https или www ↔ без www того же
-    адреса — норма (схемы и хоста в access-логе нет, различаем по следующему запросу). Булев массив по строкам R."""
+    """Исход каждой переадресации 3xx по строкам m (адреса переадресации в access-логе нет — судим по следующему запросу того же пути):
+      'ok'     — следом тот же путь с ответом 200 (http → https или www ↔ без www того же адреса — норма);
+      'denied' — следом тот же путь получил 403: отказ фильтра, его показывает карточка про отказы роботам, это не проблема переадресации;
+      ''       — продолжения нет или снова 3xx без ответа 200/403 между ними (цепочка, петля).
+    Продолжение ищется у того же клиента (IP + браузер: robots_redirect_followup_sec секунд и robots_redirect_followup_steps его
+    запросов), а у подтверждённого робота — и у того же семейства с других адресов пула (Googlebot берёт следующий запрос с другого IP).
+    Повторная переадресация (робот снова пришёл по http) — не цепочка, если между ними был ответ 200 или 403 на тот же путь.
+    Массив строк по строкам R."""
     from .thresholds import value
     st = R['status'].values
-    out = np.zeros(len(R), bool)
+    out = np.full(len(R), '', dtype=object)
     r3 = m & (st >= 300) & (st < 400)
     if not r3.any(): return out
     W, N = value('robots_redirect_followup_sec', 60), int(value('robots_redirect_followup_steps', 3))
+    ts, bcode = R['ts'].values, R['base'].cat.codes.values
+    verdict = lambda s: 'ok' if s == 200 else ('denied' if s == 403 else '')
+    # 1) тот же клиент
     ipc = R['ip'].cat.codes.values.astype(np.int64); uac = R['ua'].cat.codes.values.astype(np.int64)
     cl = ipc * (int(uac.max()) + 1) + uac
     sel = np.isin(cl, np.unique(cl[r3]))   # все запросы клиентов, у которых есть такая переадресация
     idx = np.where(sel)[0]
-    idx = idx[np.lexsort((R['ts'].values[idx], cl[idx]))]
-    c_, t_, b_, s_ = cl[idx], R['ts'].values[idx], R['base'].cat.codes.values[idx], st[idx]
+    idx = idx[np.lexsort((ts[idx], cl[idx]))]
+    c_, t_, b_, s_ = cl[idx], ts[idx], bcode[idx], st[idx]
     for k in np.where(r3[idx])[0]:
         for j in range(k + 1, min(k + 1 + N, len(idx))):
             if c_[j] != c_[k] or t_[j] - t_[k] > W: break
             if b_[j] == b_[k]:
-                out[idx[k]] = s_[j] == 200   # тот же путь: 200 — норма; снова 3xx — цепочка или петля
+                if not (300 <= s_[j] < 400): out[idx[k]] = verdict(s_[j])   # снова 3xx — решает пул робота (ниже) или это цепочка
                 break
+    # 2) тот же подтверждённый робот с других адресов пула: первый ответ не 3xx на тот же путь в окне
+    fam = R['fam'].astype(str).values
+    ver = R['fam_verified'].astype(str).values == 'да'
+    left = np.where(r3 & (out == '') & ver & (fam != ''))[0]
+    if len(left):
+        pool = np.where(ver & np.isin(fam, np.unique(fam[left])) & np.isin(bcode, np.unique(bcode[left])) & ~((st >= 300) & (st < 400)))[0]
+        P = pd.DataFrame({'f': fam[pool], 'b': bcode[pool], 't': ts[pool], 's': st[pool]}).sort_values('t')
+        groups = {k: (g['t'].values, g['s'].values) for k, g in P.groupby(['f', 'b'])}
+        for i in left:
+            g = groups.get((fam[i], bcode[i]))
+            if g is None: continue
+            j = np.searchsorted(g[0], ts[i], 'left')
+            if j < len(g[0]) and g[0][j] - ts[i] <= W: out[i] = verdict(g[1][j])
     return out
 
 
@@ -111,15 +132,16 @@ def robot_files(c, ok):
     hit = np.array([bool(ROBOT_FILES.match(b) or OPT.search(b)) for b in bc])
     m = hit[bcode]
     if not m.any(): return pd.DataFrame()
-    X = pd.DataFrame({'b': bc[bcode[m]], 'st': R['status'].values[m], 'ok': ok[m], 'ts': R['ts'].values[m], 'norm': redirect_followed(R, m)[m]})
+    X = pd.DataFrame({'b': bc[bcode[m]], 'st': R['status'].values[m], 'ok': ok[m], 'ts': R['ts'].values[m], 'next': redirect_followed(R, m)[m]})
     rows = []
     for b, g in X.groupby('b'):
         g = g.sort_values('ts')
         se = g[g['ok']]
         r3 = (g['st'] >= 300) & (g['st'] < 400)
-        bad3 = r3 & ~g['norm']   # переадресация не на тот же путь с ответом 200 (другой путь, чужой хост, цепочка, петля, ошибка)
+        den3 = r3 & (g['next'] == 'denied')   # после переадресации — отказ 403: это карточка про отказы роботам
+        bad3 = r3 & (g['next'] == '')   # без продолжения на тот же путь или цепочка; куда ведёт — по логу не видно
         rows.append({'файл': b, 'запросов': len(g), 'от_поисковиков': len(se), 'коды': codes_text(g['st']), 'последний_код': int(g['st'].iloc[-1]),
-                     'через_переадресацию': int(r3.sum()), 'переадресаций_с_проблемой': int(bad3.sum()), 'ошибок': int((g['st'] >= 400).sum()),
+                     'через_переадресацию': int(r3.sum()), 'переадресаций_с_проблемой': int(bad3.sum()), 'переадресаций_с_отказом': int(den3.sum()), 'ошибок': int((g['st'] >= 400).sum()),
                      'вывод': (OPTIONAL_MISSING if OPT.search(b) and (g['st'] >= 400).all() and not (g['st'] >= 500).any() else
                                'не отвечает' if (g['st'] >= 400).mean() >= 0.5 else ('отвечает через переадресацию' if bad3.mean() >= 0.5 else 'отвечает'))})
     t = pd.DataFrame(rows)
@@ -217,6 +239,11 @@ def build(c, res):
     return out
 
 
+def _pl(n, one, few, many):
+    from .report_index import plural, ru_num
+    return f"{ru_num(n)} {plural(n, one, few, many)}"
+
+
 def findings(res, items):
     """Карточки SEO: переезд прежних (ключ тот же) и новые — карта сайта, robots.txt, обход впустую, страницы без обхода."""
     for x in items:
@@ -243,7 +270,10 @@ def findings(res, items):
             # http → https и www ↔ без www того же пути с ответом 200 — штатная настройка (#9); карточка — только при проблемной переадресации
             if f.lower() == '/robots.txt' and int(r.get('переадресаций_с_проблемой', r['через_переадресацию'])) >= 100:
                 add('К сведению', 'robots_redirect', f, 'Файл robots.txt отдаётся через переадресацию',
-                    f"{int(r['переадресаций_с_проблемой'])} из {int(r['запросов'])} запросов получили переадресацию не на тот же адрес с ответом 200 (другой путь, другой хост, цепочка или ошибка); ответы: {r['коды']}",
+                    f"{_pl(int(r['переадресаций_с_проблемой']), 'переадресация', 'переадресации', 'переадресаций')} без продолжения на тот же путь "
+                    f"(из {int(r['запросов'])} запросов); куда ведёт переадресация, по логу не видно — проверить из сети"
+                    + (f"; после переадресации — отказ 403 ({int(r['переадресаций_с_отказом'])}), см. отказы роботам" if int(r.get('переадресаций_с_отказом', 0)) else '')
+                    + f"; ответы: {r['коды']}",
                     'nginx / настройки зеркал', 'Отдавать robots.txt на всех зеркалах сразу, без переадресации, или проверить, что зеркала склеены', int(r['переадресаций_с_проблемой']), 'Файлы для роботов')
     C = D.get('обход')
     if C is not None and len(C):

@@ -76,6 +76,31 @@ def by_section(c, ok):
     return out.sort_values('запросов', ascending=False).reset_index(drop=True)
 
 
+def redirect_followed(R, m):
+    """Переадресация 3xx по строкам m, после которой тот же клиент (IP + браузер) в пределах robots_redirect_followup_sec секунд
+    и robots_redirect_followup_steps следующих своих запросов взял тот же путь с ответом 200: http → https или www ↔ без www того же
+    адреса — норма (схемы и хоста в access-логе нет, различаем по следующему запросу). Булев массив по строкам R."""
+    from .thresholds import value
+    st = R['status'].values
+    out = np.zeros(len(R), bool)
+    r3 = m & (st >= 300) & (st < 400)
+    if not r3.any(): return out
+    W, N = value('robots_redirect_followup_sec', 60), int(value('robots_redirect_followup_steps', 3))
+    ipc = R['ip'].cat.codes.values.astype(np.int64); uac = R['ua'].cat.codes.values.astype(np.int64)
+    cl = ipc * (int(uac.max()) + 1) + uac
+    sel = np.isin(cl, np.unique(cl[r3]))   # все запросы клиентов, у которых есть такая переадресация
+    idx = np.where(sel)[0]
+    idx = idx[np.lexsort((R['ts'].values[idx], cl[idx]))]
+    c_, t_, b_, s_ = cl[idx], R['ts'].values[idx], R['base'].cat.codes.values[idx], st[idx]
+    for k in np.where(r3[idx])[0]:
+        for j in range(k + 1, min(k + 1 + N, len(idx))):
+            if c_[j] != c_[k] or t_[j] - t_[k] > W: break
+            if b_[j] == b_[k]:
+                out[idx[k]] = s_[j] == 200   # тот же путь: 200 — норма; снова 3xx — цепочка или петля
+                break
+    return out
+
+
 def robot_files(c, ok):
     """Файлы для роботов: кто просит, что отвечает сервер, сколько раз через переадресацию."""
     R = c.R
@@ -83,14 +108,16 @@ def robot_files(c, ok):
     hit = np.array([bool(ROBOT_FILES.match(b)) for b in bc])
     m = hit[bcode]
     if not m.any(): return pd.DataFrame()
-    X = pd.DataFrame({'b': bc[bcode[m]], 'st': R['status'].values[m], 'ok': ok[m], 'ts': R['ts'].values[m]})
+    X = pd.DataFrame({'b': bc[bcode[m]], 'st': R['status'].values[m], 'ok': ok[m], 'ts': R['ts'].values[m], 'norm': redirect_followed(R, m)[m]})
     rows = []
     for b, g in X.groupby('b'):
         g = g.sort_values('ts')
         se = g[g['ok']]
+        r3 = (g['st'] >= 300) & (g['st'] < 400)
+        bad3 = r3 & ~g['norm']   # переадресация не на тот же путь с ответом 200 (другой путь, чужой хост, цепочка, петля, ошибка)
         rows.append({'файл': b, 'запросов': len(g), 'от_поисковиков': len(se), 'коды': codes_text(g['st']), 'последний_код': int(g['st'].iloc[-1]),
-                     'через_переадресацию': int(((g['st'] >= 300) & (g['st'] < 400)).sum()), 'ошибок': int((g['st'] >= 400).sum()),
-                     'вывод': ('не отвечает' if (g['st'] >= 400).mean() >= 0.5 else ('отвечает через переадресацию' if ((g['st'] >= 300) & (g['st'] < 400)).mean() >= 0.5 else 'отвечает'))})
+                     'через_переадресацию': int(r3.sum()), 'переадресаций_с_проблемой': int(bad3.sum()), 'ошибок': int((g['st'] >= 400).sum()),
+                     'вывод': ('не отвечает' if (g['st'] >= 400).mean() >= 0.5 else ('отвечает через переадресацию' if bad3.mean() >= 0.5 else 'отвечает'))})
     t = pd.DataFrame(rows)
     t = t[(t['от_поисковиков'] > 0) | (t['запросов'] >= 20)]   # перебор имён сканерами (sitemap-pt-post-1.xml …) — не файлы для роботов
     return t.sort_values('запросов', ascending=False).reset_index(drop=True)
@@ -209,10 +236,11 @@ def findings(res, items):
             if f.lower().startswith('/sitemap') and r['вывод'] == 'не отвечает' and int(r['от_поисковиков']) >= 5 and f'Ошибки:no_service:{f}' not in have:
                 add('Важно', 'sitemap_down', f, f'Карта сайта {f} не отвечает', f"{int(r['запросов'])} запросов, ответы: {r['коды']}; от поисковиков — {int(r['от_поисковиков'])}",
                     'сайт / генерация карты сайта', 'Восстановить карту сайта или убрать её адрес из robots.txt', int(r['запросов']), 'Файлы для роботов')
-            if f.lower() == '/robots.txt' and int(r['через_переадресацию']) >= 100:
+            # http → https и www ↔ без www того же пути с ответом 200 — штатная настройка (#9); карточка — только при проблемной переадресации
+            if f.lower() == '/robots.txt' and int(r.get('переадресаций_с_проблемой', r['через_переадресацию'])) >= 100:
                 add('К сведению', 'robots_redirect', f, 'Файл robots.txt отдаётся через переадресацию',
-                    f"{int(r['через_переадресацию'])} из {int(r['запросов'])} запросов получили переадресацию; ответы: {r['коды']}",
-                    'nginx / настройки зеркал', 'Отдавать robots.txt на всех зеркалах сразу, без переадресации, или проверить, что зеркала склеены', int(r['через_переадресацию']), 'Файлы для роботов')
+                    f"{int(r['переадресаций_с_проблемой'])} из {int(r['запросов'])} запросов получили переадресацию не на тот же адрес с ответом 200 (другой путь, другой хост, цепочка или ошибка); ответы: {r['коды']}",
+                    'nginx / настройки зеркал', 'Отдавать robots.txt на всех зеркалах сразу, без переадресации, или проверить, что зеркала склеены', int(r['переадресаций_с_проблемой']), 'Файлы для роботов')
     C = D.get('обход')
     if C is not None and len(C):
         W_ = C[(C['запросов'] >= 1000) & (C['мимо_%'] >= 20)]

@@ -47,6 +47,13 @@ def load_extensions():
 _EXT = None
 
 
+def optional_files():
+    """Необязательные стандартные файлы (extensions.json, «optional_files»): (шаблон всех, шаблон файлов для ИИ)."""
+    O = (_read(os.path.join(REF, 'extensions.json')) or {}).get('optional_files') or {}
+    j = lambda xs: '|'.join(f'(?:{x})' for x in xs) or r'(?!)'
+    return j(O.get('paths', [])), j(O.get('ai', []))
+
+
 def ext_of(path):
     """Расширение последнего звена адреса; у скрытых файлов (.env.local) — имя после точки (env)."""
     leaf = str(path).rstrip('/').rsplit('/', 1)[-1]

@@ -12,7 +12,7 @@ THEME = {
     '5xx': 'Сайт', '5xx_section': 'Сайт', 'soft_errors': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
     'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'pd_in_get': 'Безопасность', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
-    'admin_foreign': 'Безопасность', 'open_redirect': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама',
+    'admin_foreign': 'Безопасность', 'open_redirect': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама', 'monitor_denied': 'Сервер',
     'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
     'search_errors': 'Поиск', 'no_service': 'Поиск', 'ai_index': 'Поиск', 'hotlink': 'Нагрузка', 'broken_labels': 'Реклама',
 }
@@ -200,7 +200,7 @@ def humanize(items, sheets, summary):
                 who = re.search(r'запрашивают: (.*)$', x['факты'])
                 h = 'Нет файлов для ИИ-поиска'
                 f = 'Файлы-описания сайта для ИИ-поиска не найдены (404): ' + re.sub(r' — (\d+) запросов', lambda m: f" — {nw(int(m.group(1)), 'запрос', 'запроса', 'запросов')}", x['факты'].split('; запрашивают')[0]).replace(';', ',') \
-                    + ('; запрашивают ' + re.sub(r': (\d+)', r' (\1)', who.group(1)) + '.' if who else '.') + ' Стандарт необязательный: решить, нужен ли он сайту.'
+                    + ('; запрашивают ' + re.sub(r': (\d+)', r' (\1)', who.group(1)) + '.' if who else '.') + ' По желанию; практической пользы для большинства сайтов нет.'
             elif t == 'hotlink':
                 h = 'Внешние сайты показывают картинки сайта'
                 f = x['факты'].replace('; тестовые копии:', '. Похоже на тестовую копию сайта:') + '.'

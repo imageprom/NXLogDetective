@@ -45,3 +45,23 @@ def test_engine_login_page_is_not_probe(tmp_path):
     assert int(T['страницы_сайта'].sum()) == 0, T   # /auth/ не среди целей сканеров
     P = {p['ключ']: p['группа'] for p in res['params']}
     assert P.get('backurl') != 'Атаки и зонды' and P.get('forgot_password') != 'Атаки и зонды'
+
+
+def test_login_page_not_probe_in_02_03(tmp_path):
+    """#7: одно правило «зонд = VULN и не страница сайта / вход движка» и в сводке 03, и в «Статистике» 03, и в «Серверном
+    фильтре»: запросы людей к /auth/ — не сканеры; отказ людям 403 на /auth/ виден в фильтре."""
+    log = bitrix_log()
+    for k in range(30):   # люди с карточки товара на /auth/ получают 403
+        ip, t = f'198.51.100.{k + 1}', synth.T0 + timedelta(days=k % 7, hours=14, minutes=k)
+        log.line(ip, t, '/catalog/item-1/', 200, ref='https://yandex.ru/', size=40000)
+        for a in BX[:2]: log.line(ip, t + timedelta(seconds=1), a, 200, ref='https://example.com/catalog/item-1/')
+        log.line(ip, t + timedelta(seconds=30), '/auth/?backurl=/catalog/item-1/', 403, ref='https://example.com/catalog/item-1/', size=500)
+    res, _, _ = synth.run(log, str(tmp_path), '--site', 'example.com')
+    n_scan = 7 * len(SCAN)   # только сканер 185.220.101.5
+    assert res['summary']['Нагрузка и безопасность']['Запросов сканеров'] == n_scan, res['summary']['Нагрузка и безопасность']
+    J = res['security']['журнал']
+    assert int(J.loc[J['день'] == 'Итого', 'Сканеры|Запросов'].iloc[0]) == n_scan, J[['день', 'Сканеры|Запросов']]
+    Fl = res['security']['фильтр']['таблица']
+    assert len(Fl) and ((Fl['группа'] == 'Люди') & (Fl['код'] == 403) & (Fl['пример'].astype(str).str.startswith('/auth/'))).any(), Fl
+    VQ = res['sheets']['Нагрузка и безопасность']['Сканеры: что искали']
+    assert int(VQ['запросов'].sum()) == n_scan, VQ

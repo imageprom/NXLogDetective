@@ -57,6 +57,9 @@ def apply(res, edits):
             if x['key'].split(':')[1:2] == ['exposed'] and 'Проверено из сети' not in str(x.get('факты', '')):
                 x['факты'] = (str(x.get('факты', '')).rstrip('. ') + f". Проверено из сети{' ' + when if when else ''}: {txt}.").lstrip('. ')
     if edits.get('проверка_сайта'):   # скил открыл robots.txt, карту сайта и т. п. (SKILL.md): итог — на лист «Файлы для роботов» и в карточки
+        # проверка из сети показала: переадресация ведёт на тот же путь по https — переадресация robots.txt не проблема, карточки нет (#9)
+        same_ = {f_ for f_, ch in edits['проверка_сайта'].items() if str(ch.get('redirect', '')) == 'same_path_https'}
+        res['findings'] = [x for x in res['findings'] if not (x['key'].split(':')[1:2] == ['robots_redirect'] and x['key'].split(':', 2)[-1] in same_)]
         Fr = (res.get('seo') or {}).get('файлы')
         for f_, ch in edits['проверка_сайта'].items():
             t_ = f"{ch.get('итог', '')}" + (f", {ch['когда']}" if ch.get('когда') else '') + (f": {ch['что']}" if ch.get('что') else '')

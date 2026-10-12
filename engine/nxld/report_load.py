@@ -4,6 +4,7 @@
 важные срезы (безопасность и нагрузка вперемешку, по важности) → подробные списки в конце.
 Данные — security.build (на общих расчётах common), оформление — общие модули report_tables и report_index."""
 from . import sheets
+from .catalog import order as catalog_order
 import pandas as pd
 from openpyxl.styles import Font
 from .report_index import Wide, brand_header, GREY, F_NOTE, ORANGE
@@ -17,7 +18,6 @@ def fmt_raw(v):
     return v
 
 F_GREY = 'EFEFEF'
-ORDER = sheets.ORDER_03
 # старые имена листов в карточках → новые
 LINK = sheets.LINK_03
 KEEP = ('Исследователи сайта', 'Подозрительные файлы')   # листы расчёта, которые идут в файл как есть (GET — под новым именем)
@@ -281,8 +281,7 @@ def build_sheets(wb, res, S):
                        'Конструкты, которые собирают скрипты самого сайта для людей, — ошибки сайта, они в отчёте 02.'])
         legend(wb[nm], ['подозрительно', 'обычно'])
         names.add(nm)
-    # ---- Паразитные адреса: при файле 06 «SEO» — только там ----
-    if 'SEO' not in res.get('selected', ()) and parasites_sheet(wb, X.get('паразиты')) is not None: names.add('Паразитные адреса')
+    # ---- Паразитные адреса — только в 06 «SEO» (каталог #8: запасных мест SEO-листов в 02–05 нет) ----
     # ---- Файловый трафик: виды файлов и внешнее встраивание ----
     Ft = X.get('типы_файлов')
     Em = X.get('встраивание')
@@ -396,7 +395,7 @@ def overview(wb, res, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — НАГРУЗКА И БЕЗОПАСНОСТЬ {site.upper()}', 'Кто нагружает сайт, что ищут взломщики и что им удалось получить', last='I')
+    brand_header(ws, W, res, f'NX LOG DETECTIVE — НАГРУЗКА И БЕЗОПАСНОСТЬ {site.upper()}', 'Кто нагружает сайт, что ищут взломщики и что им удалось получить', last='I', site=site.upper())
     names = set(wb.sheetnames)
     J = X.get('журнал')
     sc = X.get('сканеры') or (None, None)
@@ -479,9 +478,11 @@ def build(wb, res, S, site):
     for k_ in ('Сводка', 'О данных'):
         if k_ in wb.sheetnames: del wb[k_]
     build_sheets(wb, res, S)
+    from .catalog import prune
+    prune(wb, 'Нагрузка и безопасность')   # до Обзора: строки на невыведенные листы не появляются (#8)
     overview(wb, res, site)
     byname = {w.title: w for w in wb._sheets}
-    head_ = [byname[n_] for n_ in ORDER if n_ in byname]
+    head_ = [byname[n_] for n_ in catalog_order('Нагрузка и безопасность') if n_ in byname]   # порядок — из каталога (#8)
     wb._sheets = head_ + [w for w in wb._sheets if w not in head_]
 
 

@@ -9,7 +9,8 @@ from .findings import SEV_ORDER
 from . import report_index, report_problems, report_anatomy, report_files, report_tables
 from . import sheets as sheet_catalog
 
-FILES = {'Общий анализ': '01_Overview', 'Ошибки': '02_Errors', 'Нагрузка и безопасность': '03_Load_Security', 'Боты': '04_Bots', 'Маркетинг': '05_Marketing', 'SEO': '06_SEO'}
+from . import catalog
+FILES = {b: f[5:-5] for b, f in catalog.file_names().items()}   # номер и порядок файлов — из каталога (#8): '01_Overview' …
 SEV_FILL = {'Срочно': 'F8D7DA', 'Важно': 'FFF3CD', 'К сведению': 'E2EFDA', 'Замечание': 'F3F3F3', 'отмечено как норма': 'EDEDED'}
 HDR = PatternFill('solid', fgColor='1F3864')
 FONT = 'Arial'
@@ -200,7 +201,7 @@ def textile(res, site, file_names):
     """Запасной черновик движка — если Детектив не написал текст по brief.json. Порядок разделов — как в skill/references/redmine.md."""
     from .sheets import resolve
     inv = res['inventory']
-    where = lambda x: f"{file_names[x.get('лист_блок') or x['блок']]}, лист «{resolve(x.get('лист_блок') or x['блок'], x['лист'])}»" if x.get('лист') else file_names[x['блок']]
+    where = lambda x: f"{file_names[x.get('лист_блок') or x['блок']]}, лист «{catalog.card_tab(x.get('лист_блок') or x['блок'], resolve(x.get('лист_блок') or x['блок'], x['лист']))}»" if x.get('лист') else file_names[x['блок']]
     live = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     out = [f"h2. NX Log Detective: {site}, {inv['period'][0][:10]} — {inv['period'][1][:10]}", '',
            f"Проверены блоки: {', '.join(res['selected'])}. Запросов: " + f"{inv['requests']:,}".replace(',', ' ') + ". Подробности — в приложенных файлах NXLD_*.xlsx.", '']
@@ -288,22 +289,23 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
     snap_json = json.dumps(snap, ensure_ascii=False, default=str, indent=1)
     about = about_df(res)
     written = []
+    books = {}   # собранные книги: сохраняются в конце, после проверки ссылок между файлами (catalog.fix_links)
     for b in res['selected']:
         if skip_existing and os.path.exists(os.path.join(outdir, file_names[b])):   # готовый файл после падения сборки — не пересобирать
             written.append(os.path.join(outdir, file_names[b]))
             written += sorted(glob.glob(os.path.join(outdir, file_names[b][:-5] + '_*.csv')))   # и его большие листы
             continue
         if only and b not in only: continue
+        catalog.CURRENT = b
         S = res['sheets'].get(b, {})
-        if 'SEO' in res['selected']:   # листы, переехавшие в 06 «SEO», в своих файлах не повторяются
-            S = {k_: v_ for k_, v_ in S.items() if k_ not in sheet_catalog.MOVED_TO_06.get(b, ())}
+        # данные SEO-листов, которые считают 02–05, в своих файлах не пишутся: лист есть только в 06 (каталог #8, запасных мест нет)
+        S = {k_: v_ for k_, v_ in S.items() if k_ not in sheet_catalog.SEO_ONLY.get(b, ())}
         items = [x for x in res['findings'] if x['блок'] == b]
         summ = kv_df(res['summary'].get(b, {}))
         if b == 'Общий анализ':
             # индекс (первый лист) строится отдельно; «О данных», «Сводка», «Главное» вошли в него (ТЗ 16.2)
             from .anatomy import appendix
             sheets = {k: v for k, v in {**S, **appendix(res)}.items() if k not in ('Люди и боты', 'Каналы')}   # их данные — в сводке «Активность»   # «Файлы» строится оформленным листом в конце (report_files)   # «Карта сайта» заменена «Анатомией сайта» и приложениями к ней (ТЗ, 3 октября)
-            if 'Боты' not in res['selected']: sheets['IP'] = res['ips']      # иначе лист IP — в 04 Bots
             hidden = snap_json
         elif b == 'Нагрузка и безопасность':   # 03 — по правилам 01 и 02: обзор вместо «Сводки» и «О данных»
             from . import report_load
@@ -340,6 +342,7 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
         names = write_xlsx(path, sheets, hidden)
         # «Проблемы» — карточками, первым листом блока (в Overview — вторым, после индекса); ТЗ 16.5
         wb = load_workbook(path)
+        for n_ in catalog.prune(wb, b): names.pop(n_, None)   # не утверждённые в каталоге листы — не пишутся (#8)
         report_problems.build_problems(wb, res, res['findings'] if b == 'Общий анализ' else items, file_names[b], with_block=(b == 'Общий анализ'))
         names = {'Проблемы': 'Проблемы', **names}
         if b == 'Ошибки':
@@ -384,27 +387,28 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
             if report_files.build_files(wb, res) is not None: names['Логи'] = 'Логи'
             tail_ = [n_ for n_ in ('Файлы', 'Логи', '_snapshot') if n_ in wb.sheetnames]   # в конце: «Файлы», «Логи», затем снимок
             wb._sheets = [w for w in wb._sheets if w.title not in tail_] + [wb[n_] for n_ in tail_]
-            ORDER = ['Обзор', 'Проблемы', 'Анатомия сайта', 'Активность', 'Журнал активности', 'Конверсии', 'Разделы', 'Типы страниц', 'Страницы',
-                     'Динамические блоки', 'Файлы', 'Фасеты', 'Точки приёма данных', 'Параметры запросов']
-            TAIL = ['Логи', '_snapshot']   # всё прочее — между списком и «Логами»
-            byname = {w.title: w for w in wb._sheets}
-            head_ = [byname[n_] for n_ in ORDER if n_ in byname]
-            tail_ = [byname[n_] for n_ in TAIL if n_ in byname]
-            wb._sheets = head_ + [w for w in wb._sheets if w not in head_ and w not in tail_] + tail_
+            for n_ in catalog.prune(wb, b): names.pop(n_, None)   # до оглавления: строки на невыведенные листы не появляются
+            byname = {w.title: w for w in wb._sheets}   # порядок — из каталога (#8); служебный «_snapshot» — в конце
+            head_ = [byname[n_] for n_ in catalog.order(b) if n_ in byname]
+            wb._sheets = head_ + [w for w in wb._sheets if w not in head_]
             report_index.build_index(wb, res, names)
         report_tables.humanize_urls(wb)  # кириллица в адресах — буквами (закодированная латиница остаётся уликой)
         report_tables.mask_pd_cells(wb)  # персональные данные в адресах — маскированно на всех листах
         if b not in ('Ошибки', 'Нагрузка и безопасность', 'Боты'): report_tables.redden_codes(wb)   # ошибки в списках кодов — красным; в 02 каждая строка — ошибка, там цвет — критичность
         if b in ('Боты', 'Маркетинг', 'SEO'): report_tables.paren_values(wb)   # «название (значение)» вместо двоеточия
         report_tables.sanitize(wb)   # представление листов, легенды, ##### — общий проход перед сохранением
-        for n_ in sheet_catalog.missing(b, wb.sheetnames):   # страховка: лист без места в каталоге sheets.py
+        for n_ in sheet_catalog.missing(b, wb.sheetnames):   # страховка: лист, которого нет в каталоге структуры (data/locale/<язык>/report_structure.json)
             msg = f'Лист «{n_}» в {file_names[b][:-5]} нет в каталоге оформления'
             if os.environ.get('NXLD_STRICT_CATALOG'): raise RuntimeError(msg)   # в тестах — ошибка
             print(msg)
-        wb.save(path)
+        catalog.finalize(wb, b)   # каталог (#8): только утверждённые листы, вкладки, заголовки и подзаголовки, ссылки, порядок
+        books[file_names[b]] = wb
         written.append(path)
         written += report_tables.write_big_csv(outdir)
         report_tables.BIG_OUT['файл'] = ''
+    catalog.fix_links(books, outdir)   # ссылки живые: на невыведенный лист карточка ведёт на Обзор, строки-ссылки не выводятся (#8)
+    for f_, wb_ in books.items():
+        wb_.save(os.path.join(outdir, f_))
     if only:
         return dict(files=written, zip=None, stem=stem)
     if redmine and os.path.exists(redmine):

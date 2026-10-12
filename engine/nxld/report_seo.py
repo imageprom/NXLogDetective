@@ -5,6 +5,7 @@
 Данные — seo.build; паразитные адреса — срез 03 (security), поисковые ошибки — блок 02, органика — блок 05,
 ИИ-роботы — блок 04: в своих файлах эти листы при 06 не повторяются, там — ссылка «Связанное в других отчётах»."""
 from . import sheets
+from .catalog import order as catalog_order
 import pandas as pd
 from .report_index import Wide, brand_header, F_NOTE, GREY
 from .seo import OPTIONAL_MISSING
@@ -14,7 +15,6 @@ from .report_load import parasites_sheet
 from .report_errors import search_errors_sheet
 from .report_marketing import organic_sheet
 
-ORDER = sheets.ORDER_06
 LINK = sheets.LINK_06
 p_ = lambda v: str(v).replace('.', ',')
 
@@ -24,10 +24,10 @@ def relink(findings):
         if x.get('блок') == 'SEO' and x.get('лист') in LINK: x['лист'] = LINK[x['лист']]
 
 
-def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, row_rule=None, links=(), font_rule=None):
+def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, row_rule=None, links=(), font_rule=None, auto=None):
     if d is None or not len(d): return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
-    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, row_rule=row_rule, links=links, red=('Ошибки',), font_rule=font_rule)   # ошибки — красным
+    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, row_rule=row_rule, links=links, red=('Ошибки',), font_rule=font_rule, auto=auto)   # ошибки — красным
     return wb[nm]
 
 
@@ -89,8 +89,9 @@ def build_sheets(wb, res):
     if R_ is not None and len(R_):
         d = pd.DataFrame({'Адрес': R_['адрес'], 'Переадресаций': R_['переадресаций'], 'Коды': R_['коды'], 'Роботы': R_['роботы']})
         kpi = [('Адресов', len(d)), ('Переадресаций', int(d['Переадресаций'].sum()))]   # по всем адресам; на лист — 1000 крупнейших
-        _sheet(wb, 'Переадресации роботов', d.head(1000), 'Адреса, по которым поисковики получают переадресацию вместо страницы' + (' · на листе — 1000 крупнейших' if len(d) > 1000 else ''),
-               {'Адрес': 60, 'Роботы': 44, 'Коды': 18}, ('Адрес', 'Роботы'), kpi, 'Коды')
+        cut = '· на листе — 1000 крупнейших' if len(d) > 1000 else ''   # динамическая часть подзаголовка (каталог: auto «cut»)
+        _sheet(wb, 'Переадресации роботов', d.head(1000), 'Адреса, по которым поисковики получают переадресацию вместо страницы' + (' ' + cut if cut else ''),
+               {'Адрес': 60, 'Роботы': 44, 'Коды': 18}, ('Адрес', 'Роботы'), kpi, 'Коды', auto={'cut': cut})
     organic_sheet(wb, (S.get('Маркетинг') or {}).get('Органика'))
     SB = S.get('Боты') or {}
     ai_sheet(wb, SB.get('ИИ-роботы'), SB.get('ИИ: страницы по запросам людей'), nm='ИИ-видимость',
@@ -114,7 +115,7 @@ def overview(wb, res, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — SEO {site.upper()}', 'Как поисковики и нейросети видят сайт: что обходят, что получают и что пропускают', last='I')
+    brand_header(ws, W, res, f'NX LOG DETECTIVE — SEO {site.upper()}', 'Как поисковики и нейросети видят сайт: что обходят, что получают и что пропускают', last='I', site=site.upper())
     names = set(wb.sheetnames)
     W.r += 1
     C = D.get('обход'); Fl = D.get('файлы'); Au = D.get('подлинность')
@@ -167,7 +168,9 @@ def build(wb, res, site):
     for k_ in list(wb.sheetnames):
         if k_ not in ('Проблемы',): del wb[k_]
     build_sheets(wb, res)
+    from .catalog import prune
+    prune(wb, 'SEO')   # до Обзора: строки на невыведенные листы не появляются (#8)
     overview(wb, res, site)
     byname = {w.title: w for w in wb._sheets}
-    head_ = [byname[n_] for n_ in ORDER if n_ in byname]
+    head_ = [byname[n_] for n_ in catalog_order('SEO') if n_ in byname]   # порядок — из каталога (#8)
     wb._sheets = head_ + [w for w in wb._sheets if w not in head_]

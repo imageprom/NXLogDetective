@@ -179,7 +179,7 @@ python3 engine/nxld_run.py --work ./work --out ./out --stage report --edits edit
 
 На выходе (`./out`):
 - `NXLD_01_Overview.xlsx` — Обзор, все проблемы, «Анатомия сайта», «Активность», журналы и общие листы; скрытый лист со снимком;
-- `NXLD_02_Errors.xlsx`, `NXLD_03_Load_Security.xlsx`, `NXLD_04_Bots.xlsx`, `NXLD_05_Marketing.xlsx`, `NXLD_06_SEO.xlsx` — первым листом Обзор, вторым «Проблемы» своего блока; порядок листов — каталог `engine/nxld/sheets.py`;
+- `NXLD_02_Errors.xlsx`, `NXLD_03_Load_Security.xlsx`, `NXLD_04_Bots.xlsx`, `NXLD_05_Marketing.xlsx`, `NXLD_06_SEO.xlsx` — первым листом Обзор, вторым «Проблемы» своего блока; состав и порядок листов — каталог структуры `data/locale/ru/report_structure.json` (выводятся только утверждённые листы);
 - `NXLD_<сайт>_<с>_<по>.stix.json` — выгрузка STIX 2.1 (раздел 7);
 - `NXLD_Redmine.textile` — текст для Redmine;
 - `NXLD_<сайт>_<с>_<по>.snapshot.json` — снимок для следующего сравнения;

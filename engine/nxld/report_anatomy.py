@@ -80,6 +80,8 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
     S.r = 2
     ws.merge_cells('B2:F2')
     S.cell('B', 'АНАТОМИЯ САЙТА', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
+    from .catalog import mark
+    mark(ws, 'B2', None)   # заголовок — из каталога (catalog.finalize); подзаголовка у листа нет
     S.r = 3
     zones = A.get('зоны') or []
     adm = [z for z in zones if z['что'] == 'Админка движка']

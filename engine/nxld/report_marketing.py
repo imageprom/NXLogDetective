@@ -5,12 +5,12 @@
 Данные — блок «Маркетинг» (blocks.marketing) и marketing.build (журнал, карты, качество, боты в рекламе);
 оформление только рисует."""
 from . import sheets
+from .catalog import order as catalog_order
 import pandas as pd
 from .report_index import Wide, brand_header, ORANGE, F_NOTE
 from .report_tables import data_sheet, journal_sheet, heat_sheet, extra_table
 from .report_bots import notes
 
-ORDER = sheets.ORDER_05
 LINK = sheets.LINK_05
 F_GREY = 'EFEFEF'
 MCOLS = {'визитов': 'Визитов', 'IP': 'Уникальных IP', 'страниц_на_визит': 'Страниц на визит', 'мгновенный_уход_%': 'Ушли сразу, %',
@@ -57,10 +57,10 @@ def _ad(S, B, col, name, label, extra=None):
     return d.reset_index(drop=True), M
 
 
-def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, links=(), row_rule=None, red=('Ошибок посадочной',)):
+def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, links=(), row_rule=None, red=('Ошибок посадочной',), auto=None):
     if d is None or not len(d): return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
-    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, links=links, row_rule=row_rule, red=red)
+    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, links=links, row_rule=row_rule, red=red, auto=auto)
     return wb[nm]
 
 
@@ -172,16 +172,17 @@ def build_sheets(wb, res, S):
         kpi = [(f'{nm}', len(d)), ('Кликов', int(d['Кликов всего'].sum()) if 'Кликов всего' in d else int(d['Визитов'].sum())),
                ('Впустую', int(d['Впустую'].sum()) if 'Впустую' in d else 0)]   # цифры — по всему срезу
         if col == 'source': kpi.append(('К отключению', int(d['Вердикт'].astype(str).str.startswith('отключить').sum())))
-        if len(d) > 1000: d = d.head(1000); sub = sub + ' · на листе — 1000 крупнейших'
+        cut = '· на листе — 1000 крупнейших' if len(d) > 1000 else ''   # динамическая часть подзаголовка (каталог: auto «cut»)
+        if cut: d = d.head(1000); sub = sub + ' ' + cut
         rule = (lambda r: F_NOTE if str(r.get('Вердикт', '')).startswith('отключить') else None) if col == 'source' else _bots_rule
-        ws = _sheet(wb, nm, d, sub, wd, tuple(wd), kpi, 'Роботов', row_rule=rule)
+        ws = _sheet(wb, nm, d, sub, wd, tuple(wd), kpi, 'Роботов', row_rule=rule, auto={'cut': cut})
         if ws is not None and col == 'фраза':
             notes(ws, ['«Автотаргетинг» — показ по автотаргетингу Директа, фраза неизвестна. «(фраза не передана)» — в ссылке нет метки utm_term.',
                        'Кликов всего — все переходы по рекламной ссылке с этой фразой; Людей — из них люди; Ботов — боты. '
                        'Впустую — клики ботов и переходы людей на посадочную с ошибкой: за них заплачено, а пользы нет. Принято — заявки, которые сайт принял.'])
         if ws is not None and col == 'source':
             notes(ws, ['Вердикт: «отключить: в основном боты» — ботов не меньше половины кликов; «отключить: трафик без заявок» — от 30 визитов людей и ни одной заявки; «мало данных» — решать рано.'])
-    organic_sheet(wb, S.get('Органика'))
+    # «Органика» — только в 06 «SEO» (каталог #8: запасных мест SEO-листов в 02–05 нет)
 
 
 def organic_sheet(wb, O):
@@ -203,7 +204,7 @@ def overview(wb, res, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — МАРКЕТИНГ {site.upper()}', 'Откуда приходят люди, сколько заявок даёт реклама и где деньги уходят впустую', last='I')
+    brand_header(ws, W, res, f'NX LOG DETECTIVE — МАРКЕТИНГ {site.upper()}', 'Откуда приходят люди, сколько заявок даёт реклама и где деньги уходят впустую', last='I', site=site.upper())
     names = set(wb.sheetnames)
     W.r += 1
     Q = MK.get('качество'); RI = MK.get('реклама_итог') or {}
@@ -271,7 +272,9 @@ def build(wb, res, S, site):
     for k_ in list(wb.sheetnames):
         if k_ not in ('Проблемы',): del wb[k_]
     build_sheets(wb, res, S)
+    from .catalog import prune
+    prune(wb, 'Маркетинг')   # до Обзора: строки на невыведенные листы не появляются (#8)
     overview(wb, res, site)
     byname = {w.title: w for w in wb._sheets}
-    head_ = [byname[n_] for n_ in ORDER if n_ in byname]
+    head_ = [byname[n_] for n_ in catalog_order('Маркетинг') if n_ in byname]   # порядок — из каталога (#8)
     wb._sheets = head_ + [w for w in wb._sheets if w not in head_]

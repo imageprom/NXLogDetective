@@ -6,8 +6,8 @@
 import json, os, re
 import numpy as np, pandas as pd
 
-FILES = {'Общий анализ': 'NXLD_01_Overview.xlsx', 'Ошибки': 'NXLD_02_Errors.xlsx', 'Нагрузка и безопасность': 'NXLD_03_Load_Security.xlsx',
-         'Боты': 'NXLD_04_Bots.xlsx', 'Маркетинг': 'NXLD_05_Marketing.xlsx', 'SEO': 'NXLD_06_SEO.xlsx'}
+from .catalog import file_names as _file_names
+FILES = _file_names()   # номер, имя и порядок файлов — из каталога (#8)
 # частые обработчики форм → человеческое имя (если имени нет — ИИ называет форму сам по адресу и странице)
 FORM_NAMES = [(r'callback_newproject|newproject', 'заявка по новому проекту'), (r'modal_callback|callback', 'обратный звонок'),
               (r'excursion', 'запись на экскурсию'), (r'getprice|get_price|price', 'запрос цены'), (r'mortgage_consultation', 'консультация по ипотеке'),
@@ -21,9 +21,10 @@ def sheet_name(n):
 
 
 def ref(block, sheet):
-    """«файл, лист» — по каталогу листов (sheets.py): старые имена из данных блока ведут на нынешние листы."""
+    """«файл, лист» — старые имена из данных блока (sheets.LINKS) ведут на нынешние листы; вкладка — из каталога структуры."""
     from .sheets import resolve
-    return f'{FILES[block]}, лист «{sheet_name(resolve(block, sheet))}»'
+    from .catalog import card_tab
+    return f'{FILES[block]}, лист «{sheet_name(card_tab(block, resolve(block, sheet)))}»'
 
 
 def rnd(x, nd=1):

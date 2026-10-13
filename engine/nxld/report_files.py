@@ -106,6 +106,7 @@ def build_files(wb, res, title='Логи'):
             if int(r['нераспознано']): note.append(f"не распознано {ru_num(int(r['нераспознано']))} строк")
             rows.append([shown(r['файл']), int(r['строк']), dt(r['с']), dt(r['по']), '\n'.join(note) or r['формат']])
         big_table(S, ['Файл', 'Строк', 'С', 'По', 'Формат и заметки'], rows)
+    S.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

@@ -159,6 +159,7 @@ class Texts:
     """Тексты блоков листа из каталога: заголовок, подзаголовок, примечания, ссылки, легенда, статус.
     Блок ищется по коду в списке blocks листа; нет блока — ошибка при NXLD_STRICT_CATALOG=1, иначе пусто."""
     def __init__(self, ws_or_name, block=None):
+        if not isinstance(ws_or_name, str): ws_or_name = getattr(ws_or_name, '_nxld_home', None) or ws_or_name   # черновик блока (Sheet.block)
         self.name = ws_or_name if isinstance(ws_or_name, str) else ws_or_name.title
         self.block, self.entry = sheet_of(self.name, block)
 
@@ -167,6 +168,11 @@ class Texts:
         if b is None and strict():
             raise KeyError(f'блока «{code}» листа «{self.name}» нет в каталоге структуры')
         return b
+
+    def order(self, codes):
+        """Коды блоков в порядке списка blocks каталога (кодов, которых в каталоге нет, — в конце, в исходном порядке)."""
+        known = [b['code'] for b in (self.entry or {}).get('blocks', [])]
+        return sorted(codes, key=lambda c: known.index(c) if c in known else len(known))
 
     def has(self, code):
         """Есть ли блок в каталоге (без ошибки при его отсутствии)."""
@@ -277,6 +283,9 @@ def finalize(wb, block, log=print):
     """Последний проход по книге файла: невыводимые листы убрать, заголовки и подзаголовки — из каталога, вкладки — из каталога,
     ссылки — на новые вкладки (на невыведенный лист — на Обзор своего файла), порядок — как в каталоге."""
     from .sheets import SERVICE
+    for ws in list(wb.worksheets):   # блоки листов-карточек, не разложенные оформлением (Sheet.finish)
+        sh = getattr(ws, '_nxld_sheet', None)
+        if sh is not None and getattr(sh, '_home', None) is ws: sh.finish()
     prune(wb, block, log)
     for ws in wb.worksheets:   # заголовки и подзаголовки
         h = getattr(ws, '_nxld_head', None)

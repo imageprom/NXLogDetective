@@ -119,9 +119,11 @@ def build_sheets(wb, res, S):
         D0 = S[k0]; d = _m(D0, {D0.columns[0]: l0})
         ws = _sheet(wb, 'Аудитория', d, None, {l0: 30}, (l0,),
                     [('Визитов людей', int(d['Визитов'].sum()))], 'Отправок', red=())
-        for k, lab in cuts[1:]:
+        code_ = {'Браузер': 'browsers', 'Визит': 'new_returning'}
+        from .catalog import K
+        for k, lab in sorted(cuts[1:], key=lambda x: K(ws).order(list(code_.values())).index(code_[x[1]])) if ws is not None else []:   # порядок доп. таблиц — из каталога
             Dk = S[k]
-            extra_table(ws, _m(Dk, {Dk.columns[0]: lab}), {'Браузер': 'browsers', 'Визит': 'new_returning'}[lab], red=())
+            extra_table(ws, _m(Dk, {Dk.columns[0]: lab}), code_[lab], red=())
     # Страницы входа
     EP = S.get('Конверсии: Страницы входа')
     if EP is not None and len(EP):
@@ -253,6 +255,7 @@ def overview(wb, res, site):
         W.block('tags')
         W.table(['Проблема', 'Кликов', 'Пример'], [[r['проблема'], int(r['кликов']), str(r['пример'])[:120]] for _, r in LB.iterrows()], ['BC', 'D', 'EFGHI'], num=(1,), wrap=0.95)
     W.related(res, 'Маркетинг')
+    W.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

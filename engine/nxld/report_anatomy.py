@@ -212,6 +212,7 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
         S.table(['Группа', 'Параметров', 'Запросов', 'Например'], [[x['группа'], int(x['параметров']), int(x['применений']), x['примеры']] for x in A['параметры']],
                 ['B', 'C', 'D', 'EF'], num=(1, 2), wrap=0.8)
         link_rows(S, 'params', names)
+    S.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

@@ -95,6 +95,7 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
         S.block('norm', count=len(norm))
         for x in norm:
             one_line(S, f"{cap(x['что_происходит'])}" + (f" — {x.get('отметка')}" if x.get('отметка') else ''), None)
+    S.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_area = f'A1:G{S.r}'

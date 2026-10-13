@@ -364,6 +364,7 @@ def overview(wb, res, site):
                 ['BC', 'DEF', 'G', 'H'], num=(2,), wrap=0.95)
         W.links_of('ai_robots', names)
     W.related(res, 'Боты')
+    W.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

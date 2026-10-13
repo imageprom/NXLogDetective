@@ -56,7 +56,8 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
     ws.row_dimensions[1].height = 12
     S.r = 2
     ws.merge_cells('B2:F2')
-    S.cell('B', 'ПРОБЛЕМЫ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
+    from .catalog import sheet_texts
+    S.cell('B', sheet_texts(title)[0], Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30   # заголовок — из каталога
     act = [x for x in items if x.get('статус_вид') != 'исправлена' and x.get('статус') != 'отмечено как норма']
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Тревога', 'Срочно', 'Важно', 'К сведению', 'Замечание')}
     ws.merge_cells('B3:F3')
@@ -86,12 +87,12 @@ def build_problems(wb, res, items, here_file, with_block, index=0, title='Про
             card(S, x, n, sev, here_file, with_block, short=True)
     fixed = [x for x in items if x.get('статус_вид') == 'исправлена']
     if fixed:
-        S.section(f'Исправлено с прошлой проверки — {len(fixed)}')
+        S.block('fixed', count=len(fixed))
         for x in fixed:
             one_line(S, f"✓ {cap(x.get('заголовок') or x['что_происходит'])} — в новом периоде не обнаружено (если запросов к этим адресам не было, исправление не подтверждено)", None)
     norm = [x for x in items if x.get('статус') == 'отмечено как норма']
     if norm:
-        S.section(f'Отмечено как норма — {len(norm)}')
+        S.block('norm', count=len(norm))
         for x in norm:
             one_line(S, f"{cap(x['что_происходит'])}" + (f" — {x.get('отметка')}" if x.get('отметка') else ''), None)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0

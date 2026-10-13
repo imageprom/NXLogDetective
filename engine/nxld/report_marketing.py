@@ -8,7 +8,7 @@ from . import sheets
 from .catalog import order as catalog_order
 import pandas as pd
 from .report_index import Wide, brand_header, ORANGE, F_NOTE
-from .report_tables import data_sheet, journal_sheet, heat_sheet, extra_table
+from .report_tables import data_sheet, journal_sheet, heat_sheet, extra_table, notes, notes_of, legend_of
 from .report_bots import notes
 
 LINK = sheets.LINK_05
@@ -60,7 +60,7 @@ def _ad(S, B, col, name, label, extra=None):
 def _sheet(wb, nm, d, sub, widths, wrap, kpi, kpi_col, links=(), row_rule=None, red=('Ошибок посадочной',), auto=None):
     if d is None or not len(d): return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
-    data_sheet(wb, nm, d, nm, sub, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, links=links, row_rule=row_rule, red=red, auto=auto)
+    data_sheet(wb, nm, d, widths, note=sub, wrap=wrap, kpi=kpi, kpi_col=kpi_col, links=links, row_rule=row_rule, red=red, auto=auto)
     return wb[nm]
 
 
@@ -81,15 +81,12 @@ def build_sheets(wb, res, S):
             full = body[body['_полный'].astype(bool)] if body['_полный'].astype(bool).any() else body
             return [('Визитов людей в день', int(round(full['Визиты людей|Все'].mean()))), ('Из рекламы в день', int(round(full['Визиты людей|Реклама'].mean()))),
                     ('Принято заявок', int(body['Заявки|Принято'].sum())), ('Кликов впустую', int(body['Рекламные клики|Впустую'].sum()))]
-        journal_sheet(wb, 'Статистика', J, 'Люди по каналам, рекламные клики и заявки по дням', kpi, [('Сводка', 'Обзор'), ('Каналы', 'Каналы')],
-                      ['Рекламные клики: «Ботов» — визиты ботов по рекламным ссылкам; «Впустую» — боты и люди, попавшие на посадочную с ошибкой (кроме 499).',
-                       'Заявки: «Принято» — от людей; «От ботов» — фальшивые заявки, которые сайт принял.'],
-                      kpi_col='Визиты людей|Прочие', outages=E.get('сбои'))
+        journal_sheet(wb, 'Статистика', J, kpi, kpi_col='Визиты людей|Прочие', outages=E.get('сбои'))
     # Каналы
     C = S.get('Каналы подробно')
     if C is not None and len(C):
         d = _m(C, {'канал': 'Канал', 'источник': 'Источник'}, empty='—')
-        ws = _sheet(wb, 'Каналы', d, 'Откуда приходят люди и сколько заявок даёт каждый источник', {'Канал': 24, 'Источник': 30}, ('Канал', 'Источник'),
+        ws = _sheet(wb, 'Каналы', d, None, {'Канал': 24, 'Источник': 30}, ('Канал', 'Источник'),
                     [('Каналов', int(d['Канал'].nunique())), ('Визитов людей', int(d['Визитов'].sum())), ('Принято', int(d['Принято'].sum()))], 'Отправок', red=())
         Q, CL = MK.get('качество'), S.get('Качество и очистка по каналам')
         if ws is not None and Q is not None and len(Q):
@@ -99,7 +96,7 @@ def build_sheets(wb, res, S):
             if 'просмотров_до_очистки' in q:
                 t['Просмотров до очистки'] = q['просмотров_до_очистки'].fillna(0).astype(int); t['После очистки'] = q['просмотров_после'].fillna(0).astype(int)
                 t['Двойных загрузок'] = q['двойных_загрузок'].fillna(0).astype(int)
-            extra_table(ws, t, 'Качество каналов и заявок', 'Сколько в канале ботов и какая доля принятых заявок фальшивая; просмотры до и после очистки от двойных загрузок',
+            extra_table(ws, t, 'channel_quality',
                         row_rule=lambda r: F_NOTE if (r.get('Фальшивых заявок, %') or 0) >= 30 else None, red=())
     # Воронки
     Fn = S.get('Воронки')
@@ -108,58 +105,54 @@ def build_sheets(wb, res, S):
         d = pd.DataFrame({'Форма': form_name(Fn['цель']).values, 'Обработчик': Fn['цель'].astype(str).values, 'Открыли форму': Fn['открыли_форму'].astype(str).replace({'': '—'}).values,
                           'Отправили (визитов)': Fn['отправили_визитов'].astype(int).values, 'Отправок': Fn['отправок'].astype(int).values, 'Принято': Fn['принято'].astype(int).values})
         d['Принято, %'] = (d['Принято'] / d['Отправок'].clip(lower=1) * 100).round(1)
-        _sheet(wb, 'Воронки', d, 'Формы сайта: сколько отправили и сколько сайт принял', {'Форма': 26, 'Обработчик': 46, 'Открыли форму': 34}, ('Обработчик', 'Открыли форму'),
+        _sheet(wb, 'Воронки', d, None, {'Форма': 26, 'Обработчик': 46, 'Открыли форму': 34}, ('Обработчик', 'Открыли форму'),
                [('Форм', len(d)), ('Отправок', int(d['Отправок'].sum())), ('Принято', int(d['Принято'].sum()))], 'Отправок', red=())
     # Конверсии по времени
     T = [b for b in MK.get('время') or [] if b[2] is not None and len(b[2])]
     if T:
-        heat_sheet(wb, 'Конверсии по времени', 'Конверсии по времени', 'Когда приходят люди и когда оставляют заявки: день недели × час', T,
-                   intro=['Куда смотреть: часы, где визитов из рекламы много, а заявок нет, — кандидаты на снижение ставок; часы с заявками — на повышение.'],
-                   links=[('Реклама', 'Реклама'), ('Статистика по дням', 'Статистика')], unit='Сумма за период по дню недели и часу')
+        heat_sheet(wb, 'Конверсии по времени', T, unit='Сумма за период по дню недели и часу')   # карты — из движка (marketing)
     # Аудитория
     cuts = [(k, lab) for k, lab in (('Конверсии: Устройства', 'Устройство'), ('Конверсии: Встроенные браузеры', 'Браузер'), ('Конверсии: Новые и повторные', 'Визит'))
             if S.get(k) is not None and len(S[k])]
     if cuts:
         k0, l0 = cuts[0]
         D0 = S[k0]; d = _m(D0, {D0.columns[0]: l0})
-        ws = _sheet(wb, 'Аудитория', d, 'Кто эти люди: устройство, браузер, первый ли визит', {l0: 30}, (l0,),
+        ws = _sheet(wb, 'Аудитория', d, None, {l0: 30}, (l0,),
                     [('Визитов людей', int(d['Визитов'].sum()))], 'Отправок', red=())
         for k, lab in cuts[1:]:
             Dk = S[k]
-            extra_table(ws, _m(Dk, {Dk.columns[0]: lab}), {'Браузер': 'Встроенные браузеры', 'Визит': 'Новые и повторные'}[lab],
-                        {'Браузер': 'Сайт открыт внутри приложения (мессенджер, соцсеть) или в обычном браузере', 'Визит': 'Первый визит с этого IP за период или повторный'}[lab], red=())
+            extra_table(ws, _m(Dk, {Dk.columns[0]: lab}), {'Браузер': 'browsers', 'Визит': 'new_returning'}[lab], red=())
     # Страницы входа
     EP = S.get('Конверсии: Страницы входа')
     if EP is not None and len(EP):
         d = _m(EP, {'вход_шаблон': 'Страница входа'})
-        ws = _sheet(wb, 'Страницы входа', d, 'С каких страниц люди начинают визит и как часто оставляют заявку (страницы одного вида — одной строкой)', {'Страница входа': 60}, ('Страница входа',),
+        ws = _sheet(wb, 'Страницы входа', d, None, {'Страница входа': 60}, ('Страница входа',),
                     [('Страниц', len(d)), ('Визитов', int(d['Визитов'].sum()))], 'Отправок', red=())
         LP = S.get('Реклама: посадочные')
         if ws is not None and LP is not None and len(LP):
             t = _m(LP, {'посадочная': 'Рекламная посадочная'}); t.insert(1, 'Код', LP['entry_status'].astype(int).values)
-            extra_table(ws, t.head(300), 'Рекламные посадочные', 'Куда ведут рекламные ссылки и что отвечает сервер; ошибки — красным', wrap=('Рекламная посадочная',),
+            extra_table(ws, t.head(300), 'ad_landings', wrap=('Рекламная посадочная',),
                         row_rule=lambda r: F_NOTE if int(r.get('Код') or 0) >= 400 and int(r.get('Код') or 0) != 499 else None, red=())
     # Реклама
     TP = S.get('Реклама: системы и типы площадок')
     if TP is not None and len(TP):
         d = _m(TP, {'система': 'Система', 'тип_площадки': 'Тип площадки'})
         RI = MK.get('реклама_итог') or {}
-        ws = _sheet(wb, 'Реклама', d, 'Рекламные системы и типы площадок: визиты людей и заявки', {'Система': 22, 'Тип площадки': 30}, ('Тип площадки',),
+        ws = _sheet(wb, 'Реклама', d, None, {'Система': 22, 'Тип площадки': 30}, ('Тип площадки',),
                     [('Кликов всего', int(RI.get('кликов', 0))), ('Людей', int(RI.get('людей', 0))), ('Впустую', int(RI.get('впустую', 0)))], 'Отправок', red=())
         r_ = _ad(S, B, 'device', 'Устройства (метка)', 'Устройство (по метке)')
         if ws is not None and r_ is not None:
-            extra_table(ws, r_[0], 'Устройства по рекламной метке', 'Устройство, которое указала рекламная система; клики ботов и впустую — по всем визитам', red=('Ошибок посадочной',))
-        notes(ws, ['Роботы в рекламных кликах — в основном робот рекламной системы, который проверяет объявления; за них не платят, в «впустую» они не входят.'])
+            extra_table(ws, r_[0], 'ad_devices', red=('Ошибок посадочной',))
+        notes_of(ws)
     # Кампании, Фразы, Площадки, Объявления, Регионы
-    kp = [('кампания', 'Кампании', 'Кампания', 'Рекламные кампании: клики, боты, впустую и заявки', {'Кампания': 50}),
-          ('фраза', 'Фразы', 'Фраза', 'Ключевые фразы рекламных кампаний (метка utm_term): по какой фразе Директ показал объявление и сколько это дало. '
-                                      'Это не поисковые запросы людей — их поисковики в логи сайта не передают', {'Фраза': 50}),
-          ('source', 'Площадки', 'Площадка', 'Площадки показа рекламы: клики, боты, заявки и что с площадкой делать', {'Площадка': 36, 'Тип': 20, 'Вердикт': 28}),
-          ('aid', 'Объявления', 'Объявление', 'Объявления по номеру: клики, боты, впустую и заявки', {'Объявление': 24}),
-          ('region', 'Регионы', 'Код', 'Регионы показа рекламы по метке: клики, боты и заявки', {'Код': 10, 'Регион': 26, 'Область': 28})]
+    kp = [('кампания', 'Кампании', 'Кампания', {'Кампания': 50}),   # подзаголовки листов — из каталога
+          ('фраза', 'Фразы', 'Фраза', {'Фраза': 50}),
+          ('source', 'Площадки', 'Площадка', {'Площадка': 36, 'Тип': 20, 'Вердикт': 28}),
+          ('aid', 'Объявления', 'Объявление', {'Объявление': 24}),
+          ('region', 'Регионы', 'Код', {'Код': 10, 'Регион': 26, 'Область': 28})]
     from .blocks import placement_type
     from .marketing import verdict
-    for col, nm, lab, sub, wd in kp:
+    for col, nm, lab, wd in kp:
         ex = None
         if col == 'source':
             ex = lambda M: pd.DataFrame({'Тип': [placement_type(x, '') for x in M['source'].astype(str)],
@@ -173,15 +166,13 @@ def build_sheets(wb, res, S):
                ('Впустую', int(d['Впустую'].sum()) if 'Впустую' in d else 0)]   # цифры — по всему срезу
         if col == 'source': kpi.append(('К отключению', int(d['Вердикт'].astype(str).str.startswith('отключить').sum())))
         cut = '· на листе — 1000 крупнейших' if len(d) > 1000 else ''   # динамическая часть подзаголовка (каталог: auto «cut»)
-        if cut: d = d.head(1000); sub = sub + ' ' + cut
+        if cut: d = d.head(1000)
         rule = (lambda r: F_NOTE if str(r.get('Вердикт', '')).startswith('отключить') else None) if col == 'source' else _bots_rule
-        ws = _sheet(wb, nm, d, sub, wd, tuple(wd), kpi, 'Роботов', row_rule=rule, auto={'cut': cut})
+        ws = _sheet(wb, nm, d, None, wd, tuple(wd), kpi, 'Роботов', row_rule=rule, auto={'cut': cut})
         if ws is not None and col == 'фраза':
-            notes(ws, ['«Автотаргетинг» — показ по автотаргетингу Директа, фраза неизвестна. «(фраза не передана)» — в ссылке нет метки utm_term.',
-                       'Кликов всего — все переходы по рекламной ссылке с этой фразой; Людей — из них люди; Ботов — боты. '
-                       'Впустую — клики ботов и переходы людей на посадочную с ошибкой: за них заплачено, а пользы нет. Принято — заявки, которые сайт принял.'])
+            notes_of(ws)
         if ws is not None and col == 'source':
-            notes(ws, ['Вердикт: «отключить: в основном боты» — ботов не меньше половины кликов; «отключить: трафик без заявок» — от 30 визитов людей и ни одной заявки; «мало данных» — решать рано.'])
+            notes_of(ws)
     # «Органика» — только в 06 «SEO» (каталог #8: запасных мест SEO-листов в 02–05 нет)
 
 
@@ -190,10 +181,10 @@ def organic_sheet(wb, O):
     if O is None or not len(O): return None
     d = O.copy(); dt_ = pd.to_datetime(d['day'])
     d = pd.concat([pd.DataFrame({'Дата': dt_.dt.strftime('%d.%m.%Y')}), d.drop(columns='day').astype(int)], axis=1)
-    ws = _sheet(wb, 'Органика', d, 'Визиты людей из поиска по дням и поисковикам', {'Дата': 12}, (),
+    ws = _sheet(wb, 'Органика', d, None, {'Дата': 12}, (),
                 [('Визитов из поиска', int(d.drop(columns='Дата').values.sum()))], None, red=())
     if ws is not None:
-        notes(ws, ['Поисковые запросы людей в логах сайта не видны: Яндекс и Google не передают их сайту. Видно только, из какого поисковика пришёл человек.'])
+        notes_of(ws)
     return ws
 
 
@@ -204,7 +195,7 @@ def overview(wb, res, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — МАРКЕТИНГ {site.upper()}', 'Откуда приходят люди, сколько заявок даёт реклама и где деньги уходят впустую', last='I', site=site.upper())
+    brand_header(ws, W, res, last='I', site=site.upper())
     names = set(wb.sheetnames)
     W.r += 1
     Q = MK.get('качество'); RI = MK.get('реклама_итог') or {}
@@ -213,54 +204,53 @@ def overview(wb, res, site):
     W.kpis([('Визитов людей', ppl), ('Принято заявок', acc), ('Конверсия, %', round(acc / max(1, ppl) * 100, 3)), ('Рекламных кликов', int(RI.get('кликов', 0))),
             ('Из них людей', int(RI.get('людей', 0))), ('Впустую', int(RI.get('впустую', 0))), ('Фальшивых заявок', int(Q['заявок_ботов'].sum()) if Q is not None else 0)])
     if Q is not None and len(Q):
-        W.section('Каналы', 'Люди и боты по каналам, принятые заявки и доля фальшивых.')
+        W.block('channels')
         W.table(['Канал', 'Людей', 'Доля ботов, %', 'Заявок людей', 'Конверсия, %', 'Фальшивых, %'],
                 [[r['канал'], int(r['людей']), r['доля_ботов_%'], int(r['заявок_людей']), r['конверсия_людей_%'], r['фальшивых_заявок_%']] for _, r in Q.head(8).iterrows()],
                 ['BC', 'D', 'E', 'F', 'G', 'H'], num=(1, 3))
-        W.link('Все каналы и качество', 'Каналы', names)
+        W.links_of('channels', names)
     G = MK.get('реклама_по_системам')
     if G is not None and len(G) and {'визитов', 'мгновенный_уход_%', 'принято', 'конверсия_%'} <= set(G.columns):   # людей по рекламе нет — метрик нет, блока нет
-        W.section('Реклама', 'Клики по рекламным ссылкам и что из них получилось.')
+        W.block('ads')
         G = G.sort_values('кликов', ascending=False)
         W.table(['Система', 'Кликов', 'Людей', 'Ушли сразу, %', 'Принято', 'Конверсия, %'],
                 [[r['channel_sub'], int(r['кликов']), int(r['визитов']), r['мгновенный_уход_%'], int(r['принято']), r['конверсия_%']] for _, r in G.head(6).iterrows()],
                 ['BC', 'D', 'E', 'F', 'G', 'H'], num=(1, 2, 4))
-        W.link('Системы и типы площадок', 'Реклама', names)
+        W.links_of('ads', names)
     K = (MK.get('реклама_боты') or {}).get('Кампании')
     KP = S.get('Реклама: Кампании')
     if K is not None and len(K):
         M = K.merge(KP, on='кампания', how='left') if KP is not None else K
         M = M.sort_values('визитов_всех', ascending=False)
-        W.section('Кампании', 'Крупнейшие кампании: клики, впустую и заявки.')
+        W.block('campaigns')
         W.table(['Кампания', 'Кликов', 'Впустую', 'Ботов, %', 'Принято'],
                 [[str(r['кампания']) or '(без метки)', int(r['визитов_всех']), int(r['впустую']), r['доля_ботов_%'], num_(r.get('принято', 0))] for _, r in M.head(6).iterrows()],
                 ['BCDE', 'F', 'G', 'H', 'I'], num=(1, 2, 4), wrap=0.95)
-        W.link('Все кампании', 'Кампании', names)
-    for key, title, sub, n_ in (('фразы_топ', 'Фразы', 'Ключевые фразы кампаний с наибольшим числом кликов. Это не поисковые запросы людей.', 10),
-                                ('фразы_с_заявками', 'Фразы с заявками', 'Фразы, по которым люди оставили заявки.', 5)):
+        W.links_of('campaigns', names)
+    for key, code, n_ in (('фразы_топ', 'phrases', 10), ('фразы_с_заявками', 'phrases_leads', 5)):
         T = MK.get(key)
         if T is None or not len(T): continue
-        W.section(title, sub)
+        W.block(code)
         W.table(['Фраза', 'Кликов', 'Людей', 'Впустую', 'Принято', 'Конверсия, %'],
                 [[str(r['фраза']), num_(r['визитов_всех']), num_(r['визитов']), num_(r['впустую']), num_(r['принято']), r['конверсия_%']] for _, r in T.head(n_).iterrows()],
                 ['BCD', 'E', 'F', 'G', 'H', 'I'], num=(1, 2, 3, 4), wrap=0.95)
-        W.link('Все фразы', 'Фразы', names)
+        W.links_of(code, names)
     T = MK.get('регионы_топ')
     if T is not None and len(T):
-        W.section('Регионы', 'Где Директ показал рекламу: регионы с наибольшим числом кликов.')
+        W.block('regions')
         W.table(['Регион', 'Область', 'Кликов', 'Людей', 'Впустую', 'Принято'],
                 [[r['регион'] or str(r['region']), r['область'], num_(r['визитов_всех']), num_(r['визитов']), num_(r['впустую']), num_(r['принято'])] for _, r in T.iterrows()],
                 ['BC', 'DE', 'F', 'G', 'H', 'I'], num=(2, 3, 4, 5), wrap=0.95)
-        W.link('Все регионы', 'Регионы', names)
+        W.links_of('regions', names)
     OFF = S.get('Площадки к отключению')
     if OFF is not None and len(OFF):
-        W.section('Площадки к отключению', 'Заметный трафик и ни одной заявки.')
+        W.block('placements_off')
         W.table(['Площадка', 'Тип', 'Визитов', 'Почему'], [[r['source'], r['тип'], int(r['визитов']), r['почему']] for _, r in OFF.head(6).iterrows()],
                 ['BC', 'D', 'E', 'FGHI'], num=(2,), wrap=0.95)
-        W.link(f'Все площадки с вердиктом ({len(OFF)} к отключению)', 'Площадки', names)
+        W.links_of('placements_off', names, count=len(OFF))
     LB = S.get('Метки: проблемы')
     if LB is not None and len(LB):
-        W.section('Метки', 'Рекламные ссылки с ошибками в метках: клики не попадут в отчёты систем аналитики.')
+        W.block('tags')
         W.table(['Проблема', 'Кликов', 'Пример'], [[r['проблема'], int(r['кликов']), str(r['пример'])[:120]] for _, r in LB.iterrows()], ['BC', 'D', 'EFGHI'], num=(1,), wrap=0.95)
     W.related(res, 'Маркетинг')
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0

@@ -129,6 +129,107 @@ def render(text, auto=None):
     return '\n'.join(lines)
 
 
+# ---- тексты листа и его блоков при записи (задача #11) ----
+def strict():
+    return bool(os.environ.get('NXLD_STRICT_CATALOG'))
+
+
+def sheet_of(name, block=None):
+    """Запись листа по имени в коде: в файле block (по умолчанию — собираемом), иначе — в первом файле, где такой лист есть."""
+    b = block or CURRENT
+    if b:
+        e = by_internal(b, name)
+        if e is not None: return b, e
+    for b_ in blocks():
+        e = by_internal(b_, name)
+        if e is not None: return b_, e
+    return b, None
+
+
+def sheet_texts(name, auto=None, block=None):
+    """(заголовок, подзаголовок) листа из каталога — для оформления при записи."""
+    _, e = sheet_of(name, block)
+    if e is None:
+        if strict(): raise KeyError(f'листа «{name}» нет в каталоге структуры')
+        return name.upper(), ''
+    return render(e.get('heading'), auto) or '', render(e.get('subheading'), auto) or ''
+
+
+class Texts:
+    """Тексты блоков листа из каталога: заголовок, подзаголовок, примечания, ссылки, легенда, статус.
+    Блок ищется по коду в списке blocks листа; нет блока — ошибка при NXLD_STRICT_CATALOG=1, иначе пусто."""
+    def __init__(self, ws_or_name, block=None):
+        self.name = ws_or_name if isinstance(ws_or_name, str) else ws_or_name.title
+        self.block, self.entry = sheet_of(self.name, block)
+
+    def get(self, code):
+        b = next((x for x in (self.entry or {}).get('blocks', []) if x['code'] == code), None)
+        if b is None and strict():
+            raise KeyError(f'блока «{code}» листа «{self.name}» нет в каталоге структуры')
+        return b
+
+    def has(self, code):
+        """Есть ли блок в каталоге (без ошибки при его отсутствии)."""
+        return any(x['code'] == code for x in (self.entry or {}).get('blocks', []))
+
+    def shown(self, code):
+        b = self.get(code)
+        return b is not None and shown_status(b.get('status', 'approved'))
+
+    def h(self, code, **auto):
+        """Заголовок блока; None — блок не выводится (статус), '' — блок без заголовка. Части auto — от оформления."""
+        if not self.shown(code): return None
+        return render(self.get(code).get('heading', ''), auto) or ''
+
+    def sub(self, code, **auto):
+        if not self.shown(code): return ''
+        return render(self.get(code).get('subheading') or [], auto) or ''
+
+    def notes(self, code, **auto):
+        """Примечания блока — по строке на абзац, пустые не выводятся. Абзац с частями auto, у которых нет значения (None), не выводится."""
+        if not self.shown(code): return []
+        out = []
+        for line in self.get(code).get('notes') or []:
+            if len(line) == 1 and 'auto' in line[0] and isinstance(auto.get(line[0]['auto']), (list, tuple)):   # вывод движка из нескольких абзацев
+                out += [str(x) for x in auto[line[0]['auto']] if x not in (None, '')]
+                continue
+            ak = [p['auto'] for p in line if 'auto' in p]
+            if ak and all(auto.get(k) is None for k in ak): continue   # вывода по данным нет (None) — абзаца нет; '' — абзац без этой части
+            t = render([line], auto)
+            if t: out.append(t)
+        return out
+
+    def note(self, code, **auto):
+        """Единственное примечание блока (одна плашка)."""
+        return '\n'.join(self.notes(code, **auto))
+
+    def links(self, code, **auto):
+        """Ссылки под блоком: [(текст, лист или (файл, лист))]. {count} в тексте — число из auto['count'];
+        {"auto": "код"} вместо text — текст целиком от оформления."""
+        if not self.shown(code): return []
+        from .sheets import CODES as CODES_
+        out = []
+        for lk in self.get(code).get('links') or []:
+            t = auto.get(lk['auto']) if 'auto' in lk else lk.get('text', '')
+            if t in (None, ''): continue
+            if '{count}' in str(t): t = str(t).replace('{count}', str(auto.get('count', '')))
+            fb = block_of(lk['file']) if lk.get('file') else self.block
+            name = CODES_.get(fb, {}).get(lk['sheet'])
+            if name is None:   # листа в каталоге файла нет — ссылка не выводится
+                if strict(): raise KeyError(f"ссылка блока «{code}» листа «{self.name}» на неизвестный лист «{lk['sheet']}»")
+                continue
+            out.append((t, (file_names()[fb], name) if lk.get('file') else name))
+        return out
+
+    def legend(self, code):
+        b = self.get(code)
+        return bool(b and shown_status(b.get('status', 'approved')) and b.get('legend'))
+
+
+def K(ws_or_name, block=None):
+    return Texts(ws_or_name, block)
+
+
 # ---- регистрация заголовков при записи листа ----
 def mark(ws, heading=None, sub=None, **auto):
     """Оформление сообщает, в каких ячейках заголовок и подзаголовок листа и какие у них динамические части (auto).

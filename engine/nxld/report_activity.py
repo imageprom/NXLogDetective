@@ -46,17 +46,18 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     ws.row_dimensions[1].height = 12
     S.r = 2
     ws.merge_cells('B2:I2')
-    S.cell('B', title.upper(), Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
+    from .catalog import mark, sheet_texts
+    h_, sub_ = sheet_texts(title)   # заголовок и подзаголовок листа — из каталога
+    S.cell('B', h_, Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     S.r = 3
     ws.merge_cells('B3:I3')
-    S.cell('B', 'Кто заходит на сайт и откуда', Font(name='Comfortaa', size=11, bold=True, color='666666')); ws.row_dimensions[3].height = 22
-    from .catalog import mark
+    S.cell('B', sub_, Font(name='Comfortaa', size=11, bold=True, color='666666')); ws.row_dimensions[3].height = 22
     mark(ws, 'B2', 'B3')   # заголовок и подзаголовок — из каталога (catalog.finalize)
     S.r = 4
     # 1. каналы
     ch = A.get('каналы')
     if ch is not None and len(ch):
-        S.section('Каналы', 'Визиты людей по источнику, с которого начался визит. Заявки — формы, отправленные в этих визитах.')
+        S.block('channels')
         rows = [[r['канал'], int(r['визитов']), pct(r['доля']), int(r['IP']), int(r['заявок']), pct(r['конверсия'], 2)] for _, r in ch.iterrows()]
         rows.append(['Итого', int(ch['визитов'].sum()), '100%', '', int(ch['заявок'].sum()), pct(ch['заявок'].sum() / max(1, ch['визитов'].sum()), 2)])
         S.table(['Канал', 'Визитов (люди)', 'Доля', 'Уникальных IP (люди)', 'Заявок отпр.', 'Конверсия'], rows, ['BC', 'D', 'E', 'F', 'G', 'HI'], num=(1, 2, 3, 4, 5))
@@ -64,7 +65,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     # 2. посетители
     G = A.get('группы')
     if G is not None and len(G):
-        S.section('Посетители', 'Все визиты за период: люди, роботы, системы мониторинга, утилиты, боты и свои. Тип показывает, по какому признаку визит отнесён к категории.')
+        S.block('visitors')
         rows = [[r['группа'], r['подгруппа'] or '—', int(r['визитов']), int(r['IP']), int(r['запросов']), size(r['байт'])] for _, r in G.iterrows()]
         rows.append(['Итого', '', int(G['визитов'].sum()), '', int(G['запросов'].sum()), size(G['байт'].sum())])
         S.table(['Категория', 'Тип', 'Визитов', 'Уникальных IP', 'Запросов', 'Трафик'], rows, ['B', 'CD', 'E', 'F', 'G', 'HI'], num=(2, 3, 4, 5))
@@ -72,8 +73,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     # 3. сотрудники
     St = A.get('сотрудники')
     if St is not None and len(St):
-        S.section('Сотрудники', f"{ru_num(len(St))} {plural(len(St), 'IP-адрес', 'IP-адреса', 'IP-адресов')}, с которых успешно работали в админке движка. "
-                                f"Их визиты не входят в число людей, а их заявки считаются тестовыми.")
+        S.block('staff', staff_count=f"{ru_num(len(St))} {plural(len(St), 'IP-адрес', 'IP-адреса', 'IP-адресов')},")
         rows = [[r['IP'], r['сеть'], int(r['визитов']), int(r['запросов']), int(r['дней']), period(r['первый'], r['последний']), int(r['в_админке']), int(r['заявок'])]
                 for _, r in St.iterrows()]
         rows.append(['Итого', '', int(St['визитов'].sum()), int(St['запросов'].sum()), '', '', int(St['в_админке'].sum()), int(St['заявок'].sum())])
@@ -82,16 +82,16 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     # 4. системы мониторинга
     M = A.get('мониторинг')
     if M is not None and len(M):
-        S.section('Системы мониторинга', 'Сервисы, которые проверяют, работает ли сайт. Опознаются по названию в User-Agent или по ритму: один и тот же адрес через равные промежутки времени. Не обязательно наши.')
+        S.block('monitoring')
         r0 = S.r + 1
         rows = [[r['система'], r['как'], r['проверяет'], int(r['IP']), every(r['интервал']), int(r['запросов']), split_codes(r['коды'])[1], size(r['байт'])] for _, r in M.iterrows()]
         S.table(['Система', 'Как опознана', 'Что проверяет', 'Уникальных IP', 'Интервал', 'Запросов', 'Ошибки', 'Трафик'], rows, list(COLS), num=(3, 5, 7), center=(1, 4))
         S.red(r0, 'H')
-        if bots_file: S.link('Все роботы и системы мониторинга', (bots_file, 'Роботы'))
+        if bots_file: S.links_of('monitoring')
     # 4а. утилиты
     U = A.get('утилиты')
     if U is not None and len(U):
-        S.section('Утилиты', 'Утилиты, которые обращаются к сайту без браузера: curl, wget, Python, PHP и другие. За ними может стоять разработчик, интеграция или сканер — вывод по поведению каждого IP.')
+        S.block('utilities')
         r0 = S.r + 1
         cut = lambda t: '\n'.join((x[:45] + '…' if len(x) > 46 else x) for x in str(t).split(', '))
         rows = [[r['утилита'], int(r['запросов']), int(r['IP']), int(r['зондов']), cut(r['что']), str(r['похоже']).replace(', ', '\n')] for _, r in U.iterrows()]
@@ -99,21 +99,21 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
     # 5. роботы
     Rb = A.get('роботы')
     if Rb is not None and len(Rb):
-        S.section('Роботы', 'Десять роботов с наибольшим числом запросов: поисковики, сервисы и SEO-боты, которые честно себя называют. Подлинность — доля запросов из официальных сетей робота. Прочерк в этой колонке значит, что робот не публикует список своих сетей.')
+        S.block('robots')
         r0 = S.r + 1
         rows = [[r['робот'], r['категория'], pct(r['подлинных'], 0) if r['подлинных'] is not None and not pd.isna(r['подлинных']) else '—',
                  int(r['запросов']), int(r['IP']), int(r['дней']), size(r['байт']), split_codes(r['коды'])[1]] for _, r in Rb.iterrows()]
         S.table(['Робот', 'Категория', 'Подлинность', 'Запросов', 'Уникальных IP', 'Дней', 'Трафик', 'Ошибки'], rows, list(COLS), num=(2, 3, 4, 5, 6))
         S.red(r0, 'I')
-        if bots_file: S.link('Все роботы', (bots_file, 'Роботы'))
+        if bots_file: S.links_of('robots')
     # 6. боты по сигнатурам
     B = A.get('сигнатуры')
     if B is not None and len(B):
         B = B.head(10)
-        S.section('Боты', 'Топ-10 сигнатур. Сигнатура — поведение, по которому бот себя выдал; одна сигнатура объединяет много IP-адресов и сетей.')
+        S.block('bots')
         rows = [[r['сигнатура'], r['вид'], int(r['визитов']), int(r['IP']), int(r['сетей']), int(r['дней']), int(r['заявок']), r['сеть']] for _, r in B.iterrows()]
         S.table(['Сигнатура', 'Вид', 'Визитов', 'Уникальных IP', 'Сетей', 'Дней', 'Заявок', 'Чаще всего из сети'], rows, list(COLS), num=(2, 3, 4, 5, 6))
-        if bots_file: S.link('Все боты и их улики', (bots_file, 'Виды ботов'))
+        if bots_file: S.links_of('bots')
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

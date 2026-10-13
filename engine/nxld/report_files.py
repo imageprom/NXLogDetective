@@ -57,10 +57,11 @@ def build_files(wb, res, title='Логи'):
     ws.row_dimensions[1].height = 12
     S.r = 2
     ws.merge_cells('B2:F2')
-    S.cell('B', 'ЛОГИ', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
+    from .catalog import mark, sheet_texts
+    h_, sub_ = sheet_texts(title)   # заголовок и подзаголовок листа — из каталога
+    S.cell('B', h_, Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     ws.merge_cells('B3:F3')
-    S.cell('B', 'Какие файлы логов разобраны, за какой период и что в них не так', Font(name='Comfortaa', size=11, bold=True, color='666666'), row=3)
-    from .catalog import mark
+    S.cell('B', sub_, Font(name='Comfortaa', size=11, bold=True, color='666666'), row=3)
     mark(ws, 'B2', 'B3')   # заголовок и подзаголовок — из каталога (catalog.finalize)
     ws.row_dimensions[3].height = 22
     S.r = 4
@@ -73,7 +74,7 @@ def build_files(wb, res, title='Логи'):
         if k in first: copy_of[F.loc[i, 'файл']] = F.loc[first[k], 'файл']
         else: first[k] = i
     # итого
-    S.section('Итого', 'Сколько файлов и строк, за какой период, что удалено как повтор и что не удалось разобрать.')
+    S.block('total')
     for t, nm in (('access', 'Access-логи'), ('error', 'Error-логи')):
         g = F[F['тип'] == t]
         if not len(g): continue
@@ -92,10 +93,10 @@ def build_files(wb, res, title='Логи'):
     gaps = inv.get('hour_gaps') or []
     S.pair('Пропуски по часам', '\n'.join(str(x) for x in gaps[:10]) if gaps else 'нет')
     # по типам
-    for t, nm in (('access', 'Access-логи'), ('error', 'Error-логи')):
+    for t, nm in (('access', 'access_logs'), ('error', 'error_logs')):
         g = F[F['тип'] == t].sort_values(['с', 'файл'])
         if not len(g): continue
-        S.section(nm, {'Access-логи': 'Журналы запросов к сайту: каждый файл, его период и формат.', 'Error-логи': 'Журналы ошибок сервера: каждый файл, его период и формат.'}[nm])
+        S.block(nm)
         rows = []
         for _, r in g.iterrows():
             note = []

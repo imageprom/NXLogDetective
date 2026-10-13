@@ -157,20 +157,20 @@ def soft_sheet(wb, G, P, nm='Мягкие ошибки'):
     crit = lambda: [F_NOTE if (a >= 500 and (h > 0 or s_ > 0)) else None for a, h, s_ in zip(G['разных_адресов'], G['людям_%'], G['поисковым_%'])]
     norm = lambda: [F_GREY if x else None for x in (list(P['норма']) if 'норма' in P else [False] * len(P))]
     kpi = [('Групп идентичных ответов', len(G) if has_g else 0), ('Адресов в них', int(G['разных_адресов'].sum()) if has_g else 0), ('Пустых ответов', len(P) if has_p else 0)]
-    first = ('identical', ident, crit) if has_g else ('empty', empty, norm)
+    from .catalog import K
+    part = {'identical': (ident, crit, ['критично', 'обычно']), 'empty': (empty, norm, ['норма', 'обычно'])}
+    have = [c for c in K(nm).order(['identical', 'empty']) if (has_g if c == 'identical' else has_p)]   # порядок таблиц — из каталога
+    first = (have[0],) + part[have[0]]
     W_ = {'Размер, байт': 16, 'Примеры адресов': 46, 'Что это': 44, 'Адрес': 50, 'Комментарий': 55}
     WR = ('Примеры адресов', 'Что это', 'Адрес', 'Комментарий')
     data_sheet(wb, nm, first[1](), W_, wrap=WR, kpi=kpi, row_rule=lambda r, _it=iter(first[2]()): next(_it), red=())
     ws = wb[nm]
     first_heading(ws, first[0])   # заголовок первой таблицы — над шапкой
-    if has_g:
-        notes_of(ws, 'identical')
-        legend_of(ws, ['критично', 'обычно'], 'identical')
-    if has_g and has_p:
-        extra_table(ws, empty(), 'empty', wrap=WR, row_rule=lambda r, _it=iter(norm()): next(_it), red=())
-    if has_p:
-        notes_of(ws, 'empty')
-        legend_of(ws, ['норма', 'обычно'], 'empty')
+    for i, c in enumerate(have):
+        df_, rule_, leg_ = part[c]
+        if i: extra_table(ws, df_(), c, wrap=WR, row_rule=lambda r, _it=iter(rule_()): next(_it), red=())
+        notes_of(ws, c)
+        legend_of(ws, leg_, c)
     return ws
 
 
@@ -318,6 +318,7 @@ def overview(wb, res, S, site):
         W.table(['Тип', 'Диагностическое значение', 'Сообщений', 'Первый', 'Последний'], rows, ['B', 'CDE', 'F', 'G', 'H'], num=(2,), center=(3, 4), wrap=0.95)
         W.links_of('error_log', names)
     W.related(res, 'Ошибки')
+    W.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

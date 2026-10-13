@@ -1376,43 +1376,6 @@
      "toc": "",
      "blocks": [
       {
-       "code": "related",
-       "status": "approved",
-       "heading": [
-        [
-         {
-          "text": "Связанное в других отчётах"
-         }
-        ]
-       ],
-       "subheading": [
-        [
-         {
-          "text": "Темы, которые разобраны в соседних файлах проверки."
-         }
-        ]
-       ],
-       "notes": [],
-       "links": [
-        {
-         "text": "Поисковые ошибки",
-         "sheet": "search_errors",
-         "file": "seo"
-        },
-        {
-         "text": "Серверный фильтр: кому защита отказывает",
-         "sheet": "server_filter",
-         "file": "load_security"
-        },
-        {
-         "text": "Рекламные ошибки глазами маркетинга",
-         "sheet": "landing",
-         "file": "marketing"
-        }
-       ],
-       "legend": false
-      },
-      {
        "code": "responses",
        "status": "approved",
        "heading": [
@@ -1698,6 +1661,43 @@
         {
          "text": "Какие запросы вызывали",
          "sheet": "error_log"
+        }
+       ],
+       "legend": false
+      },
+      {
+       "code": "related",
+       "status": "approved",
+       "heading": [
+        [
+         {
+          "text": "Связанное в других отчётах"
+         }
+        ]
+       ],
+       "subheading": [
+        [
+         {
+          "text": "Темы, которые разобраны в соседних файлах проверки."
+         }
+        ]
+       ],
+       "notes": [],
+       "links": [
+        {
+         "text": "Поисковые ошибки",
+         "sheet": "search_errors",
+         "file": "seo"
+        },
+        {
+         "text": "Серверный фильтр: кому защита отказывает",
+         "sheet": "server_filter",
+         "file": "load_security"
+        },
+        {
+         "text": "Рекламные ошибки глазами маркетинга",
+         "sheet": "landing",
+         "file": "marketing"
         }
        ],
        "legend": false
@@ -2548,38 +2548,6 @@
      "toc": "",
      "blocks": [
       {
-       "code": "related",
-       "status": "approved",
-       "heading": [
-        [
-         {
-          "text": "Связанное в других отчётах"
-         }
-        ]
-       ],
-       "subheading": [
-        [
-         {
-          "text": "Темы, которые разобраны в соседних файлах проверки."
-         }
-        ]
-       ],
-       "notes": [],
-       "links": [
-        {
-         "text": "Паразитные адреса",
-         "sheet": "parasites",
-         "file": "seo"
-        },
-        {
-         "text": "Подделки поисковиков",
-         "sheet": "fakes",
-         "file": "bots"
-        }
-       ],
-       "legend": false
-      },
-      {
        "code": "server_filter",
        "status": "approved",
        "heading": [
@@ -2803,6 +2771,38 @@
        ],
        "notes": [],
        "links": [],
+       "legend": false
+      },
+      {
+       "code": "related",
+       "status": "approved",
+       "heading": [
+        [
+         {
+          "text": "Связанное в других отчётах"
+         }
+        ]
+       ],
+       "subheading": [
+        [
+         {
+          "text": "Темы, которые разобраны в соседних файлах проверки."
+         }
+        ]
+       ],
+       "notes": [],
+       "links": [
+        {
+         "text": "Паразитные адреса",
+         "sheet": "parasites",
+         "file": "seo"
+        },
+        {
+         "text": "Подделки поисковиков",
+         "sheet": "fakes",
+         "file": "bots"
+        }
+       ],
        "legend": false
       }
      ]
@@ -3922,43 +3922,6 @@
      "toc": "",
      "blocks": [
       {
-       "code": "related",
-       "status": "approved",
-       "heading": [
-        [
-         {
-          "text": "Связанное в других отчётах"
-         }
-        ]
-       ],
-       "subheading": [
-        [
-         {
-          "text": "Темы, которые разобраны в соседних файлах проверки."
-         }
-        ]
-       ],
-       "notes": [],
-       "links": [
-        {
-         "text": "ИИ-видимость",
-         "sheet": "ai_visibility",
-         "file": "seo"
-        },
-        {
-         "text": "Подлинность поисковиков",
-         "sheet": "search_auth",
-         "file": "seo"
-        },
-        {
-         "text": "Боты в рекламе глазами маркетинга",
-         "sheet": "campaigns",
-         "file": "marketing"
-        }
-       ],
-       "legend": false
-      },
-      {
        "code": "stix",
        "status": "approved",
        "heading": [],
@@ -4134,6 +4097,43 @@
        ],
        "notes": [],
        "links": [],
+       "legend": false
+      },
+      {
+       "code": "related",
+       "status": "approved",
+       "heading": [
+        [
+         {
+          "text": "Связанное в других отчётах"
+         }
+        ]
+       ],
+       "subheading": [
+        [
+         {
+          "text": "Темы, которые разобраны в соседних файлах проверки."
+         }
+        ]
+       ],
+       "notes": [],
+       "links": [
+        {
+         "text": "ИИ-видимость",
+         "sheet": "ai_visibility",
+         "file": "seo"
+        },
+        {
+         "text": "Подлинность поисковиков",
+         "sheet": "search_auth",
+         "file": "seo"
+        },
+        {
+         "text": "Боты в рекламе глазами маркетинга",
+         "sheet": "campaigns",
+         "file": "marketing"
+        }
+       ],
        "legend": false
       }
      ]
@@ -4843,43 +4843,6 @@
      "toc": "",
      "blocks": [
       {
-       "code": "related",
-       "status": "approved",
-       "heading": [
-        [
-         {
-          "text": "Связанное в других отчётах"
-         }
-        ]
-       ],
-       "subheading": [
-        [
-         {
-          "text": "Темы, которые разобраны в соседних файлах проверки."
-         }
-        ]
-       ],
-       "notes": [],
-       "links": [
-        {
-         "text": "Органика",
-         "sheet": "organic",
-         "file": "seo"
-        },
-        {
-         "text": "Боты в рекламе",
-         "sheet": "ad_bots",
-         "file": "bots"
-        },
-        {
-         "text": "Рекламные ошибки",
-         "sheet": "ad_errors",
-         "file": "errors"
-        }
-       ],
-       "legend": false
-      },
-      {
        "code": "channels",
        "status": "approved",
        "heading": [
@@ -5080,6 +5043,43 @@
        ],
        "notes": [],
        "links": [],
+       "legend": false
+      },
+      {
+       "code": "related",
+       "status": "approved",
+       "heading": [
+        [
+         {
+          "text": "Связанное в других отчётах"
+         }
+        ]
+       ],
+       "subheading": [
+        [
+         {
+          "text": "Темы, которые разобраны в соседних файлах проверки."
+         }
+        ]
+       ],
+       "notes": [],
+       "links": [
+        {
+         "text": "Органика",
+         "sheet": "organic",
+         "file": "seo"
+        },
+        {
+         "text": "Боты в рекламе",
+         "sheet": "ad_bots",
+         "file": "bots"
+        },
+        {
+         "text": "Рекламные ошибки",
+         "sheet": "ad_errors",
+         "file": "errors"
+        }
+       ],
        "legend": false
       }
      ]
@@ -5622,53 +5622,6 @@
      "toc": "",
      "blocks": [
       {
-       "code": "related",
-       "status": "approved",
-       "heading": [
-        [
-         {
-          "text": "Связанное в других отчётах"
-         }
-        ]
-       ],
-       "subheading": [
-        [
-         {
-          "text": "Темы, которые разобраны в соседних файлах проверки."
-         }
-        ]
-       ],
-       "notes": [],
-       "links": [
-        {
-         "text": "Серверный фильтр: отказы поисковым роботам",
-         "sheet": "server_filter",
-         "file": "load_security"
-        },
-        {
-         "text": "Подделки поисковиков",
-         "sheet": "fakes",
-         "file": "bots"
-        },
-        {
-         "text": "Служебные данные",
-         "sheet": "service_data",
-         "file": "load_security"
-        },
-        {
-         "text": "Каналы",
-         "sheet": "channels",
-         "file": "marketing"
-        },
-        {
-         "text": "Ошибки сервера",
-         "sheet": "index",
-         "file": "errors"
-        }
-       ],
-       "legend": false
-      },
-      {
        "code": "crawl",
        "status": "approved",
        "heading": [
@@ -5794,6 +5747,53 @@
         {
          "text": "Подробно",
          "sheet": "search_auth"
+        }
+       ],
+       "legend": false
+      },
+      {
+       "code": "related",
+       "status": "approved",
+       "heading": [
+        [
+         {
+          "text": "Связанное в других отчётах"
+         }
+        ]
+       ],
+       "subheading": [
+        [
+         {
+          "text": "Темы, которые разобраны в соседних файлах проверки."
+         }
+        ]
+       ],
+       "notes": [],
+       "links": [
+        {
+         "text": "Серверный фильтр: отказы поисковым роботам",
+         "sheet": "server_filter",
+         "file": "load_security"
+        },
+        {
+         "text": "Подделки поисковиков",
+         "sheet": "fakes",
+         "file": "bots"
+        },
+        {
+         "text": "Служебные данные",
+         "sheet": "service_data",
+         "file": "load_security"
+        },
+        {
+         "text": "Каналы",
+         "sheet": "channels",
+         "file": "marketing"
+        },
+        {
+         "text": "Ошибки сервера",
+         "sheet": "index",
+         "file": "errors"
         }
        ],
        "legend": false

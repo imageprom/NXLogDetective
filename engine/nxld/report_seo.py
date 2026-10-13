@@ -154,6 +154,7 @@ def overview(wb, res, site):
                     ['BC', 'D', 'E', 'F'], num=(1, 2))
             W.links_of('authenticity', names)
     W.related(res, 'SEO')
+    W.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

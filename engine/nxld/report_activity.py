@@ -114,6 +114,7 @@ def build_activity(wb, res, names, index=3, title='Активность', files=
         rows = [[r['сигнатура'], r['вид'], int(r['визитов']), int(r['IP']), int(r['сетей']), int(r['дней']), int(r['заявок']), r['сеть']] for _, r in B.iterrows()]
         S.table(['Сигнатура', 'Вид', 'Визитов', 'Уникальных IP', 'Сетей', 'Дней', 'Заявок', 'Чаще всего из сети'], rows, list(COLS), num=(2, 3, 4, 5, 6))
         if bots_file: S.links_of('bots')
+    S.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

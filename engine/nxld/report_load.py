@@ -81,6 +81,9 @@ def build_sheets(wb, res, S):
     from .report_tables import fmt_codes
     nm = 'Служебные данные'
     parts = [k for k, v in (('утечки', L), ('разделы', Z), ('токены', Tk)) if v is not None and len(v)]
+    from .catalog import K
+    code_ = {'утечки': 'leaks', 'разделы': 'sections', 'токены': 'tokens'}
+    parts = sorted(parts, key=lambda k: K(nm).order(list(code_.values())).index(code_[k]))   # порядок таблиц — из каталога
     if parts:
         if nm not in wb.sheetnames: wb.create_sheet(nm)
         def leaks_df():
@@ -435,6 +438,7 @@ def overview(wb, res, site):
         W.table(['Базовый адрес', 'Вариантов', 'Фигуранты', 'Виновники'], [[r['адрес'], int(r['вариантов']), r['фигуранты'], r['виновники']] for _, r in P.head(5).iterrows()], ['BC', 'D', 'EF', 'GHI'], num=(1,), wrap=0.95)
         W.links_of('parasites', names)
     W.related(res, 'Нагрузка и безопасность')
+    W.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

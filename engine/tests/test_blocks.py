@@ -28,6 +28,12 @@ def _texts(ws):
     return [str(c.value) for c in _cells(ws)]
 
 
+def _swap(C, file, sheet, a, b):
+    bl = _sheet(C, file, sheet)['blocks']
+    i, j = [x['code'] for x in bl].index(a), [x['code'] for x in bl].index(b)
+    bl[i], bl[j] = bl[j], bl[i]
+
+
 @pytest.fixture(scope='module')
 def edited(tmp_path_factory):
     """Один прогон с правленым каталогом: правки разных блоков — в разных местах отчёта."""
@@ -47,6 +53,8 @@ def edited(tmp_path_factory):
     sf['notes'][0], sf['notes'][1] = sf['notes'][1], sf['notes'][0]   # порядок абзацев
     todo = next(ln for ln in sf['notes'] if any(p.get('auto') == 'todo' for p in ln))
     todo.reverse()   # порядок частей строки
+    _swap(C, 'load_security', 'index', 'server_filter', 'scanners')   # порядок блоков на листе-карточке
+    _swap(C, 'load_security', 'hourly', 'all', 'people')   # порядок тепловых карт
     p = os.path.join(tmp, 'cat.json')
     json.dump(C, open(p, 'w', encoding='utf-8'), ensure_ascii=False)
     old = {k: os.environ.get(k) for k in ('NXLD_CATALOG', 'NXLD_SHOW_REVIEW')}
@@ -108,6 +116,32 @@ def test_notes_order(edited):
     assert rows[second] < rows[first]   # абзацы — в порядке каталога
     todo = [x for x in rows if x.endswith('Что сделать:')]
     assert todo and not [x for x in rows if x.startswith('Что сделать:')], [x for x in rows if 'сделать' in x]
+
+
+def _row(ws, text):
+    return next(c.row for c in _cells(ws) if c.value == text)
+
+
+def test_block_order_cards(edited):
+    """Перестановка блоков в каталоге меняет их порядок на листе: блок переезжает целиком — с таблицей и ссылками."""
+    books, C = edited
+    ws = books['NXLD_03_Load_Security.xlsx']['Обзор']
+    codes = [b['code'] for b in _sheet(C, 'load_security', 'index')['blocks']]
+    assert codes.index('server_filter') < codes.index('scanners')   # в исходном каталоге — фильтр выше
+    sc, sf = _row(ws, 'СКАНЕРЫ'), _row(ws, 'СЕРВЕРНЫЙ ФИЛЬТР')
+    assert sc < sf, (sc, sf)
+    lk_sc = _row(ws, 'Все цели: лист «Сканеры» →')
+    lk_sf = _row(ws, 'Кому и когда отказывали: лист «Серверный фильтр» →')
+    assert sc < lk_sc < sf < lk_sf
+    assert ws.cell(sc + 2, 2).value == 'Цель'   # шапка таблицы сканеров — под их заголовком и подзаголовком
+    assert not [w.title for wb in books.values() for w in wb.worksheets if w.title.startswith('_nxld_block')]   # черновиков блоков в книге нет
+    assert not TC._dead_links(books), TC._dead_links(books)[:10]
+
+
+def test_block_order_heat_maps(edited):
+    books, _ = edited
+    ws = books['NXLD_03_Load_Security.xlsx']['Нагрузка по часам']
+    assert _row(ws, 'ЛЮДИ') < _row(ws, 'ВСЕ') < _row(ws, 'РОБОТЫ')
 
 
 def test_blocks_schema():

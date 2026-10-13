@@ -96,22 +96,62 @@ class Sheet:
         return K(getattr(self, '_home', None) or self.ws)
 
     def block(self, code, **auto):
-        """Начало блока code: заголовок и подзаголовок — из каталога (пустой заголовок — строки нет). Блок не выводится
-        (статус в каталоге) — всё, что в нём пишется, уходит на черновой лист и в отчёт не попадает. Возвращает, выводится ли блок."""
+        """Начало блока code: заголовок и подзаголовок — из каталога (пустой заголовок — строки нет). Блок пишется в свой черновой лист;
+        finish() раскладывает черновики на лист в порядке каталога (#11). Блок не выводится (статус в каталоге) — его черновик
+        в отчёт не попадает. Возвращает, выводится ли блок."""
         self.end_block()
+        if getattr(self, '_home', None) is None:   # первый блок листа: всё, что выше, остаётся на листе
+            self._home, self._home_r, self._buf = self.ws, self.r, []
+            self.ws._nxld_sheet = self   # catalog.finalize допишет блоки, если finish() не вызвали
         k = self.K()
         h = k.h(code, **auto)
-        if h is None:   # блок не выводится: пишем в черновик до следующего блока
+        home = self._home
+        if h is None:   # блок не выводится: черновик в отдельной книге, в отчёт не попадает
             from openpyxl import Workbook
-            self._home, self._home_r, self.ws = self.ws, self.r, Workbook().active
-            return False
+            self.ws, self._cur = Workbook().active, None
+        else:
+            self.ws = home.parent.create_sheet(f'_nxld_block_{len(self._buf)}')   # та же книга — общие стили
+            self._cur = [code, self.ws, None]
+            self._buf.append(self._cur)
+        self.ws._nxld_home = home   # тексты каталога для черновика — по листу, на который он ляжет
+        for col, d in home.column_dimensions.items():   # ширины — как на листе: по ним считаются переносы и высоты строк
+            if d.width: self.ws.column_dimensions[col].width = d.width
+        self.r = 1
         if h: self.section(h, k.sub(code, **auto))
-        return True
+        return h is not None
 
     def end_block(self):
-        """Конец невыводимого блока: вернуться на лист."""
-        if getattr(self, '_home', None) is not None:
-            self.ws, self.r, self._home = self._home, self._home_r, None
+        """Конец текущего блока: запомнить, сколько строк он занял."""
+        cur = getattr(self, '_cur', None)
+        if cur is not None: cur[2] = self.r
+        self._cur = None
+
+    def finish(self):
+        """Разложить блоки на лист в порядке списка blocks каталога (блоки, которых в каталоге нет, — в порядке кода, в конце).
+        Без блоков — ничего не делает. После — запись продолжается на листе под последним блоком."""
+        from copy import copy
+        home = getattr(self, '_home', None)
+        if home is None: return
+        self.end_block()
+        codes = [b['code'] for b in (self.K().entry or {}).get('blocks', [])]
+        buf = sorted(self._buf, key=lambda x: codes.index(x[0]) if x[0] in codes else len(codes))   # sorted — устойчивая сортировка
+        r0 = self._home_r
+        for code, ws, end in buf:
+            off = r0 - 1
+            for rng in ws.merged_cells.ranges:   # сначала объединения, потом стили: у объединённых ячеек — свои границы
+                home.merge_cells(start_row=rng.min_row + off, start_column=rng.min_col, end_row=rng.max_row + off, end_column=rng.max_col)
+            for (r, c), src in ws._cells.items():
+                if r >= end: continue
+                dst = home.cell(r + off, c)
+                if src.has_style: dst._style = copy(src._style)
+                if type(src).__name__ != 'MergedCell' and src.value is not None: dst.value = src.value
+                if src.hyperlink is not None:
+                    h = copy(src.hyperlink); h.ref = dst.coordinate; dst._hyperlink = h
+            for r, d in ws.row_dimensions.items():
+                if r < end and d.height is not None: home.row_dimensions[r + off].height = d.height
+            r0 += end - 1
+            home.parent.remove(ws)
+        self.ws, self.r, self._home, self._buf = home, r0, None, []
 
     def notes_of(self, code, **auto):
         """Примечания блока — плашками."""
@@ -463,14 +503,14 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         S._fill_row('BCDEF', F_CARD, Border(bottom=SEP))
         S.cell('B', label, Font(name='Arial', size=11, bold=True, color='000000'), F_CARD, Alignment(vertical='center', indent=1))
         S.cell('C', cnt[k], Font(name='Arial', size=12 if k in ('Тревога', 'Срочно') else 11, bold=(k in ('Тревога', 'Срочно')), color=color), F_CARD, Alignment(horizontal='left', vertical='center', indent=1))
-        ws.merge_cells(f'C{S.r}:F{S.r}')
-        ws.row_dimensions[S.r].height = 22
+        S.ws.merge_cells(f'C{S.r}:F{S.r}')
+        S.ws.row_dimensions[S.r].height = 22
         S.r += 1
     lk_ = S.K().links('problems')
     c = S.cell('B', f'{lk_[0][0]} — на листе «{pr}» →' if lk_ else '', align=Alignment(vertical='center', indent=1))
-    ws.merge_cells(f'B{S.r}:F{S.r}')
+    S.ws.merge_cells(f'B{S.r}:F{S.r}')
     c.hyperlink = f"#'{pr}'!A1"; c.font = Font(name='Arial', size=10, italic=True, color=ORANGE2, underline='single')
-    ws.row_dimensions[S.r].height = 24
+    S.ws.row_dimensions[S.r].height = 24
     S.r += 1
 
     def listing(rows):
@@ -481,9 +521,9 @@ def build_index(wb, res, sheet_names, title='Обзор'):
                 c.hyperlink = link; c.font = Font(name='Arial', size=11, bold=True, color=ORANGE2, underline='single')
             else:
                 c.font = Font(name='Arial', size=11, bold=True, color='000000')
-            ws.merge_cells(f'C{S.r}:F{S.r}')
+            S.ws.merge_cells(f'C{S.r}:F{S.r}')
             S.cell('C', cap(note), Font(name='Arial', size=11, color=INK), align=Alignment(vertical='center', wrap_text=True, indent=1))
-            ws.row_dimensions[S.r].height = max(18, row_height(name, 28) - 4, row_height(cap(note), 88) - 4)
+            S.ws.row_dimensions[S.r].height = max(18, row_height(name, 28) - 4, row_height(cap(note), 88) - 4)
             S.r += 1
 
     # --- содержимое документа (листы этого файла, включая обзор)
@@ -508,6 +548,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
                                    'открыть его можно и в текстовом редакторе. Документация: https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html', None))
     listing(rows)
     # печать
+    S.finish()   # блоки — в порядке каталога (#11)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_area = f'A1:G{S.r}'

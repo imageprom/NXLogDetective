@@ -395,12 +395,11 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     ws = wb[name]   # сноска и чего нет — тоже результат
     from .catalog import K
     k_ = K(ws)
-    if d['Адрес точки'].astype(str).str.contains('фасетн').any():
-        for t_ in k_.notes('facets'):
-            c = ws.cell(ws.max_row + 2, 2, t_); c.font = Font(name='Arial', size=10, italic=True, color=INK)
     absent = [lab for lab, keys in (('Поиск по сайту', ('Поиск по сайту',)), ('API и обмен с 1С, CRM, вебхуки', ('Обмен с 1С', 'API', 'Вебхук'))) if not any(cnt.get(k, 0) for k in keys)]
-    if absent:
-        for t_ in k_.notes('absent', absent='; '.join(absent) + '.'):
+    show = {'facets': d['Адрес точки'].astype(str).str.contains('фасетн').any(), 'absent': bool(absent)}
+    for code_ in k_.order(['facets', 'absent']):   # порядок сносок — из каталога
+        if not show[code_]: continue
+        for t_ in k_.notes(code_, absent='; '.join(absent) + '.'):
             c = ws.cell(ws.max_row + 2, 2, t_); c.font = Font(name='Arial', size=10, italic=True, color=INK)
 
 
@@ -902,6 +901,9 @@ def heat_sheet(wb, name, blocks, unit='Запросов за час', absent=(),
         ws.row_dimensions[r].height = 15 * (len(t_) // 170 + 1) + 10
         r += 1
     r += 1
+    if blocks and all(len(b) >= 2 and not isinstance(b[1], str) for b in blocks):   # карты из каталога — в порядке каталога
+        pos = k_.order([b[0] for b in blocks])
+        blocks = sorted(blocks, key=lambda b: pos.index(b[0]))
     for blk in blocks:
         if len(blk) >= 2 and not isinstance(blk[1], str):   # карта из каталога: (код, данные[, формат])
             bt, bn = k_.h(blk[0]), k_.sub(blk[0])

@@ -90,6 +90,37 @@ class Sheet:
         c.alignment = align or Alignment(vertical='center', wrap_text=True)
         return c
 
+    # ---- блоки из каталога структуры (#11): заголовок, подзаголовок, примечания, ссылки — по коду блока ----
+    def K(self):
+        from .catalog import K
+        return K(getattr(self, '_home', None) or self.ws)
+
+    def block(self, code, **auto):
+        """Начало блока code: заголовок и подзаголовок — из каталога (пустой заголовок — строки нет). Блок не выводится
+        (статус в каталоге) — всё, что в нём пишется, уходит на черновой лист и в отчёт не попадает. Возвращает, выводится ли блок."""
+        self.end_block()
+        k = self.K()
+        h = k.h(code, **auto)
+        if h is None:   # блок не выводится: пишем в черновик до следующего блока
+            from openpyxl import Workbook
+            self._home, self._home_r, self.ws = self.ws, self.r, Workbook().active
+            return False
+        if h: self.section(h, k.sub(code, **auto))
+        return True
+
+    def end_block(self):
+        """Конец невыводимого блока: вернуться на лист."""
+        if getattr(self, '_home', None) is not None:
+            self.ws, self.r, self._home = self._home, self._home_r, None
+
+    def notes_of(self, code, **auto):
+        """Примечания блока — плашками."""
+        for t in self.K().notes(code, **auto): self.note(t)
+
+    def links_of(self, code, names=None, **auto):
+        """Ссылки под блоком: на лист этого файла или другого; листа нет в отчёте — ссылки нет."""
+        for t, target in self.K().links(code, **auto): self.link(t, target, names)
+
     def section(self, title, sub=''):
         """Заголовок блока; sub — подпись под ним: что в блоке и как читать."""
         self.r += 1
@@ -204,9 +235,12 @@ def conditions(res):
     return rows
 
 
-def brand_header(ws, S, res, title, subtitle, last='F', site=''):
+def brand_header(ws, S, res, last='F', site=''):
     """Шапка первого листа каждого файла отчёта: логотип, адрес компании, заголовок, подзаголовок, плашка проверки и дата.
-    last — последняя колонка листа (F на обычных, I на широких сводках)."""
+    last — последняя колонка листа (F на обычных, I на широких сводках). Заголовок (с адресом сайта — auto «site») и подзаголовок —
+    из каталога структуры (лист «Обзор» собираемого файла)."""
+    from .catalog import sheet_texts
+    title, subtitle = sheet_texts('Обзор', {'site': site})
     for i, h in enumerate((32.25, 23.25, 14, 8), start=1): ws.row_dimensions[i].height = h
     if os.path.exists(LOGO):
         from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
@@ -286,12 +320,13 @@ class Wide(Sheet):
         self.r += 1
 
     def related(self, res, block):
-        """Блок «Связанное в других отчётах»: ссылки на листы других файлов этой проверки (каталог sheets.RELATED)."""
-        from .sheets import RELATED
-        rows = [(t, BLOCK_FILES[b], catalog.tab(b, sh)) for t, b, sh in RELATED.get(block, [])
-                if b in (res.get('selected') or ()) and b in BLOCK_FILES and catalog.shown(b, sh)]   # на невыведенные листы — строк нет (#8)
+        """Блок «Связанное в других отчётах»: ссылки на листы других файлов этой проверки (каталог, блок related Обзора)."""
+        sel = {BLOCK_FILES[b] for b in (res.get('selected') or ()) if b in BLOCK_FILES}
+        inv = {f: b for b, f in BLOCK_FILES.items()}
+        rows = [(t, f, catalog.tab(inv[f], sh)) for t, (f, sh) in self.K().links('related')
+                if f in sel and catalog.shown(inv[f], sh)]   # на невыведенные листы и несобранные файлы — строк нет (#8, #11)
         if not rows: return
-        self.section('Связанное в других отчётах', 'Темы, которые разобраны в соседних файлах проверки.')
+        self.block('related')
         for t, f, sh in rows: self.link(t, (f, sh))
 
     def alarm(self, n, names=None):
@@ -340,10 +375,10 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     S = Sheet(ws)
     inv, m, sm = res['inventory'], res['site_map'], res['summary'].get('Общий анализ', {})
     site = (m.get('site_hosts') or ['?'])[0]
-    brand_header(ws, S, res, f'NX LOG DETECTIVE — САЙТ {site.upper()}', 'Анализ логов сервера: что происходит на сайте, кто на него ходит и что работает не так', site=site.upper())
+    brand_header(ws, S, res, site=site.upper())
     S.r = 9
     # --- проверка
-    S.section('Проверка')
+    S.block('check')
     others = [h for h in (m.get('site_hosts') or [])[1:]]
     S.pair('Сайт', site + (f" (в логах также {', '.join(others)})" if others else ''))
     p0, p1 = pd.Timestamp(inv['period'][0]), pd.Timestamp(inv['period'][1])
@@ -357,7 +392,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     if dup: src += f"\nповторы на стыках файлов удалены: {ru_short(dup)} строк"
     S.pair('Исходные данные', src)
     # --- условия
-    S.section('Условия проверки')
+    S.block('conditions')
     rows = conditions(res)
     if rows:
         for k, v in rows: S.pair(k, v)
@@ -366,14 +401,13 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     # --- что за сайт (только то, что видно по логу)
     sp = res.get('site_profile') or {}
     if sp.get('назначение') and sp.get('назначение') != 'не определено':
-        S.section('О сайте', 'Что за сайт — только то, что видно по логам.')
+        S.block('site')
         S.pair('Назначение', sp['назначение'])
         S.pair('Размер', f"{sp['размер']} — {ru_num(sp['страниц'])} {plural(sp['страниц'], 'страница', 'страницы', 'страниц')} открывали люди")
         S.pair('Аудитория', sp['аудитория'])
-        if sp.get('признаки'):
-            S.note('Как определили: ' + '; '.join(sp['признаки']) + '.')
+        if sp.get('признаки'): S.notes_of('site', how_detected='; '.join(sp['признаки']) + '.')
     # --- технологии
-    S.section('Технологии', 'Сервер, движок и хостинг — по путям файлов и ответам сервера в логах.')
+    S.block('tech')
     h = res.get('hosting') or {}
     host = h.get('тип', 'по логам не определён')
     if h.get('путь'): host = host[0].upper() + host[1:] + f" (по пути {h['путь']})"
@@ -388,7 +422,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     eng = ', '.join(e['движок'] for e in m.get('engines', [])) or 'не определён (возможно, статический HTML или свой движок)'
     S.pair('Движок сайта', eng)
     # --- трафик и заявки
-    S.section('Трафик и заявки', 'Визиты за период по группам и заявки, отправленные через формы сайта.')
+    S.block('traffic')
     grp = [('Люди', sm.get('Визитов людей', 0), f"{ru_num(sm.get('IP людей', 0))} адресов; {res.get('mobile_share') or 0:.0f}% с телефонов".replace('.', ',')),
            ('Роботы', sm.get('Визитов: Роботы', 0), 'поисковики, сервисы, SEO-боты — честно себя называют'),
            ('Системы мониторинга', sm.get('Визитов: Системы мониторинга', 0), 'проверяют, работает ли сайт; не обязательно наши'),
@@ -404,8 +438,7 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     au = res.get('audience') if SHOW_AUDIENCE else None
     if au:   # доля людей из страны основной аудитории: низкая — в «люди» могли попасть боты
         S.pair('Основная страна', f"{au['страна']} — {str(au['доля']).replace('.', ',')}% визитов людей")
-        if au['предупреждение']:
-            S.note(f"Внимание: из страны основной аудитории меньше {au['порог']}% визитов людей. Проверить, не попали ли в «Людей» боты и скраперы.")
+        if au['предупреждение']: S.notes_of('country', share_limit=f"{au['порог']}%")
     cl = res.get('cleaning', {})
     S.pair('Просмотров страниц', ru_num(sm.get('Просмотров страниц людьми', 0)))
     wv = cl.get('Визитов людей во встроенных браузерах приложений', 0)
@@ -418,13 +451,9 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     cr = sm.get('Конверсия людей (визит → принятая цель), %', 0)
     S.pair('Конверсия людей', f"{str(cr).replace('.', ',')}% — одна заявка на {ru_num(round(100 / cr))} визитов" if cr else 'Заявок от людей нет')
     raw, clean = cl.get('Просмотров у людей до очистки'), cl.get('Просмотров у людей после очистки')
-    how = ('Как считали. Все визиты и просмотры людей в отчёте — после очистки: склеены двойные загрузки одной страницы и переадресации, '
-           'подгрузки форм и блоков не считаются просмотрами, боты и свои отделены. Поэтому цифры меньше сырых')
-    if raw and clean: how += f" (просмотров {ru_short(raw)} → {ru_short(clean)})"
-    how += ' и ближе к Метрике. Заявкой считается отправка формы, которую сервер принял.'
-    S.note(how)
+    S.notes_of('traffic', views=f"(просмотров {ru_short(raw)} → {ru_short(clean)})" if raw and clean else '')
     # --- проблемы: три строки-карточки со счётчиками и ссылка под ними (без шапки)
-    S.section('Проблемы', 'Сколько проблем найдено и насколько они важны. Каждая расписана на листе «Проблемы».')
+    S.block('problems')
     act = [x for x in res['findings'] if x.get('статус') != 'отмечено как норма']
     cnt = {k: sum(1 for x in act if x['важность'] == k) for k in ('Тревога', 'Срочно', 'Важно', 'К сведению', 'Замечание')}
     pr = sheet_names.get('Проблемы', 'Проблемы')
@@ -437,7 +466,8 @@ def build_index(wb, res, sheet_names, title='Обзор'):
         ws.merge_cells(f'C{S.r}:F{S.r}')
         ws.row_dimensions[S.r].height = 22
         S.r += 1
-    c = S.cell('B', f'Факты, доказательства и шаги исправления — на листе «{pr}» →', align=Alignment(vertical='center', indent=1))
+    lk_ = S.K().links('problems')
+    c = S.cell('B', f'{lk_[0][0]} — на листе «{pr}» →' if lk_ else '', align=Alignment(vertical='center', indent=1))
     ws.merge_cells(f'B{S.r}:F{S.r}')
     c.hyperlink = f"#'{pr}'!A1"; c.font = Font(name='Arial', size=10, italic=True, color=ORANGE2, underline='single')
     ws.row_dimensions[S.r].height = 24
@@ -457,14 +487,14 @@ def build_index(wb, res, sheet_names, title='Обзор'):
             S.r += 1
 
     # --- содержимое документа (листы этого файла, включая обзор)
-    S.section('Содержимое документа', 'Листы этого файла и что на каждом из них.')
-    rows = [(title, 'этот лист: паспорт проверки, технологии, трафик', f"#'{title}'!A1")]
+    S.block('contents')
+    rows = [(title, catalog.toc('Общий анализ', 'Обзор'), f"#'{title}'!A1")]
     for name, real in sheet_names.items():
         if real == title or real.startswith('_'): continue
         rows.append((real, catalog.toc('Общий анализ', name), f"#'{real}'!A1"))
     listing(rows)
     # --- структура отчёта (файлы)
-    S.section('Структура отчёта', 'Файлы, из которых состоит отчёт, и что в каждом из них.')
+    S.block('structure')
     rows = [('NXLD_01_Overview.xlsx', 'этот файл: общий обзор, устройство сайта, трафик, все проблемы', None)]
     for b, f in BLOCK_FILES.items():
         if b == 'Общий анализ' or b not in res['selected']: continue

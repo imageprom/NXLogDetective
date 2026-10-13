@@ -22,6 +22,17 @@ def link_row(S, text, name, names):
     S.r += 1
 
 
+def link_rows(S, code, names, force=(), only=None):
+    """Ссылки блока code из каталога (#11): лист этого файла; листа нет в names (и не в force) — ссылки нет.
+    only — коды листов, ссылки на которые выводить (выбор по данным)."""
+    from .catalog import K
+    k = K(S.ws)
+    have = set(names) | set(names.values() if hasattr(names, 'values') else names) | set(force)
+    for lk, (t, target) in zip(k.get(code).get('links') if k.get(code) else [], k.links(code)):
+        if only is not None and lk['sheet'] not in only: continue
+        link_row(S, t, target, have)
+
+
 def row4(S, label, c, d, ef, fill=F_CARD, bold=False):
     """Строка таблицы уровней: B — подпись, C — страниц, D — визитов, E:F — адреса или пояснение."""
     S._fill_row('BCDEF', fill, Border(bottom=SEP))
@@ -79,8 +90,8 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
     ws.row_dimensions[1].height = 12
     S.r = 2
     ws.merge_cells('B2:F2')
-    S.cell('B', 'АНАТОМИЯ САЙТА', Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
-    from .catalog import mark
+    from .catalog import mark, sheet_texts
+    S.cell('B', sheet_texts(title)[0], Font(name='Montserrat', size=16, bold=True, color=ORANGE)); ws.row_dimensions[2].height = 30
     mark(ws, 'B2', None)   # заголовок — из каталога (catalog.finalize); подзаголовка у листа нет
     S.r = 3
     zones = A.get('зоны') or []
@@ -89,7 +100,7 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
     test = [z for z in rest if z['что'] == 'Тестовая копия']
     # 1. системные папки и админка
     if A.get('папки') or adm or test:
-        S.section('Системные папки', 'Папки движка и шаблонов, админка и тестовые копии сайта.')
+        S.block('system')
         if A.get('папки'):
             S.table(['Папка', 'Запросов', 'Что лежит', 'Содержимое'], [[x['папка'], f"{n(x['запросов'])} ({str(x['доля']).replace('.', ',')}%)", x['типы'], x['что']] for x in A['папки']],
                     ['B', 'C', 'DE', 'F'], wrap=0.9)
@@ -98,11 +109,11 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             S.pair('Кто входил', f"сотрудники — с {n(z.get('входили', 0))} {plural(z.get('входили', 0), 'IP-адреса', 'IP-адресов', 'IP-адресов')}", fill=F_LIGHT, level=2)
         for z in [z for z in rest if z['что'] == 'Тестовая копия']:
             S.pair('Тестовая копия', z['адрес'] + (f" — {z['подробно']}" if z.get('подробно') else ''))
-        link_row(S, 'Сотрудники и системы мониторинга', 'Активность', names)
+        link_rows(S, 'system', names)
     # 2. закрытые зоны
     rest = [z for z in rest if z['что'] != 'Тестовая копия']
     if rest:
-        S.section('Закрытые зоны', 'Разделы, куда пускают только после входа: личные кабинеты, служебные разделы.')
+        S.block('zones')
         for z in rest:
             S.pair(z['что'], z['адрес'] + (f" — {z['подробно']}" if z.get('подробно') else ''))
             if z['что'] == 'Служебный раздел':
@@ -118,10 +129,9 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
                 S.pair(f"Уровень {lv['глубина']}" + (f": {cap(lv['название'])}" if not str(lv['название']).startswith('Уровень') else ''),
                        f"{lv.get('шаблон') or lv['пример']} — {n(lv['адресов'])} {plural(lv['адресов'], 'адрес', 'адреса', 'адресов')}, {n(lv['визитов'])} визитов", fill=F_LIGHT, level=2)
     # 3. каталоги и ленты: шапка таблицы один раз, строка каталога — на сером жирным, уровни — светло-серые
-    for key, head, word in (('каталоги', 'Каталоги', 'Каталог'), ('ленты', 'Ленты', 'Лента')):
+    for key, code_, word in (('каталоги', 'catalogs', 'Каталог'), ('ленты', 'feeds', 'Лента')):
         if not A.get(key): continue
-        S.section(head, {'каталоги': 'Разделы со списками и карточками: уровни вложенности, сколько на каждом страниц и визитов людей.',
-                         'ленты': 'Новости, статьи и другие записи, которые идут списком: уровни, страницы и визиты людей.'}[key])
+        S.block(code_)
         S.table(['Уровень', 'Страниц', 'Визитов', 'Адреса'], [], ['B', 'C', 'D', 'EF'])
         for c in A[key]:
             st = [f"разделов — {n(c['разделов'])}" if c.get('разделов') else '', f"подразделов — {n(c['подразделов'])}" if c.get('подразделов') else '',
@@ -133,17 +143,17 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
                 txt = ('Параметры: ' + ', '.join(c['фильтры'])) if c.get('фильтры') else ''
                 if c.get('страниц_фильтра'): txt += ('\n' if txt else '') + 'Страницы фильтра: адреса вида …/filter/…/apply/'
                 row4(S, 'Фильтры', c.get('страниц_фильтра') or '', c.get('визитов_фильтра') or '', txt, fill=F_LIGHT)
-        link_row(S, 'Статистика по типам страниц', 'Типы страниц', names)
+        link_rows(S, code_, names)
     # 3. простые разделы (и главная)
     if A.get('простые') or A.get('главная'):
-        S.section('Простые разделы', 'Главная страница и разделы без вложенной структуры: сколько в них страниц и визитов людей.')
+        S.block('simple')
         rows = ([['/ (главная)', int(A.get('главная', 0)), 1, '']] if A.get('главная') else []) + \
                [[x['раздел'], int(x['визитов']), int(x['страниц']), x.get('пометки', '')] for x in A.get('простые', [])]
         S.table(['Раздел', 'Визитов (люди)', 'Страниц', 'Особенности'], rows, ['B', 'C', 'D', 'EF'], num=(1, 2))
-        link_row(S, 'Статистика по разделам', 'Разделы', names)
+        link_rows(S, 'simple', names)
     # 5. папки с файлами
     if A.get('медиа'):
-        S.section('Папки с файлами', 'Где лежат картинки, скрипты, стили, шрифты, видео и документы: сколько запросов, какой объём и сколько ошибок.')
+        S.block('media')
         rows = []
         for x in A['медиа']:
             more_ = int(x.get('подпапок') or 0) - len([p_ for p_ in str(x.get('подпапки') or '').split(', ') if p_])
@@ -152,21 +162,20 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             rows.append([x['папка'], int(x['запросов']), f"{x['ГБ']:.1f}".replace('.', ','), int(x.get('ошибок', 0)), what])
         fills = {(k, i): 'FCE5CD' for k, x in enumerate(A['медиа']) if x.get('почти_ошибки') for i in range(5)}
         S.table(['Папка', 'Запросов', 'Объём, ГБ', 'Ошибок', 'Содержимое'], rows, ['B', 'C', 'D', 'E', 'F'], num=(1, 2, 3), wrap=0.9, fills=fills)
-        link_row(S, 'Каждый файл: кто забирает, коды, размер', 'Файлы', set(names.values()) | {'Файлы'})
+        link_rows(S, 'media', set(names.values()), force=('Файлы',))
     # 6. служебные файлы
     if A.get('служебные'):
-        S.section('Файлы', 'Все файлы сайта по группам: что это, сколько запросов и ошибок. Где они лежат — в блоке «Папки с файлами».')
+        S.block('files')
         S.table(['Группа', 'Файлов', 'Запросов', 'Ошибок', 'Например'], [[x['группа'], int(x['файлов']), int(x['запросов']), int(x['ошибок']), '\n'.join(x['примеры'])] for x in A['служебные']],
                 ['B', 'C', 'D', 'E', 'F'], num=(1, 2, 3), wrap=0.9)
         lk = res.get('leaks') or []
         if lk:
             S.r += 1
-            S.note('Сервер отдал посторонним служебные файлы: ' + ', '.join(x['файл'] for x in lk[:6]) + (f' и ещё {len(lk) - 6}' if len(lk) > 6 else '') +
-                   '. Подробно — NXLD_03, лист «Служебные данные».')
-        link_row(S, 'Каждый файл: кто забирает, коды, размер', 'Файлы', set(names.values()) | {'Файлы'})
+            S.notes_of('files', leak_files=', '.join(x['файл'] for x in lk[:6]) + (f' и ещё {len(lk) - 6}' if len(lk) > 6 else '') + '.')
+        link_rows(S, 'files', set(names.values()), force=('Файлы',))
     # 7. подгружаемые блоки
     if res.get('embedded') or A.get('подгружаемые'):
-        S.section('Динамические блоки', 'Что браузер подгружает сам сразу после открытия страницы. В просмотры страниц не входит.')
+        S.block('embedded')
         if res.get('embedded'):
             g_ = {}
             for e in res['embedded']:
@@ -178,10 +187,10 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             S.table(['Вид', 'Блоков', 'Подгрузок', 'Примеры'], rows_, ['B', 'C', 'D', 'EF'], num=(1, 2), wrap=0.9)
         else:
             S.table(['Группа', 'Шаблонов', 'Подгрузок', 'Папка'], [[x['группа'], int(x['шаблонов']), int(x['подгрузок']), x['папка']] for x in A['подгружаемые']], ['B', 'C', 'D', 'EF'], num=(1, 2), wrap=0.9)
-        link_row(S, 'Каждый блок: вид, кто вызывает, коды', 'Динамические блоки' if res.get('embedded') else names.get('Анатомия — подгружаемые блоки', 'Анатомия — подгружаемые блоки'), set(names.values()) | {'Динамические блоки'})
+        link_rows(S, 'embedded', set(names.values()), force=('Динамические блоки',), only=('embedded',) if res.get('embedded') else ('anatomy_blocks',))
     # 8. формы и заявки
     if A.get('формы') or A.get('не_цели'):
-        S.section('Формы, заявки и вход', 'Формы сайта: сколько заявок отправлено и принято и по какому признаку видно, что заявка дошла.')
+        S.block('forms')
         for f in A.get('формы', []):
             S.pair(cap(f['форма']), f"от людей: отправлено {n(f['отправлено'])}, принято {n(f['принято'])}" + (f"; от ботов — {n(f['ботов'])}" if f['ботов'] else ''))
             if f.get('где'): S.pair('Где', f['где'].replace(', ', '\n'), fill=F_LIGHT, level=2)
@@ -196,15 +205,13 @@ def build_anatomy(wb, res, names, index=2, title='Анатомия сайта'):
             S.pair('API и обмен с 1С, CRM', 'обращений не найдено')
         if A.get('не_цели'):
             S.pair('Не заявки', '; '.join(f"{g['группа']} — {n(g['отправок'])}" for g in A['не_цели']))
-        link_row(S, 'Куда сайт принимает данные и почему это заявка или нет', 'Точки приёма данных', set(names.values()) | {'Точки приёма данных'})
-        link_row(S, 'Все отправки форм', 'Конверсии', names)
+        link_rows(S, 'forms', names, force=('Точки приёма данных',))
     # 9. параметры
     if A.get('параметры'):
-        S.section('Параметры в адресах', 'Параметры после «?» в адресах страниц, по группам: реклама, поиск и фильтры, служебные параметры движка.')
+        S.block('params')
         S.table(['Группа', 'Параметров', 'Запросов', 'Например'], [[x['группа'], int(x['параметров']), int(x['применений']), x['примеры']] for x in A['параметры']],
                 ['B', 'C', 'D', 'EF'], num=(1, 2), wrap=0.8)
-        link_row(S, 'Каждый параметр', names.get('Параметры запросов', 'Параметры запросов'), set(names.values()))
-        link_row(S, 'Что выбирают в фильтре', 'Фасеты', names)
+        link_rows(S, 'params', names)
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     return ws

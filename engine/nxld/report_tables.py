@@ -17,7 +17,9 @@ def big_cut(name, df):
     fn = f"{BIG_OUT['файл']}_{tag}.csv"
     BIG_OUT['csv'] = [x for x in BIG_OUT['csv'] if x[0] != fn] + [(fn, df)]   # лист пересобран — CSV по последней версии
     show = BIG['показать']
-    return df.head(show), f"Показаны {show:,} из {len(df):,}. Полный список со всеми колонками — файл {fn} в архиве отчёта".replace(',', '\u00a0')
+    from .catalog import sheet_of, K
+    src = name if sheet_of(name)[1] is not None else next(n for n in BIG['листы'] if sheet_of(n)[1] is not None)   # лист вне каталога (сырые данные) — текст того же блока другого большого листа
+    return df.head(show), K(src).note('cut', shown=f"{show:,} из {len(df):,}.".replace(',', '\u00a0'), csv=fn)   # текст — из каталога (блок cut)
 
 
 def write_big_csv(outdir):
@@ -33,9 +35,20 @@ def write_big_csv(outdir):
 WHITE = Side(style='thin', color='FFFFFF')
 
 
-def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=(), size=9, row_rule=None, red=('Ошибки',), font_rule=None, auto=None):
+def data_sheet(wb, name, df, widths=None, wrap=(), fill_rule=None, bold_rule=None, center=(), sort_by=None, kpi=None, kpi_col=None, links=None, size=9, row_rule=None, red=('Ошибки',), font_rule=None, auto=None, title=None, note=None, absent=()):
     """Пересобирает лист name: строка 1 — заголовок, 2 — пояснение, 4 — шапка, дальше данные.
-    widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None."""
+    widths — ширины колонок; wrap — колонки с переносом; fill_rule(col, value) → цвет заливки или None.
+    Заголовок, подзаголовок и ссылки под таблицей — из каталога структуры (лист name, блок main; auto — динамические части);
+    title, note, links — только для листов вне каталога; absent — листы, которых по данным не будет: ссылки на них не выводятся."""
+    from .catalog import sheet_texts, K
+    auto = auto or {}
+    t_, n_ = sheet_texts(name, auto)
+    title = t_ if title is None else title
+    note = n_ if note is None else note
+    if links is None:
+        k_ = K(name)
+        links = k_.links('main', **auto) if k_.has('main') else []
+    links = [(t_, g_) for t_, g_ in links if (g_[1] if isinstance(g_, tuple) else g_) not in absent]
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
     if name in wb.sheetnames: del wb[name]
     ws = wb.create_sheet(name, idx)
@@ -47,7 +60,7 @@ def data_sheet(wb, name, df, title, note='', widths=None, wrap=(), fill_rule=Non
     ws.column_dimensions['A'].width = 2.5          # поле слева, как на остальных листах
     ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE)
     from .catalog import mark
-    mark(ws, 'B1', 'B2', note=note, **(auto or {}))   # заголовок и подзаголовок — из каталога (catalog.finalize); auto — динамические части
+    mark(ws, 'B1', 'B2', note=note, **auto)   # заголовок и подзаголовок — из каталога (catalog.finalize); auto — динамические части
     ws.row_dimensions[1].height = 34
     if note:   # подзаголовок — фирменным Comfortaa, как на обзоре
         ws['B2'] = note; ws['B2'].font = Font(name='Comfortaa', size=11, bold=True, color=GREY)
@@ -202,6 +215,34 @@ LEGEND = {'критично': (F_NOTE, None, 'Критично — см. «По�
           'массовые_люди': ('FFFFFF', GREY, 'Люди и свои: проверить, не общий ли это IP (офис, мобильный оператор)')}
 
 
+def first_heading(ws, code):
+    """Заголовок первой таблицы листа из нескольких таблиц — над шапкой (строка 3), из каталога; блок не выводится — None."""
+    from .catalog import K
+    h = K(ws).h(code)
+    if h is None: return None
+    ws.cell(3, 2, h.upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.freeze_panes = None
+    return h
+
+
+def notes_of(ws, code='main', **auto):
+    """Примечания блока code листа ws — из каталога (#11), серым курсивом под таблицей."""
+    from .catalog import K
+    notes(ws, K(ws).notes(code, **auto))
+
+
+def notes(ws, lines):
+    """Строки примечаний серым курсивом под таблицей (через строку после неё)."""
+    r_ = ws.max_row + 2
+    for t_ in lines:
+        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+
+
+def legend_of(ws, keys, code='main'):
+    """Легенда блока code: показывать ли — каталог (legend), состав — оформление по данным (keys)."""
+    from .catalog import K
+    if K(ws).legend(code): legend(ws, keys)
+
+
 def legend(ws, keys):
     """Легенда цветов под таблицей: подпись прямо на образце цвета. Ширину образца по тексту подбирает sanitize перед сохранением."""
     r_ = ws.max_row + 2
@@ -305,8 +346,8 @@ def conversions(wb, C, name='Конверсии'):
     fill = None
     row_rule = lambda r: F_NOTE if r.get('Кто') == 'Боты' else ('EFEFEF' if r.get('Кто') == 'Свои' else None)
     bold = lambda col, v: col == 'Принята' and v == 'да'
-    data_sheet(wb, name, d, 'Конверсии', 'Все отправки форм за период', widths, wrap=('Почему бот', 'Статус'), fill_rule=fill, bold_rule=bold,
-               center=('IP', 'Код ответа', 'Принята'), kpi=kpi, kpi_col='Канал', links=[('Сводка по формам', 'Анатомия сайта')], row_rule=row_rule)
+    data_sheet(wb, name, d, widths, wrap=('Почему бот', 'Статус'), fill_rule=fill, bold_rule=bold,
+               center=('IP', 'Код ответа', 'Принята'), kpi=kpi, kpi_col='Канал', row_rule=row_rule)
 
 
 # ---- точки приёма данных и POST-отправки ----
@@ -349,19 +390,18 @@ def intake(wb, res, name='Точки приёма данных', before='Кон�
     kpi = kpi[:1] + sorted(kpi[1:], key=lambda x: x[1] == 0)   # нули — в конец
     row_rule = lambda r: 'EFEFEF' if r.get('Опознано как') in ('Служебный скрипт', 'Подгрузка на странице', 'Админка', 'Загрузка файлов') else None
     bold = lambda col, v: col == 'Опознано как' and v in ('Заявка', 'Вход')
-    data_sheet(wb, name, d, 'Точки приёма данных', 'Где сайт принимает данные', WIDTHS,
-               wrap=('Улики', 'Адрес точки', 'Ответы', 'Ошибки'), bold_rule=bold, center=('Метод',), kpi=kpi, kpi_col='Метод', row_rule=row_rule,
-               links=[('Все отправки форм', 'Конверсии'), ('Сводка по формам', 'Анатомия сайта')])
+    data_sheet(wb, name, d, WIDTHS,
+               wrap=('Улики', 'Адрес точки', 'Ответы', 'Ошибки'), bold_rule=bold, center=('Метод',), kpi=kpi, kpi_col='Метод', row_rule=row_rule)
     ws = wb[name]   # сноска и чего нет — тоже результат
+    from .catalog import K
+    k_ = K(ws)
     if d['Адрес точки'].astype(str).str.contains('фасетн').any():
-        r0 = ws.max_row + 2
-        c = ws.cell(r0, 2, 'Основные страницы — адреса структуры сайта. Фасетные страницы — адреса, которые генерирует фильтр каталога из комбинаций условий (…/filter/…/apply/); в структуре сайта их нет.')
-        c.font = Font(name='Arial', size=10, italic=True, color=INK)
+        for t_ in k_.notes('facets'):
+            c = ws.cell(ws.max_row + 2, 2, t_); c.font = Font(name='Arial', size=10, italic=True, color=INK)
     absent = [lab for lab, keys in (('Поиск по сайту', ('Поиск по сайту',)), ('API и обмен с 1С, CRM, вебхуки', ('Обмен с 1С', 'API', 'Вебхук'))) if not any(cnt.get(k, 0) for k in keys)]
     if absent:
-        r_ = ws.max_row + 2
-        c = ws.cell(r_, 2, 'Обращений не найдено: ' + '; '.join(absent) + '.')
-        c.font = Font(name='Arial', size=10, italic=True, color=INK)
+        for t_ in k_.notes('absent', absent='; '.join(absent) + '.'):
+            c = ws.cell(ws.max_row + 2, 2, t_); c.font = Font(name='Arial', size=10, italic=True, color=INK)
 
 
 def method_all(wb, res, method='POST', name=None, after=None):
@@ -385,19 +425,17 @@ def method_all(wb, res, method='POST', name=None, after=None):
     kpi = [('Адресов', len(d)), ('Принимает сайт', len(d) - len(sc)), ('Адресов сканеров', len(sc)), ('Запросов сканеров', int(sc['Запросов'].sum()))]
     up = list(((d['Опознание'] == 'Загрузка файлов') & (d.get('Посторонние', 0).fillna(0) > 0)) | (d.get('Персональные данные', pd.Series(0, index=d.index)).fillna(0) > 0))
     fills = [F_NOTE if u else ('EFEFEF' if o == 'Сканер' else None) for u, o in zip(up, d['Опознание'])]
-    sub = {'POST': 'Все адреса, на которые за период отправляли данные методом POST: и сайт, и сканеры',
-           'GET': 'Где сайт принимает данные в адресе (GET): фильтры, поиск, API и скрипты — и обращения сканеров'}[method]
     w = dict(WIDTHS, **{'Адрес': 55, 'Опознание': 22, 'Свои': 9, 'Посторонние': 11, 'Персональные данные': 12})
-    data_sheet(wb, name, d, name, sub, w, wrap=('Улики', 'Адрес', 'Ответы', 'Ошибки'), kpi=kpi, kpi_col='Опознание',
+    data_sheet(wb, name, d, w, wrap=('Улики', 'Адрес', 'Ответы', 'Ошибки'), kpi=kpi, kpi_col='Опознание',
                row_rule=lambda r, _it=iter(fills): next(_it), red=('Ошибки',))
     ws = wb[name]
-    r_ = ws.max_row + 2
-    for t_ in ['Опознание — что это за адрес: заявка, вход, фильтр, служебный скрипт, загрузка файлов, API или сканер; отбор — фильтром по колонке.',
-               'Свои — запросы сотрудников; посторонние — все остальные.' + (' Персональные данные — запросы, в адресе которых телефон, почта или ФИО (в отчёте — маскированно).' if method == 'GET' else '')]:
-        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
-    c = ws.cell(r_ + 1, 2, 'Что сайт принимает на самом деле: лист «Точки приёма данных» в NXLD_01_Overview.xlsx →')
-    c.hyperlink = "NXLD_01_Overview.xlsx#'Точки приёма данных'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single')
-    legend(ws, ['опасная_точка', 'сканер_точка'])
+    from .catalog import K
+    notes_of(ws)
+    r_ = ws.max_row + 1
+    for t_, (fn_, sh_) in K(ws).links('intake_link'):   # ссылка в другой файл — подписью «лист … в файле»
+        c = ws.cell(r_ + 1, 2, f'{t_}: лист «{sh_}» в {fn_} →')
+        c.hyperlink = f"{fn_}#'{sh_}'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single'); r_ += 1
+    legend_of(ws, ['опасная_точка', 'сканер_точка'])
     return ws
 
 
@@ -461,9 +499,8 @@ def facets_sheet(wb, F, name='Фасеты'):
                       'Запросов': F['запросов'].astype(int), 'Уникальных IP (люди)': F['людей'].astype(int), 'Откуда': F['откуда']})
     kpi = [('Условий', int(d['Условие'].nunique())), ('Значений', len(d)), ('Запросов', int(d['Запросов'].sum()))]
     widths = {'Раздел': 14, 'Ключ': 26, 'Значение': 34, 'Условие': 16, 'Расшифровка': 30, 'Запросов': 11, 'Уникальных IP (люди)': 10, 'Откуда': 30}
-    data_sheet(wb, name, d, 'Фасеты', 'Что люди выбирают в фильтре каталога', widths, wrap=('Ключ', 'Значение', 'Условие', 'Расшифровка', 'Откуда'), kpi=kpi, kpi_col='Запросов',
-               row_rule=lambda r: 'EFEFEF' if str(r.get('Откуда', '')).startswith('параметры') else None,
-               links=[('Где фильтр принимает запросы', 'Точки приёма данных'), ('Устройство каталога', 'Анатомия сайта')])
+    data_sheet(wb, name, d, widths, wrap=('Ключ', 'Значение', 'Условие', 'Расшифровка', 'Откуда'), kpi=kpi, kpi_col='Запросов',
+               row_rule=lambda r: 'EFEFEF' if str(r.get('Откуда', '')).startswith('параметры') else None)
 
 
 
@@ -487,7 +524,7 @@ def leaks_sheet(wb, L, name='Утечки служебных файлов'):
     d = pd.DataFrame({'Файл': L['файл'].astype(str), 'Отдан раз': L['ответов_200'].astype(int), 'Уникальных IP': L['IP'].astype(int),
                       'Размер ответа, байт': L['размер_у_чужих'].fillna(L['размер']).round().astype(int),
                       'Получили свои': L['получили_свои'].astype(int), 'Первый': L['первый'].map(day), 'Последний': L['последний'].map(day)})
-    data_sheet(wb, name, d, name, 'Служебные файлы, которые сервер отдал посторонним', {'Файл': 50, 'Отдан раз': 11, 'Уникальных IP': 10, 'Размер ответа, байт': 14, 'Получили свои': 12, 'Первый': 12, 'Последний': 12},
+    data_sheet(wb, name, d, {'Файл': 50, 'Отдан раз': 11, 'Уникальных IP': 10, 'Размер ответа, байт': 14, 'Получили свои': 12, 'Первый': 12, 'Последний': 12},
                wrap=('Файл',), kpi=[('Файлов', len(d)), ('Отдан раз', int(d['Отдан раз'].sum()))], kpi_col='Уникальных IP', row_rule=lambda r: F_NOTE,
                links=[('Что искали сканеры', 'Сканеры — что искали')])
     ws = wb[name]
@@ -498,7 +535,7 @@ def leaks_sheet(wb, L, name='Утечки служебных файлов'):
     return ws
 
 
-def service_files(wb, res, name='Файлы', title='Файлы', note='Что забирают с сайта как отдельный файл', links=None, errors_mode=False):
+def service_files(wb, res, name='Файлы', errors_mode=False):
     """Все файлы сайта, кроме страниц: кто забирает, откуда, коды. errors_mode — тот же лист в срезе ошибок (02 «Файлы с ошибками»):
     персиковым — файлы, которые подгружают страницы сайта, серым — те, что просят только роботы."""
     import re
@@ -553,20 +590,14 @@ def service_files(wb, res, name='Файлы', title='Файлы', note='Что �
     d = d.drop(columns=['_err', '_leak', '_last', '_crit', '_act'])
     widths = {'Файл': 52, 'Размер, КБ': 10, 'Группа': 18, 'Файлов': 9, 'Запросов': 11, 'Ответы': 34, 'Ошибки': 26, 'Кто забирает': 44, 'Браузеры': 11, 'Роботы': 44, 'Со страниц сайта': 11, 'Напрямую': 11, 'Другие сайты': 40, 'Первый': 12, 'Последний': 12}
     missing = [nm for nm in ('Документы', 'Видео и звук') if nm not in set(d['Группа'])] if res.get('files') is not None and not errors_mode else []   # заметные отсутствия
-    links = links if links is not None else [('Сводка по группам', 'Анатомия сайта'), ('Логи, по которым всё посчитано', 'Логи')]
-    data_sheet(wb, name, d, title, note, widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
-               kpi=kpi, kpi_col='Файлов', links=links, row_rule=lambda r, _it=iter(fills_): next(_it), font_rule=lambda r, _it=iter(fonts_): next(_it),
+    data_sheet(wb, name, d, widths, wrap=('Файл', 'Кто забирает', 'Роботы', 'Другие сайты', 'Ответы', 'Ошибки'),
+               kpi=kpi, kpi_col='Файлов', row_rule=lambda r, _it=iter(fills_): next(_it), font_rule=lambda r, _it=iter(fonts_): next(_it),
                red=() if errors_mode else ('Ошибки',))
     ws = wb[name]
-    if missing:
-        r = ws.max_row + 2
-        ws.cell(r, 2, 'Не найдено: ' + ', '.join(missing).lower() + '. Обращения сканеров к несуществующим файлам сюда не попадают.')
-        ws.cell(r, 2).font = Font(name='Arial', size=9, italic=True, color=GREY)
+    if missing: notes_of(ws, 'missing', missing=', '.join(missing).lower() + '.')
     if errors_mode:
-        r = ws.max_row + 2
-        for t_ in ['Файлы, которые никто не запрашивал по ссылке, — перебор и мусор, их здесь нет: они на вкладках по кодам. Зонды сканеров — в отчёте по безопасности.']:
-            ws.cell(r, 2, t_).font = Font(name='Arial', size=9, italic=True, color=GREY); r += 1
-        legend(ws, ['со_страниц', 'обычно', 'неактуально'])
+        notes_of(ws)
+        legend_of(ws, ['со_страниц', 'обычно', 'неактуально'])
     return wb[name]
 
 
@@ -598,10 +629,9 @@ def embedded_sheet(wb, res, name='Динамические блоки'):
     if name not in wb.sheetnames: wb.create_sheet(name)
     widths = {'Блок': 52, 'Размер, КБ': 10, 'Вид': 26, 'Загрузка': 13, 'Запросов': 13, 'Визитов (люди)': 13, 'Автозагрузка, %': 13,
               'Охват страниц': 11, 'Ответы': 34, 'Ошибки': 26, 'Первый': 12, 'Последний': 12}
-    data_sheet(wb, name, d.drop(columns='_bad'), 'Динамические блоки', 'Что подгружается внутри страницы: само или по действию человека', widths,
+    data_sheet(wb, name, d.drop(columns='_bad'), widths,
                wrap=('Блок', 'Вид', 'Ответы', 'Ошибки'), center=('Загрузка',), kpi=kpi, kpi_col='Запросов',
-               row_rule=lambda r, _it=iter(bad): F_NOTE if next(_it) else None,   # блоки с ошибками — персиковым, как в «Файлах»
-               links=[('Сводка по видам', 'Анатомия сайта'), ('Куда формы отправляют данные', 'Точки приёма данных'), ('Сочетания фильтров', 'Фасеты')])
+               row_rule=lambda r, _it=iter(bad): F_NOTE if next(_it) else None)   # блоки с ошибками — персиковым, как в «Файлах»
     ws = wb[name]
     for i, k_ in enumerate(d['Вид']):   # неопознанные — серым; ошибки видны красным в колонке «Ошибки», много это или мало — решает аналитик
         fill = 'EFEFEF' if k_ == 'Неопознанные' else None
@@ -638,30 +668,20 @@ def pages_sheet(wb, T, name, mode):
     if mode != 'Разделы': kpi.append(('С ошибками', int(d['Ошибки'].astype(bool).sum())))
     widths = {first: 55 if mode != 'Разделы' else 30, 'Статус': 14, 'Страниц': 9, 'Просмотров': 11, 'Визитов (люди)': 12, 'Уникальных IP (люди)': 11,
               'Заявок отправлено': 11, 'Ответы': 30, 'Ошибки': 22, 'Пример': 50, **{c_: 11 for c_ in chans}}
-    note = {'Разделы': 'Запрашиваемые разделы сайта', 'Типы страниц': 'Страницы одного вида, собранные по шаблону адреса',
-            'Страницы': 'TOP500 — самые посещаемые страницы сайта'}[mode]
-    links = {'Разделы': [('Типы страниц внутри разделов', 'Типы страниц'), ('Устройство разделов', 'Анатомия сайта')],
-             'Типы страниц': [('Разделы', 'Разделы'), ('Отдельные страницы', 'Страницы'), ('Каталоги по уровням', 'Анатомия сайта')],
-             'Страницы': [('Типы страниц', 'Типы страниц'), ('Разделы', 'Разделы')]}[mode]
-    data_sheet(wb, name, d, mode, note, widths, wrap=(first, 'Ответы', 'Ошибки', 'Пример'), center=('Статус',),
-               kpi=kpi, kpi_col='Просмотров', row_rule=lambda r, _it=iter(dead): F_NOTE if next(_it) else None, links=links)
+    data_sheet(wb, name, d, widths, wrap=(first, 'Ответы', 'Ошибки', 'Пример'), center=('Статус',),
+               kpi=kpi, kpi_col='Просмотров', row_rule=lambda r, _it=iter(dead): F_NOTE if next(_it) else None)
     ws = wb[name]
-    r_ = ws.max_row + 2
-    notes = {'Разделы': ['Раздел — первый уровень адреса страниц. «Не существует» — людям там ни разу не ответили 2xx.'],
-             'Типы страниц': ['Тип страницы — адреса, которые различаются только номерами и названиями (* — изменяемая часть). Пример — самая посещаемая страница этого типа.'],
-             'Страницы': ['Только страницы, которые отвечали людям 200.']}[mode]
-    notes.append('Заявок отправлено — отправки форм с этих страниц. Каналы — с чего начался визит. Зонды, файлы и битые адреса — на своих листах.')
-    for t_ in notes:
-        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+    notes_of(ws)
     return ws
 
 
 WEEKDAY = ('Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс')
 
 
-def journal_sheet(wb, name, A, subtitle, kpi, links, notes, top_labels=None, kpi_col=None, outages=None):
+def journal_sheet(wb, name, A, kpi, top_labels=None, kpi_col=None, outages=None):
     """Журнал по дням с двухуровневой шапкой: «День» (день недели, дата, время в логе) и группы колонок вида «Верх|Низ».
-    A — строки по дням (день, _с, _по, _полный, «Верх|Низ»…) и строка «Итого». Общий для «Журнала активности» и «Журнала ошибок»."""
+    A — строки по дням (день, _с, _по, _полный, «Верх|Низ»…) и строка «Итого». Общий для «Журнала активности» и «Журнала ошибок».
+    Подзаголовок, ссылки, примечания и легенда — из каталога (блок main); ссылка на «Сбои» — только если сбои есть."""
     if A is None or not len(A) or name not in wb.sheetnames: return None
     top_labels = top_labels or {}
     body = A[A['день'] != 'Итого']
@@ -685,9 +705,9 @@ def journal_sheet(wb, name, A, subtitle, kpi, links, notes, top_labels=None, kpi
         d['Сбой'] = ['\n'.join(od.get(x, [])) for x in body['день']] + [''] * len(tot)
     row_fill = [F_NOTE if (i < len(body) and body['день'].iloc[i] in od) else ('F3F3F3' if w else None) for i, w in enumerate(weekend)]
     widths = {'День': 7, 'Дата': 12, 'Время': 13, 'Сбой': 20, **{g: 10 for g in groups}}
-    data_sheet(wb, name, d, name, subtitle, widths, center=('День', 'Дата', 'Время'), wrap=('Сбой',),
+    data_sheet(wb, name, d, widths, center=('День', 'Дата', 'Время'), wrap=('Сбой',),
                kpi=kpi(body) if callable(kpi) else kpi, kpi_col=kpi_col if kpi_col in groups else None,
-               row_rule=lambda r, _it=iter(row_fill): next(_it), links=links)
+               row_rule=lambda r, _it=iter(row_fill): next(_it), absent=() if outages is not None and len(outages) else ('Сбои',))
     ws = wb[name]
     H, X = 4, 1
     # шапка в два уровня: строка 3 — группы (объединённые ячейки), строка 4 — колонки
@@ -723,10 +743,8 @@ def journal_sheet(wb, name, A, subtitle, kpi, links, notes, top_labels=None, kpi
             c_ = ws.cell(r_, q + 1 + X); c_.font = Font(name='Arial', size=9, bold=True)
             c_.border = Border(top=Side(style='thin', color=ORANGE), bottom=SEP)
         ws.auto_filter.ref = f"{ws.cell(H, 1 + X).coordinate}:{ws.cell(H + len(d) - 1, len(d.columns) + X).coordinate}"
-    r_ = ws.max_row + 2
-    for t_ in notes:
-        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
-    legend(ws, (['сбой'] if od else []) + ['выходные', 'неполный'])
+    notes_of(ws)
+    legend_of(ws, (['сбой'] if od else []) + ['выходные', 'неполный'])
     return ws
 
 
@@ -740,11 +758,7 @@ def activity_sheet(wb, A, name='Журнал активности', outages=None
         return [('Визиты людей в день', int(round(hv.mean())) if len(hv) else 0),
                 ('Самый активный день', _day(body.loc[body['Визиты|Люди'].idxmax(), 'день']) if len(body) else ''),
                 ('Заявки людей', int(body['Заявки|Люди'].sum()))]
-    return journal_sheet(wb, name, A, 'Визиты, уникальные IP и заявки по дням', kpi,
-                         [('Кто заходит на сайт', 'Активность'), ('Все отправки форм', 'Конверсии')] + ([('Сбои', ('NXLD_02_Errors.xlsx', 'Сбои'))] if outages is not None and len(outages) else []),
-                         ['Визиты — по группам, как на листе «Активность». IP — разные адреса за день; в «Итого» — разные за весь период, поэтому меньше суммы по дням.',
-                          'Заявки — отправки форм; у ботов — спам, у своих — тесты. Время — какая часть суток попала в лог; неполные дни в среднее не входят.'],
-                         top_labels={'IP': 'Уникальные IP'}, kpi_col='IP|Люди', outages=outages)
+    return journal_sheet(wb, name, A, kpi, top_labels={'IP': 'Уникальные IP'}, kpi_col='IP|Люди', outages=outages)
 
 
 SRC_LABEL = {'документация': 'Документация', 'сообщество': 'Сообщество', 'сборник': 'Сообщество', 'наблюдение': 'Сообщество',
@@ -775,9 +789,8 @@ def params_sheet(wb, res, name='Параметры запросов'):
     kpi = [k for k in kpi if k[1]] + [k for k in kpi if not k[1]]
     if name not in wb.sheetnames: wb.create_sheet(name)
     widths = {'Параметр': 30, 'Группа': 24, 'Запросов': 11, 'Визитов (люди)': 11, 'Опознание': 50, 'Основание': 18, 'Значений': 10, 'Частое значение': 36, 'Точки обращения': 40, 'Спутники': 40}
-    data_sheet(wb, name, d, 'Параметры запросов', 'Что передают в адресе после «?»', widths, wrap=('Параметр', 'Группа', 'Опознание', 'Основание', 'Частое значение', 'Точки обращения', 'Спутники'),
-               kpi=kpi, kpi_col='Запросов', row_rule=lambda r: F_NOTE if r.get('Группа') == 'Атаки и зонды' else 'EFEFEF' if r.get('Группа') == 'Неизвестные' else 'F7F7F7' if r.get('Основание') == 'Дедукция' else None,
-               links=[('Сводка по группам', 'Анатомия сайта'), ('Фильтры каталога по значениям', 'Фасеты')])
+    data_sheet(wb, name, d, widths, wrap=('Параметр', 'Группа', 'Опознание', 'Основание', 'Частое значение', 'Точки обращения', 'Спутники'),
+               kpi=kpi, kpi_col='Запросов', row_rule=lambda r: F_NOTE if r.get('Группа') == 'Атаки и зонды' else 'EFEFEF' if r.get('Группа') == 'Неизвестные' else 'F7F7F7' if r.get('Основание') == 'Дедукция' else None)
     ws = wb[name]
     return ws
 
@@ -860,9 +873,17 @@ def redden_codes(wb, skip=('_snapshot',), only=None, rx=r'код|ответ'):
                     cell.value = CellRichText(parts)
 
 
-def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='Запросов за час', foot=None):
-    """Тепловые карты «день × час» друг под другом на одном листе: blocks — [(заголовок, подпись, DataFrame день × 0..23)].
-    Перед картами — заметка, куда смотреть (intro). Общий для «Нагрузки по часам» (03) и «Признаков торможения» (02)."""
+def heat_sheet(wb, name, blocks, unit='Запросов за час', absent=(), **auto):
+    """Тепловые карты «день × час» друг под другом на одном листе: blocks — [(код блока каталога, DataFrame день × 0..23[, формат])]
+    или [(заголовок, подпись, DataFrame…)] — карты, названные по данным. Общий для «Нагрузки по часам» (03) и «Признаков торможения» (02).
+    Из каталога: заголовок и подзаголовок листа, «intro» — заметка перед картами, карты по коду, «main» — ссылки и подпись под картами
+    (auto: unit — единица счёта, остальное — выводы по данным). absent — листы, которых по данным не будет."""
+    from .catalog import K, sheet_texts
+    k_ = K(name)
+    title, subtitle = sheet_texts(name)
+    intro = k_.notes('intro', **auto)
+    links = [(t_, g_) for t_, g_ in k_.links('main') if g_ not in absent]
+    foot = k_.notes('main', unit=f'{unit}.' if unit else '', **auto)
     from openpyxl.formatting.rule import ColorScaleRule
     from openpyxl.utils import get_column_letter as L_
     idx = wb.sheetnames.index(name) if name in wb.sheetnames else len(wb.sheetnames)
@@ -872,7 +893,7 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
     ws['B1'] = title.upper(); ws['B1'].font = Font(name='Montserrat', size=16, bold=True, color=ORANGE); ws.row_dimensions[1].height = 34
     ws['B2'] = subtitle; ws['B2'].font = Font(name='Comfortaa', size=11, bold=True, color=GREY); ws.row_dimensions[2].height = 24
     from .catalog import mark
-    mark(ws, 'B1', 'B2', note=subtitle)   # заголовок и подзаголовок — из каталога (catalog.finalize)
+    mark(ws, 'B1', 'B2')   # заголовок и подзаголовок — из каталога (catalog.finalize)
     r = 4
     for t_ in intro:   # заметка перед картами — персиковая плашка на всю ширину
         ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=28)
@@ -882,6 +903,10 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
         r += 1
     r += 1
     for blk in blocks:
+        if len(blk) >= 2 and not isinstance(blk[1], str):   # карта из каталога: (код, данные[, формат])
+            bt, bn = k_.h(blk[0]), k_.sub(blk[0])
+            if bt is None: continue   # блок не выводится (статус)
+            blk = (bt, bn) + tuple(blk[1:])
         bt, bn, P = blk[:3]
         fmt_ = blk[3] if len(blk) > 3 else None   # формат чисел карты: None — целые с разрядами, иначе строка формата Excel
         if P is None or not len(P): continue
@@ -914,16 +939,22 @@ def heat_sheet(wb, name, title, subtitle, blocks, intro=(), links=(), unit='За
     ws.column_dimensions['AB'].width = 10
     for text, target in links:
         c = ws.cell(r, 2, f'{text}: лист «{target}» →'); c.hyperlink = f"#'{target}'!A1"; c.font = Font(name='Arial', size=10, color=ORANGE2, underline='single'); r += 1
-    c_ = ws.cell(r + 1, 2, foot or f'{unit}. Цвет — от белого (меньше всего) до тёмно-оранжевого (больше всего) в каждой карте отдельно. Выходные — серой датой.')
-    c_.font = Font(name='Arial', size=9, italic=True, color=GREY)
+    for i_, t_ in enumerate(foot):
+        c_ = ws.cell(r + 1 + i_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY)
     ws.page_setup.orientation = 'landscape'; ws.sheet_properties.pageSetUpPr.fitToPage = True; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     return ws
 
 
-def extra_table(ws, df, title, note='', widths=None, wrap=(), row_rule=None, size=9, at=None, red=('Ошибки',), font_rule=None, groups=None):
+def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=None, red=('Ошибки',), font_rule=None, groups=None):
     """Вторая таблица на листе — под первой (после ссылок и заметок): заголовок, подпись, оранжевая шапка, строки.
+    code — блок листа в каталоге: заголовок и подзаголовок оттуда; блок не выводится (статус) — таблицы нет, возвращается False.
     at — буквы колонок листа для каждой колонки таблицы (широкие колонки — на широкие места первой таблицы)."""
     from openpyxl.utils import column_index_from_string as ci_
+    from .catalog import K
+    k_ = K(ws)
+    title = k_.h(code)
+    if title is None: return False
+    note = k_.sub(code)
     r = ws.max_row + 3
     ws.cell(r, 2, title.upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.row_dimensions[r].height = 22; r += 1
     if note:

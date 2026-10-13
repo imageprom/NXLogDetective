@@ -8,7 +8,7 @@ from .catalog import order as catalog_order
 import pandas as pd
 from openpyxl.styles import Font
 from .report_index import Wide, brand_header, GREY, ORANGE
-from .report_tables import data_sheet, journal_sheet, service_files, F_NOTE, _day, legend, fmt_codes, redden_codes, heat_sheet, extra_table
+from .report_tables import first_heading, data_sheet, journal_sheet, service_files, F_NOTE, _day, legend, fmt_codes, redden_codes, heat_sheet, extra_table
 from .report_index import GREY as T_GREY
 from .errors import WHO, FAMILIES, by_family, ERRLOG_MEANING
 
@@ -50,10 +50,7 @@ def font_of(actual, ill):
     return T_GREY if not actual and ill else None
 
 
-def notes(ws, lines):
-    r_ = ws.max_row + 2
-    for t_ in lines:
-        c_ = ws.cell(r_, 2, t_); c_.font = Font(name='Arial', size=9, italic=True, color=GREY); r_ += 1
+from .report_tables import notes, notes_of, legend_of   # примечания и легенда — общие, тексты из каталога (#11)
 
 
 def code_tab(wb, T, Sr, family):
@@ -69,18 +66,12 @@ def code_tab(wb, T, Sr, family):
     if family in ('404', '499'): d = d.drop(columns='Ошибки')   # код один — колонка ничего не добавляет
     fills = [fill_of(a, c) for a, c in zip(D['чужое'], D['критично'])]
     fonts = [None if a else font_of(ac, il) for a, ac, il in zip(D['чужое'], D['актуально'], D['болел'])]
-    sub = {'404': 'Адреса, которых нет на сервере: кто их запрашивал и откуда пришёл',
-           '5xx': 'Адреса, на которых сервер не смог ответить',
-           '403 и прочие 4xx': 'Адреса, на которые сервер ответил отказом: доступ запрещён, неверный запрос и другие, кроме 404',
-           '499': 'Адреса, с которых посетители ушли, не дождавшись ответа: признак медленной страницы'}[family]
     kpi = [('Адресов', len(D_all)), ('Критично', int(D_all['критично'].sum())), ('У людей', int(D_all['Люди'].sum())), ('Сканеры и чужое', int(D_all['чужое'].sum()))]
     widths = {'Адрес': 48, 'Запросов': 10, 'Уникальных IP': 10, 'Тип': 11, 'Текущий статус': 30, 'Основание': 26, 'Ошибки': 18, 'Раздел': 18, 'Источники': 46, 'Первый': 11, 'Последний': 11, **{nm: 10 for nm in WHO}}
-    data_sheet(wb, family, d, family, sub, widths, wrap=('Адрес', 'Текущий статус', 'Основание', 'Источники', 'Ошибки'), center=('Тип',),
-               kpi=kpi, kpi_col='Мониторинг', row_rule=lambda r, _it=iter(fills): next(_it), font_rule=lambda r, _it=iter(fonts): next(_it), red=(),
-               links=[('Сводка ошибок', 'Обзор'), ('История каждой страницы', 'Пострадавшие страницы')])
-    notes(wb[family], ['Текущий статус — что адрес отвечает по последним дням лога; переадресация проверена до конца цепочки. Источники — откуда пришли запросы с ошибкой.'
-                       + (' Показаны первые 5 000 адресов.' if len(D_all) > 5000 else '')])
-    legend(wb[family], ['критично', 'обычно', 'неактуально', 'чужое'])
+    data_sheet(wb, family, d, widths, wrap=('Адрес', 'Текущий статус', 'Основание', 'Источники', 'Ошибки'), center=('Тип',),
+               kpi=kpi, kpi_col='Мониторинг', row_rule=lambda r, _it=iter(fills): next(_it), font_rule=lambda r, _it=iter(fonts): next(_it), red=())
+    notes_of(wb[family], cut='Показаны первые 5 000 адресов.' if len(D_all) > 5000 else '')
+    legend_of(wb[family], ['критично', 'обычно', 'неактуально', 'чужое'])
     return wb[family]
 
 
@@ -98,13 +89,11 @@ def victims(wb, E):
     fills = [fill_of(False, c) for c in N['критично']]
     fonts = [font_of(a, il) for a, il in zip(N['актуально'], N['болел'])]
     kpi = [('Страниц', len(d)), ('Критично', int(N['критично'].sum())), ('Не работают сейчас', int(N['актуально'].sum())), ('Починились', int((~N['актуально'] & N['болел']).sum()))]
-    data_sheet(wb, name, d, name, 'Страницы, которые сломались, починились или не работали с самого начала', {'Страница': 44, 'Текущий статус': 28, 'Основание': 28, 'История': 40, 'Ошибки': 20, 'Раздел': 18, 'Источники': 50},
+    data_sheet(wb, name, d, {'Страница': 44, 'Текущий статус': 28, 'Основание': 28, 'История': 40, 'Ошибки': 20, 'Раздел': 18, 'Источники': 50},
                wrap=('Страница', 'Текущий статус', 'Основание', 'История', 'Источники', 'Ошибки'), kpi=kpi, kpi_col='Поисковики',
-               row_rule=lambda r, _it=iter(fills): next(_it), font_rule=lambda r, _it=iter(fonts): next(_it), red=(),
-               links=[('Все адреса с 404', '404'), ('Все адреса с 5xx', '5xx')])
-    notes(wb[name], ['Текущий статус — что страница отвечает по последним дням лога. История — что с ней происходило по дням: работает, переадресация, отказ, нет на сервере, ошибка сервера; «в сбое 27.09 22:22» — ошибка из-за сбоя сервера, см. лист «Сбои».',
-                     'Основание: реклама ведёт сюда, ссылка с сайта, 5xx у людей, поисковики получают 5xx, массово (ошибку получили больше 0,1% визитов людей). Сканеры сюда не входят.'])
-    legend(wb[name], ['критично', 'обычно', 'неактуально'])
+               row_rule=lambda r, _it=iter(fills): next(_it), font_rule=lambda r, _it=iter(fonts): next(_it), red=())
+    notes_of(wb[name])
+    legend_of(wb[name], ['критично', 'обычно', 'неактуально'])
     return wb[name]
 
 
@@ -118,26 +107,24 @@ def links_sheets(wb, E):
                           'Люди': I['людей'].astype(int), 'Поисковики': I['поисковиков'].astype(int), 'Страниц-источников': I['страниц'].astype(int),
                           'Адресов-целей': I['адресов'].astype(int)})
         d.insert(2, 'Ошибки', I['коды'].map(fmt_codes))   # коды — перед переходами
-        data_sheet(wb, nm, d, nm, 'Ссылки на страницах сайта, которые ведут на несуществующие или неработающие адреса', {'Где стоит ссылка': 42, 'Куда ведёт': 42, 'Ошибки': 20},
+        data_sheet(wb, nm, d, {'Где стоит ссылка': 42, 'Куда ведёт': 42, 'Ошибки': 20},
                    wrap=('Где стоит ссылка', 'Куда ведёт', 'Ошибки'), kpi=[('Пар шаблонов', len(d)), ('Переходов', int(d['Переходов'].sum()))], kpi_col='Люди',
                    row_rule=lambda r, _it=iter(list((I['людей'] > 0) & I['актуально'])): F_NOTE if next(_it) else None,
-                   font_rule=lambda r, _it=iter(list(I['актуально'])): None if next(_it) else T_GREY, red=(), links=[('Внешние битые ссылки', 'Битые внешние')])
-        notes(wb[nm], ['Строка — пара шаблонов: на страницах какого вида стоит ссылка и на адреса какого вида она ведёт (* — изменяемая часть адреса).'])
-        legend(wb[nm], ['люди', 'обычно', 'неактуально'])
+                   font_rule=lambda r, _it=iter(list(I['актуально'])): None if next(_it) else T_GREY, red=())
+        notes_of(wb[nm])
+        legend_of(wb[nm], ['люди', 'обычно', 'неактуально'])
     X = E.get('битые_внешние')
     if X is not None and len(X):
         nm = 'Битые внешние'
         if nm not in wb.sheetnames: wb.create_sheet(nm)
         d = pd.DataFrame({'Откуда': X['вид'], 'Сайт': X['откуда'], 'Куда ведёт': X['куда'], 'Ошибки': X['коды'].map(fmt_codes), 'Переходов': X['переходов'].astype(int),
                           'Визитов': X['визитов'].astype(int), 'Люди': X['людей'].astype(int), 'Поисковики': X['поисковиков'].astype(int), 'Адресов-целей': X['адресов'].astype(int)})
-        data_sheet(wb, nm, d, nm, 'Ссылки с рекламы, поиска и других сайтов на несуществующие страницы', {'Сайт': 26, 'Куда ведёт': 46, 'Ошибки': 20}, center=('Откуда',),
+        data_sheet(wb, nm, d, {'Сайт': 26, 'Куда ведёт': 46, 'Ошибки': 20}, center=('Откуда',),
                    wrap=('Куда ведёт', 'Ошибки'), kpi=[('Пар', len(d)), ('Переходов', int(d['Переходов'].sum()))], kpi_col='Люди',
                    row_rule=lambda r, _it=iter(list((X['людей'] > 0) & X['актуально'])): F_NOTE if next(_it) else None,
-                   font_rule=lambda r, _it=iter(list(X['актуально'])): None if next(_it) else T_GREY, red=(),
-                   links=[('Внутренние битые ссылки', 'Битые внутренние'), ('Рекламные ошибки', 'Рекламные ошибки')])
-        notes(wb[nm], ['Что делать: поставить переадресацию 301 со старого адреса на живую страницу или исправить ссылку в рекламе и на сайте-источнике.',
-                       'Реклама — переходы с метками yclid, utm, gclid; «без реферера» — браузер не передал, откуда пришёл человек.'])
-        legend(wb[nm], ['люди', 'обычно', 'неактуально'])
+                   font_rule=lambda r, _it=iter(list(X['актуально'])): None if next(_it) else T_GREY, red=())
+        notes_of(wb[nm])
+        legend_of(wb[nm], ['люди', 'обычно', 'неактуально'])
 
 
 def search_errors_sheet(wb, SE, nm='Поисковые ошибки'):
@@ -145,10 +132,10 @@ def search_errors_sheet(wb, SE, nm='Поисковые ошибки'):
     if SE is None or not len(SE): return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
     d = pd.DataFrame({'Робот': SE['робот'], 'Тип страницы': SE['шаблон'], 'Ошибки': SE['коды'].map(fmt_codes), 'Запросов': SE['запросов'], 'Ошибок': SE['ошибок']})
-    data_sheet(wb, nm, d, nm, 'Страницы, которые поисковые роботы получают с ошибкой, — они выпадают из поиска', {'Тип страницы': 55, 'Ошибки': 24}, wrap=('Тип страницы', 'Ошибки'),
+    data_sheet(wb, nm, d, {'Тип страницы': 55, 'Ошибки': 24}, wrap=('Тип страницы', 'Ошибки'),
                row_rule=lambda r: F_NOTE if any(t.strip().startswith('5') for t in str(r.get('Ошибки', '')).split(',')) else None, red=())
-    notes(wb[nm], ['5xx — сервер отказывает роботу: страница может выпасть из поиска, даже если она существует. 404 — страницы нет, робот её забудет.'])
-    legend(wb[nm], ['5xx', 'обычно'])
+    notes_of(wb[nm])
+    legend_of(wb[nm], ['5xx', 'обычно'])
     redden_codes(wb, only=(nm,), rx=r'^Ошибки$')
     return wb[nm]
 
@@ -158,7 +145,6 @@ def soft_sheet(wb, G, P, nm='Мягкие ошибки'):
     has_g, has_p = G is not None and len(G), P is not None and len(P)
     if not has_g and not has_p: return None
     if nm not in wb.sheetnames: wb.create_sheet(nm)
-    sub = 'Ответ 200, но не та страница: одна и та же на разные адреса или почти пустая'
     def ident():
         return pd.DataFrame({'Размер, байт': G['размер'], 'Разных адресов': G['разных_адресов'].astype(int), 'Запросов': G['запросов'].astype(int),
                              'Людям, %': G['людям_%'], 'Поисковым роботам, %': G['поисковым_%'], 'Прочим роботам, %': G['прочим_%'], 'Ботам, %': G['ботам_%'],
@@ -171,60 +157,53 @@ def soft_sheet(wb, G, P, nm='Мягкие ошибки'):
     crit = lambda: [F_NOTE if (a >= 500 and (h > 0 or s_ > 0)) else None for a, h, s_ in zip(G['разных_адресов'], G['людям_%'], G['поисковым_%'])]
     norm = lambda: [F_GREY if x else None for x in (list(P['норма']) if 'норма' in P else [False] * len(P))]
     kpi = [('Групп идентичных ответов', len(G) if has_g else 0), ('Адресов в них', int(G['разных_адресов'].sum()) if has_g else 0), ('Пустых ответов', len(P) if has_p else 0)]
-    first = ('Идентичные ответы', ident, crit) if has_g else ('Пустые ответы', empty, norm)
+    first = ('identical', ident, crit) if has_g else ('empty', empty, norm)
     W_ = {'Размер, байт': 16, 'Примеры адресов': 46, 'Что это': 44, 'Адрес': 50, 'Комментарий': 55}
     WR = ('Примеры адресов', 'Что это', 'Адрес', 'Комментарий')
-    data_sheet(wb, nm, first[1](), nm, sub, W_, wrap=WR, kpi=kpi, row_rule=lambda r, _it=iter(first[2]()): next(_it), red=())
+    data_sheet(wb, nm, first[1](), W_, wrap=WR, kpi=kpi, row_rule=lambda r, _it=iter(first[2]()): next(_it), red=())
     ws = wb[nm]
-    ws.cell(3, 2, first[0].upper()).font = Font(name='Montserrat', size=12, bold=True, color=ORANGE); ws.freeze_panes = None   # заголовок первой таблицы — над шапкой
+    first_heading(ws, first[0])   # заголовок первой таблицы — над шапкой
     if has_g:
-        notes(ws, ['Идентичные ответы — страницы с ответом 200 одного размера (±2% от наименьшего в группе) на 200 и больше разных адресах: сервер отдаёт одну и ту же страницу вместо разных.',
-                   'Без косой черты — адрес без «/» в конце отдаёт не ту страницу, что адрес со «/». «Не найдено» с кодом 200 — размер совпадает с ответом 404 этого сайта: робот считает такую страницу настоящей.',
-                   'Доли — от запросов группы: людям, подлинным поисковым роботам, прочим роботам (остальные роботы, мониторинги, утилиты и свои) и ботам; вместе 100%.'])
-        legend(ws, ['критично', 'обычно'])
+        notes_of(ws, 'identical')
+        legend_of(ws, ['критично', 'обычно'], 'identical')
     if has_g and has_p:
-        extra_table(ws, empty(), 'Пустые ответы', 'Страницы, которые сервер отдал почти пустыми; служебные адреса движка, где это норма, отмечены', wrap=WR,
-                    row_rule=lambda r, _it=iter(norm()): next(_it), red=())
+        extra_table(ws, empty(), 'empty', wrap=WR, row_rule=lambda r, _it=iter(norm()): next(_it), red=())
     if has_p:
-        notes(ws, ['Пустой ответ — меньше 300 байт. Норма — служебный адрес движка, для которого пустой ответ нормален (по справочнику движка). Остальное стоит открыть и проверить.'])
-        legend(ws, ['норма', 'обычно'])
+        notes_of(ws, 'empty')
+        legend_of(ws, ['норма', 'обычно'], 'empty')
     return ws
 
 
 def full_sheets(wb, S, recent='', OUT=None):
     """Остальные полные листы — в едином табличном стиле, с человеческими колонками, подписями и подсветкой."""
-    def put(name, df, note, rename, widths, wrap=(), kpi=None, kpi_col=None, rule=None, links=(), center=(), font=None):
+    def put(name, df, rename, widths, wrap=(), kpi=None, kpi_col=None, rule=None, center=(), font=None):   # подзаголовок, ссылки, примечания — из каталога
         if df is None or not len(df) or name not in wb.sheetnames: return
         d = df.rename(columns=rename)[[v for v in rename.values() if v in df.rename(columns=rename).columns]]
-        data_sheet(wb, name, d, name, note, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, row_rule=rule, links=links, center=center, font_rule=font, red=())
+        data_sheet(wb, name, d, widths, wrap=wrap, kpi=kpi, kpi_col=kpi_col, row_rule=rule, center=center, font_rule=font, red=())
     O = OUT
     if O is not None and len(O):
         O = O.assign(начало=O['начало'].map(_t), конец=O['конец'].map(_t), доля_5xx_у_страниц_в_пик=(O['доля_5xx_у_страниц_в_пик'] * 100).round(0).astype(int))
-        put('Сбои', O, 'Периоды, когда сервер отвечал ошибками на многие страницы сразу',
-            {'сбой': 'Сбой', 'начало': 'Начало', 'конец': 'Конец', 'минут_всего': 'Длительность (мин)', 'пик_минут': 'Острая фаза (мин)', 'запросов': 'Запросов',
+        put('Сбои', O, {'сбой': 'Сбой', 'начало': 'Начало', 'конец': 'Конец', 'минут_всего': 'Длительность (мин)', 'пик_минут': 'Острая фаза (мин)', 'запросов': 'Запросов',
              'запросов_в_мин': 'Запросов в минуту', 'обычно_запросов_в_мин': 'В норме', 'обрывов_499': 'Обрывов 499', 'страниц_с_5xx': 'Страниц с 5xx',
              'доля_5xx_у_страниц_в_пик': 'Доля 5xx на пике, %', 'вероятная_причина': 'Картина сбоя'},
             {'Сбой': 13, 'Начало': 16, 'Конец': 16, 'Картина сбоя': 60}, wrap=('Картина сбоя',), kpi=[('Сбоев', len(O)), ('Минут', int(O['минут_всего'].sum()))], kpi_col='В норме')
-        notes(wb['Сбои'], ['Сбой называется по времени начала: так он не меняется, сколько логов ни добавь. На него ссылаются история страниц («ошибка сервера в сбое 27.09 22:22») и журналы по дням.',
-                           'Острая фаза — минуты, когда ошибок было больше всего. В норме — сколько запросов в минуту обычно бывает в этот час.'])
+        notes_of(wb['Сбои'])
     B = S.get('Битые адреса из скриптов')
     if B is not None and len(B):
         act = list(B['актуально']) if 'актуально' in B else [str(v) >= recent for v in B.get('Последний', [''] * len(B))]   # признак — из движка (derive)
         B = B.drop(columns=[c_ for c_ in ('актуально',) if c_ in B])
         B = B.assign(Последний=B['Последний'].map(_d)) if 'Последний' in B else B
         if 'Коды' in B: B = B.assign(Коды=B['Коды'].map(fmt_codes)).rename(columns={'Коды': 'Ошибки'})   # «404 (7)» — как везде, ошибки красным
-        data_sheet(wb, 'Битые из скриптов', B, 'Битые из скриптов', 'Адреса, которые скрипты страниц собрали с ошибкой',
-                   {'Адрес': 50, 'Страница-источник': 40}, wrap=('Адрес', 'Страница-источник'), red=(),
+        data_sheet(wb, 'Битые из скриптов', B, {'Адрес': 50, 'Страница-источник': 40}, wrap=('Адрес', 'Страница-источник'), red=(),
                    row_rule=lambda r, _it=iter(act): F_NOTE if next(_it) else None, font_rule=lambda r, _it=iter(act): None if next(_it) else T_GREY)
-        notes(wb['Битые из скриптов'], ['Скрипт подставляет в адрес переменную, которой нет (${marker.image}, \' + href +), и браузер запрашивает несуществующий адрес. Править — в коде указанной страницы.'])
-        legend(wb['Битые из скриптов'], ['люди', 'неактуально'])
+        notes_of(wb['Битые из скриптов'])
+        legend_of(wb['Битые из скриптов'], ['люди', 'неактуально'])
     # «Поисковые ошибки» — только в 06 «SEO» (каталог #8: запасных мест SEO-листов в 02–05 нет)
     A = S.get('Реклама: посадочные с ошибками')
     if A is not None and len(A):
         act = list(A['актуально']) if 'актуально' in A else [str(v) >= recent for v in A['последний']]   # признаки — из движка (derive)
         bad = list(A['впустую']) if 'впустую' in A else [int(c_) != 499 and a_ for c_, a_ in zip(A['entry_status'], act)]
-        put('Рекламные ошибки', A.assign(первый=A['первый'].map(_d), последний=A['последний'].map(_d), entry_status=A['entry_status'].astype(int).astype(str)), 'Рекламные переходы, которые привели на неработающую страницу',
-            {'entry': 'Посадочная', 'entry_status': 'Код', 'кликов': 'Кликов', 'первый': 'Первый', 'последний': 'Последний'}, {'Посадочная': 55}, wrap=('Посадочная',), center=('Код',),
+        put('Рекламные ошибки', A.assign(первый=A['первый'].map(_d), последний=A['последний'].map(_d), entry_status=A['entry_status'].astype(int).astype(str)), {'entry': 'Посадочная', 'entry_status': 'Код', 'кликов': 'Кликов', 'первый': 'Первый', 'последний': 'Последний'}, {'Посадочная': 55}, wrap=('Посадочная',), center=('Код',),
             rule=lambda r, _it=iter(bad): F_NOTE if next(_it) else None, font=lambda r, _it=iter(act): None if next(_it) else T_GREY)
         from openpyxl.styles import Font as F_
         from .report_index import RED as R_
@@ -233,8 +212,8 @@ def full_sheets(wb, S, recent='', OUT=None):
         for r_ in range(5, 5 + len(A)):   # 404 и 5xx — красным; 499 (не дождался) — нет
             c_ = ws_.cell(r_, kc) if kc else None
             if c_ is not None and str(c_.value) != '499': c_.font = F_(name='Arial', size=9, color=R_)
-        notes(wb['Рекламные ошибки'], ['499 — человек не дождался загрузки: это вопрос скорости страницы, а не битая посадочная.'])
-        legend(wb['Рекламные ошибки'], ['клик_впустую', 'обычно', 'неактуально'])
+        notes_of(wb['Рекламные ошибки'])
+        legend_of(wb['Рекламные ошибки'], ['клик_впустую', 'обычно', 'неактуально'])
     soft_sheet(wb, S.get('Идентичные ответы'), S.get('Пустые страницы'))
     L = S.get('Error-лог')
     if L is not None and len(L):
@@ -242,19 +221,18 @@ def full_sheets(wb, S, recent='', OUT=None):
         L = L.assign(первый=L['первый'].map(_d), последний=L['последний'].map(_d), значит=L['тип'].map(lambda t: ERRLOG_MEANING.get(t, ('', False))[0]),
                      запрос=L['запрос'].map(lambda q: '\n'.join(f"{a.strip()} ({n})" for a, n in re_.findall(r'(.+?):\s*(\d+)(?:,\s*|$)', str(q))) or str(q)))
         norm = [ERRLOG_MEANING.get(t, ('', False))[1] for t in L['тип']]
-        put('Error-лог', L, 'Ошибки из журнала сервера: что они значат и какие запросы их вызвали',
-            {'тип': 'Тип', 'значит': 'Диагностическое значение', 'сообщений': 'Сообщений', 'первый': 'Первый', 'последний': 'Последний', 'запрос': 'Запросы-инициаторы', 'пример': 'Типовое сообщение'},
+        put('Error-лог', L, {'тип': 'Тип', 'значит': 'Диагностическое значение', 'сообщений': 'Сообщений', 'первый': 'Первый', 'последний': 'Последний', 'запрос': 'Запросы-инициаторы', 'пример': 'Типовое сообщение'},
             {'Тип': 26, 'Диагностическое значение': 40, 'Запросы-инициаторы': 55, 'Типовое сообщение': 55}, wrap=('Тип', 'Диагностическое значение', 'Запросы-инициаторы', 'Типовое сообщение'),
             rule=lambda r, _it=iter(norm): F_GREY if next(_it) else None)
-        notes(wb['Error-лог'], ['Норма — обычная работа или работа защиты сервера. Остальное — задание разработчику: по запросам видно, что именно падает.'])
-        legend(wb['Error-лог'], ['норма', 'обычно'])
+        notes_of(wb['Error-лог'])
+        legend_of(wb['Error-лог'], ['норма', 'обычно'])
 
 
-def more(W, shown, total, sheet, names, what=''):
-    """Под блоком сводки: сколько показано из скольких — и ссылка на полный лист."""
+def more(W, code, shown, total, names, what=''):
+    """Под блоком сводки: сколько показано из скольких — и ссылка на полный лист (каталог: ссылка блока code с текстом auto «more»)."""
     txt = f'Показаны {shown} из {total}' if total > shown else 'Подробно'
     if what and total > shown: txt = f'{txt} {what}'
-    W.link(txt, sheet, names)
+    W.links_of(code, names, more=txt)
 
 
 def overview(wb, res, S, site):
@@ -264,80 +242,81 @@ def overview(wb, res, S, site):
     if 'Обзор' in wb.sheetnames: del wb['Обзор']
     ws = wb.create_sheet('Обзор', 0)
     W = Wide(ws)
-    brand_header(ws, W, res, f'NX LOG DETECTIVE — ОШИБКИ САЙТА {site.upper()}', 'Что сломано на сайте, кто на это наткнулся и где это исправить', last='I', site=site.upper())
+    brand_header(ws, W, res, last='I', site=site.upper())
     names = set(wb.sheetnames)
     K = sm.get('коды')
     if K is not None and len(K):
-        W.section('Ответы сервера', 'Все ответы за период — по тем, кто их получил. 499 — посетитель ушёл, не дождавшись ответа: это не ошибка, а признак медленной страницы.')
+        W.block('responses')
         rows = [[r['кто'], int(r['запросов']), int(r['ок']), int(r['e4']), int(r['e5']), int(r['n499']),
                  f"{(r['e4'] + r['e5']) / max(1, r['запросов']) * 100:.1f}%".replace('.', ',')] for _, r in K.iterrows() if r['запросов']]
         W.table(['Кто', 'Запросов', 'Без ошибок', 'Ошибки 4xx', 'Ошибки 5xx', '499 — не дождались', 'Доля ошибок'], rows, ['B', 'C', 'D', 'E', 'F', 'G', 'HI'], num=(1, 2, 3, 4, 5, 6))
-        W.link('Ошибки по дням', 'Статистика', names)
+        W.links_of('responses', names)
     X = S.get('Сбои')
     if X is not None and len(X):
-        W.section('Сбои', 'Периоды, когда сервер отвечал ошибками на многие страницы сразу. Статика при этом обычно отдаётся — падает динамика.')
+        W.block('outages')
         O = E.get('сбои') if E.get('сбои') is not None and len(E.get('сбои')) else X.assign(сбой='', запросов=0)
         rows = [[r['сбой'], _t(r['конец']), int(r['минут_всего']), int(r['запросов']), int(r['обрывов_499']), int(r['страниц_с_5xx'])] for _, r in O.iterrows()]
         W.table(['Сбой', 'Конец', 'Длительность (мин)', 'Запросов', 'Обрывов 499', 'Страниц с 5xx'], rows, ['B', 'C', 'D', 'EF', 'G', 'HI'], num=(2, 3, 4, 5), wrap=0.95)   # картина сбоя — на листе «Сбои»
-        W.link('Все сбои', 'Сбои', names)
+        W.links_of('outages', names)
     P = sm.get('страницы')
     if P is not None and len(P):
-        W.section('Пострадавшие страницы', 'Топ-10 страниц сайта, на которых люди получили ошибку: что с ними сейчас и почему это важно.')
+        W.block('victims')
         rows = [[r['адрес'], r['сейчас'], r['почему'], int(r['запросов']), int(r['Люди'])] for _, r in P.iterrows()]
         W.table(['Страница', 'Текущий статус', 'Основание', 'Запросов', 'Люди'], rows, ['BC', 'DE', 'FG', 'H', 'I'], num=(3, 4), wrap=0.95)   # в сводке всё важное — без заливки
-        more(W, len(P), len(E.get('нерабочие', [])), 'Пострадавшие страницы', names)
+        more(W, 'victims', len(P), len(E.get('нерабочие', [])), names)
     G = sm.get('разделы')
     if G is not None and len(G):
-        W.section('Ошибки по разделам', 'Где на сайте больше всего ошибок у людей, своих и поисковиков. Зонды сканеров не учитываются.')
+        W.block('sections')
         rows = [[r['раздел'], int(r['адресов']), int(r['Люди']), int(r['Поисковики']), int(r['Свои'])] for _, r in G.head(10).iterrows()]
         W.table(['Раздел', 'Страниц', 'Люди', 'Поисковики', 'Свои'], rows, ['BC', 'D', 'E', 'F', 'G'], num=(1, 2, 3, 4))
     Fe = res.get('files_errors') or []
     if Fe:
-        W.section('Файлы', 'Файлы, которые запрашивают страницы сайта, реклама, фиды и другие сайты, а сервер их не отдаёт.')
+        W.block('files')
         fg = (res.get('сводки') or {}).get('ошибки_файлов_по_группам')
         if fg is None: fg = pd.DataFrame(Fe).groupby('группа').agg(файлов=('файлов', 'sum'), запросов=('запросов', 'sum'), примеры=('адрес', lambda s: list(s)[:2])).sort_values('запросов', ascending=False)
         rows = [[g, int(r['файлов']), int(r['запросов']), '\n'.join(map(str, r['примеры']))] for g, r in fg.iterrows()]
         W.table(['Группа', 'Файлов', 'Запросов', 'Например'], rows, ['B', 'C', 'D', 'EFGHI'], num=(1, 2), wrap=0.95)
-        W.link('Каждый файл', 'Ошибки файлов', names)
+        W.links_of('files', names)
     BI = E.get('битые_внутренние')
     if BI is not None and len(BI):
-        W.section('Битые внутренние', 'Ссылки на страницах сайта, которые ведут на несуществующие или неработающие адреса.')
+        W.block('broken_internal')
         rows = [[r['откуда'], r['куда'], int(r['переходов']), int(r['людей'])] for _, r in BI.head(5).iterrows()]
         W.table(['Где стоит ссылка', 'Куда ведёт', 'Переходов', 'Люди'], rows, ['BC', 'DEF', 'G', 'H'], num=(2, 3), wrap=0.95)
-        more(W, min(5, len(BI)), len(BI), 'Битые внутренние', names)
+        more(W, 'broken_internal', min(5, len(BI)), len(BI), names)
     BX = E.get('битые_внешние')
     if BX is not None and len(BX):
-        W.section('Битые внешние', 'Ссылки с рекламы, поиска и других сайтов на несуществующие страницы.')
+        W.block('broken_external')
         rows = [[r['вид'], r['откуда'], r['куда'], int(r['переходов']), int(r['людей'])] for _, r in BX.head(5).iterrows()]
         W.table(['Откуда', 'Сайт', 'Куда ведёт', 'Переходов', 'Люди'], rows, ['B', 'C', 'DEF', 'G', 'H'], num=(3, 4), wrap=0.95)
-        more(W, min(5, len(BX)), len(BX), 'Битые внешние', names)
+        more(W, 'broken_external', min(5, len(BX)), len(BX), names)
     BJ = S.get('Битые адреса из скриптов')
     if BJ is not None and len(BJ):
-        W.section('Битые из скриптов', 'Адреса, которые скрипты страниц собрали с ошибкой.')
+        W.block('broken_scripts')
         rows = [[r['Адрес'], int(r['Запросов со страниц сайта']), r['Страница-источник']] for _, r in BJ.head(5).iterrows()]
         W.table(['Адрес', 'Запросов', 'Страница'], rows, ['BCD', 'E', 'FGHI'], num=(1,))
-        more(W, min(5, len(BJ)), len(BJ), 'Битые из скриптов', names)
+        more(W, 'broken_scripts', min(5, len(BJ)), len(BJ), names)
     SE = S.get('Ошибки у поисковиков')
     if SE is not None and len(SE):
-        W.section('Поисковые ошибки', 'Страницы, которые поисковые роботы получают с ошибкой, — они выпадают из поиска.')
+        W.block('search_errors')
         g = (res.get('сводки') or {}).get('поиск_по_роботам')
         if g is None: g = SE.groupby('робот').agg(типов=('шаблон', 'nunique'), запросов=('запросов', 'sum'), ошибок=('ошибок', 'sum')).sort_values('ошибок', ascending=False).reset_index()
         W.table(['Робот', 'Типов страниц', 'Запросов', 'Ошибок'], [[r['робот'], int(r['типов']), int(r['запросов']), int(r['ошибок'])] for _, r in g.iterrows()], ['B', 'C', 'D', 'E'], num=(1, 2, 3))
-        more(W, len(g), len(SE), 'Поисковые ошибки', names, what='типов страниц по роботам')
+        more(W, 'search_errors', len(g), len(SE), names, what='типов страниц по роботам')
     AD = S.get('Реклама: посадочные с ошибками')
     if AD is not None and len(AD):
-        W.section('Рекламные ошибки', 'Рекламные переходы, которые привели на неработающую страницу или на страницу, которую человек не дождался.')
+        W.block('ad_errors')
         rows = [[r['entry'], int(r['entry_status']), int(r['кликов'])] for _, r in AD.head(5).iterrows()]
         W.table(['Посадочная', 'Код', 'Кликов'], rows, ['BCD', 'E', 'F'], num=(2,), center=(1,))
-        more(W, min(5, len(AD)), len(AD), 'Рекламные ошибки', names)
+        more(W, 'ad_errors', min(5, len(AD)), len(AD), names)
     if 'Мягкие ошибки' in names:
-        W.link('Мягкие ошибки: ответ 200, но не та страница', 'Мягкие ошибки', names)
+        W.block('soft')
+        W.links_of('soft', names)
     EL = S.get('Error-лог')
     if EL is not None and len(EL):
-        W.section('Error-лог', 'Ошибки из журнала сервера: что они значат. Какие запросы их вызвали — на полном листе.')
+        W.block('error_log')
         rows = [[r['тип'], ERRLOG_MEANING.get(r['тип'], ('', False))[0], int(r['сообщений']), _d(r['первый']), _d(r['последний'])] for _, r in EL.iterrows()]
         W.table(['Тип', 'Диагностическое значение', 'Сообщений', 'Первый', 'Последний'], rows, ['B', 'CDE', 'F', 'G', 'H'], num=(2,), center=(3, 4), wrap=0.95)
-        W.link('Какие запросы вызывали', 'Error-лог', names)
+        W.links_of('error_log', names)
     W.related(res, 'Ошибки')
     ws.page_setup.orientation = 'portrait'; ws.page_setup.fitToWidth = 1; ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -349,13 +328,10 @@ def slow_sheet(wb, T):
     if not T: return None
     from .derive import slowness_text
     intro = T.get('вывод') or slowness_text(T)   # вывод — из движка (derive)
-    blocks = [('Обрывы у людей, %', 'Доля запросов людей, которые не дождались ответа (499). Пусто — в этот час меньше 50 запросов.', T.get('499'), '0.0'),
-              ('Ошибки шлюза 502 и 504', 'Сервер приложения не ответил веб-серверу или ответил слишком поздно: запросов за час.', T.get('шлюз'))]
-    if T.get('таймауты') is not None: blocks.append(('Таймауты в error-логе', 'Сообщения о том, что сервер приложения не успел ответить или оборвал соединение: за час.', T['таймауты']))
-    if T.get('время') is not None: blocks.append(('Время ответа, медиана, с', 'Сколько секунд обычно ждал ответа человек.', T['время'], '0.00'))
-    return heat_sheet(wb, 'Признаки торможения', 'Признаки торможения', 'Когда сервер не успевает отвечать: обрывы, ошибки шлюза и таймауты по часам', blocks, intro=intro,
-                      links=[('Сбои', 'Сбои'), ('Адреса, которые люди не дождались', '499')],
-                      foot='Цвет — от белого (меньше всего) до тёмно-оранжевого (больше всего) в каждой карте отдельно. Выходные — серой датой.')
+    blocks = [('drops', T.get('499'), '0.0'), ('gateway', T.get('шлюз'))]
+    if T.get('таймауты') is not None: blocks.append(('timeouts', T['таймауты']))
+    if T.get('время') is not None: blocks.append(('response_time', T['время'], '0.00'))
+    return heat_sheet(wb, 'Признаки торможения', blocks, unit='', conclusion=intro)
 
 
 def build(wb, res, S, site):
@@ -366,19 +342,14 @@ def build(wb, res, S, site):
         h = body['5xx|Люди'] + body['4xx|Люди']
         return [('Ошибок у людей в день', int(round(h[body['_полный']].mean())) if body['_полный'].any() else int(round(h.mean()))),
                 ('Больше всего', _day(body.loc[h.idxmax(), 'день']) if len(body) else ''), ('5xx у людей', int(body['5xx|Люди'].sum()))]
-    journal_sheet(wb, 'Статистика', E.get('журнал'), 'Ошибки по дням и тем, кто их получил', kpi,
-                  [('Сводка ошибок', 'Обзор'), ('Пострадавшие страницы', 'Пострадавшие страницы')] + ([('Сбои', 'Сбои')] if E.get('сбои') is not None and len(E['сбои']) else []),
-                  ['4xx — без 499: он показан отдельно, это посетитель, который не дождался ответа. Поисковики — только подлинные роботы поисковых систем.',
-                   'Время — какая часть суток попала в лог; неполные дни в среднее не входят.'], kpi_col='4xx|Люди', outages=E.get('сбои'))
+    journal_sheet(wb, 'Статистика', E.get('журнал'), kpi, kpi_col='4xx|Люди', outages=E.get('сбои'))
     slow_sheet(wb, E.get('торможение'))
     for fam, _ in FAMILIES:
         if fam not in wb.sheetnames: wb.create_sheet(fam)
         if code_tab(wb, T, Sr, fam) is None: del wb[fam]
     victims(wb, E)
     if res.get('files_errors'):
-        service_files(wb, dict(res, files=res['files_errors']), 'Ошибки файлов', title='Ошибки файлов',
-                      note='Файлы, которые запрашивают страницы сайта, реклама, фиды и другие сайты, а сервер их не отдаёт',
-                      links=[('Сводка ошибок', 'Обзор'), ('Все адреса с 404', '404')], errors_mode=E.get('с_дня', True))
+        service_files(wb, dict(res, files=res['files_errors']), 'Ошибки файлов', errors_mode=E.get('с_дня', True))
     links_sheets(wb, E)
     full_sheets(wb, S, E.get('с_дня', ''), E.get('сбои'))
     from .catalog import prune

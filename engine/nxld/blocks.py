@@ -1122,11 +1122,8 @@ def bots(c, F, check_ips=()):
         S['Явные боты'] = ex.groupby('ua').agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), запросов=('n_req', 'sum'), сети=('nettype', lambda s: topn(s, 2))).sort_values('запросов', ascending=False).head(300).reset_index()
     # маскирующиеся: классы по визиту
     B = V[(V['group'] == 'Боты') | ((V['group'] == 'Люди') & (V['n_goal'] > 0))].copy()
-    cls = np.full(len(B), '', dtype=object)
-    e404 = (B['entry_status'] == 404) & (B['entry_ref'] == '-')
-    cls = np.where((B['n_goal'] > 0) & (B['n_pages'] == 0), 'спам форм: отправка без просмотра страниц', cls)
-    cls = np.where((B['n_goal'] > 0) & e404 & (B['n_pages'] <= 4) & (cls == ''), 'спам форм: битый адрес → главная → форма', cls)
-    cls = np.where((B['n_goal'] >= 3) & (B['dur'] < 120) & (cls == ''), 'спам форм: пачка отправок', cls)
+    st_ = B['subgroup'].astype(str)
+    cls = np.where(st_.str.startswith('спам форм').values, st_.values, '')   # спам форм — одно правило для всех листов: V.subgroup из visits.mark_form_spam
     cls = np.where((B['n_pages'] >= 10) & (B['n_static'] == 0) & (cls == ''), 'парсер страниц', cls)
     cls = np.where(B['ua'].str.contains('HeadlessChrome|Puppeteer|Playwright|PhantomJS|Lightpanda', regex=True) & (cls == ''), 'headless', cls)
     cls = np.where((B['subgroup'] == 'маскирующиеся: без загрузки ресурсов') & (cls == ''), 'без загрузки ресурсов', cls)

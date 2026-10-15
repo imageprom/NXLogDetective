@@ -122,3 +122,13 @@ def test_plain_turns_categories_into_strings():
     assert common.plain(P) is P   # без категорий — тот же объект, копий нет
     s = P.groupby('entry')['n'].sum()
     assert s.get('/zz/', 0) == 0 and s.get('/b/') == 2   # индекс строковый: поиск по метке безопасен
+
+
+def test_top_values_ties_and_zero_counts_like_strings():
+    """У категории value_counts по-другому расставляет равные числа и добавляет значения без записей — top_values считает как по строкам."""
+    cats = ['/b/', '/a/', '/c/', '/d/', '/e/', '/f/', '/g/']
+    cat = pd.Series(pd.Categorical(['/c/', '/b/', '/c/', '/b/', '/a/'], categories=sorted(cats)))
+    txt = pd.Series(['/c/', '/b/', '/c/', '/b/', '/a/'])
+    assert common.top_values(cat, 5) == common.top_values(txt, 5) == ['/c/', '/b/', '/a/']   # равные числа — по первому появлению; пустых категорий нет
+    assert list(cat.value_counts().index[:5]) != ['/c/', '/b/', '/a/']   # а у категории — по-другому: так и было в карточке рекламных посадочных
+    assert common.top_values(pd.Series(pd.Categorical([], categories=['/a/'])), 3) == []

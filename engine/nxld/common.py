@@ -202,6 +202,12 @@ def plain(df):
     return df.astype({c_: str for c_ in cat}) if cat else df
 
 
+def top_values(s, n):
+    """n самых частых значений колонки: при равных числах — в порядке первого появления, значения без записей не попадают в список.
+    value_counts по категории иначе: равные числа — по порядку категорий, а категории с нулём записей идут в конец списка."""
+    return list(s.astype(object).value_counts().index[:n])
+
+
 def dmy_many(values, na=''):
     """dmy для всей колонки сразу: список строк той же формы «16.09.2026 14:08»; пустое значение — na."""
     v = pd.Series(np.asarray(values, dtype='float64') if len(values) else [], dtype='float64')

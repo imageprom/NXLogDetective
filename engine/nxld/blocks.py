@@ -5,6 +5,7 @@ import numpy as np, pandas as pd
 from . import recon, ipdb
 from .recon import mask_pd
 from . import operators
+from .common import top_values
 
 KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 VULN = r'(^/\.env|/\.git/|/\.aws|/\.ssh|/\.svn|/\.DS_Store|phpinfo|/wp-login\.php|/wp-admin|/xmlrpc\.php|/wp-content/plugins|/phpmyadmin|/pma/|/adminer|/vendor/phpunit|/actuator|/cgi-bin/|/server-status|/config\.(json|yml|yaml|php)|/backup|\.(sql|bak|old|swp|tar|tar\.gz|tgz|zip|rar)$|/shell|/eval-stdin|/boaform|/HNAP1|/owa/|/autodiscover|/\.well-known/(?!acme)|/restore\.php|/bitrixsetup\.php|/install\.php|/setup\.php|/telescope|/_profiler|/debug|/console)'
@@ -1154,7 +1155,7 @@ def bots(c, F, check_ips=()):
         used = ev[ev['учтена'].str.startswith('да')]
         kinds = Counter(k for x in used['улика'] for k in x.split('; '))
         sp404 = gv[gv['ip'].isin(core) & (gv['entry_status'] == 404)]['entry']
-        okey = sp404.value_counts().index[0] if len(sp404) else (core[0] if core else label)
+        okey = top_values(sp404, 1)[0] if len(sp404) else (core[0] if core else label)
         ops.append(dict(_key=okey, оператор=label, улики=', '.join(f'{t} ({n})' for t, n in kinds.most_common()) or '—',
                         слабые_связи_с_другими=int((~ev['учтена'].str.startswith('да')).sum()), IP_спама=len(core), IP_разведки=len(rc), сети=topn(T.reindex(sorted(grp))['org'].astype(str), 3),
                         дни=', '.join(sorted(gv['day'].unique())[:20]), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
@@ -1343,7 +1344,7 @@ def marketing(c, F):
         lerr = AD[AD['entry_status'] >= 400]
         if len(lerr):
             F.add('Маркетинг', 'Срочно', 'ad_landing_errors', 'all', f'Реклама ведёт на страницы с ошибкой: {len(lerr)} кликов',
-                  f"Коды {topn(lerr['entry_status'])}; адреса: {', '.join(lerr['entry'].value_counts().index[:5])}", 'рекламный кабинет / сайт', 'Исправить ссылки в объявлениях или страницы', len(lerr), 'Реклама: посадочные', also=('Ошибки',))
+                  f"Коды {topn(lerr['entry_status'])}; адреса: {', '.join(top_values(lerr['entry'], 5))}", 'рекламный кабинет / сайт', 'Исправить ссылки в объявлениях или страницы', len(lerr), 'Реклама: посадочные', also=('Ошибки',))
         mac = AD[AD['макрос_не_подставлен']] if 'макрос_не_подставлен' in AD else []
         lab = []
         if len(mac): lab.append(dict(проблема='Макрос не подставился ({...} в адресе)', кликов=len(mac), пример=mac['entry_query'].iloc[0][:200]))

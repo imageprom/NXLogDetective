@@ -927,6 +927,98 @@ def audience(V):
     return dict(страна=cc.index[0], доля=share, порог=lim, предупреждение=share < lim)
 
 
+_B32 = 1 << 32   # ключ «группа × время» одним числом: код группы * 2^32 + секунды (время эпохи помещается в 32 бита)
+
+
+def _entry_path(entry_ref):
+    """Путь страницы из реферера: без хоста и без параметров."""
+    return entry_ref.astype(str).str.replace(r'^https?://[^/]+', '', regex=True).str.split('?').str[0]
+
+
+def _same_user_flags(V, R, mask):
+    """Исключение для «отправки без просмотра страниц»: тот же человек сменил IP — страницу из реферера за <= 30 минут до отправки открыл
+    ДРУГОЙ IP с тем же User-Agent (визит людей, со страницами), и это обычный визит. Путь «/» не в счёт — слишком частый.
+    Одно соединение вместо выборки по всей таблице V на каждый визит."""
+    flags = pd.Series(False, index=V.index)
+    if not mask.any(): return flags
+    C = V.loc[mask, ['entry_ref', 'ua', 'ip', 'start']].copy()
+    C['path'] = _entry_path(C['entry_ref'])
+    C = C[~C['path'].isin(['', '/'])]
+    if not len(C): return flags
+    cats = R['base'].cat.categories
+    rows = np.asarray(cats.isin(set(C['path'])))[R['base'].cat.codes.values]
+    Rp = pd.DataFrame({'vid': R['vid'].values[rows], 'path': np.asarray(cats)[R['base'].cat.codes.values[rows]]}).drop_duplicates()
+    H = V.loc[(V['group'] == 'Люди') & (V['n_pages'] > 0), ['ua', 'ip', 'start', 'end']]
+    O = Rp.merge(H, left_on='vid', right_index=True).drop(columns='vid')   # визиты людей, открывавшие нужный путь
+    O['ua'] = O['ua'].astype(str)
+    C['ua'] = C['ua'].astype(str)
+    O = O.merge(C[['ua', 'path']].drop_duplicates(), on=['ua', 'path']).sort_values(['ua', 'path', 'start'], kind='stable')
+    if not len(O): return flags
+    import bisect
+    # по каждой паре (UA, путь): по возрастанию начала — наибольший конец визита и наибольший конец у визита с другим IP
+    pre = {}
+    for (ua, path), grp in O.groupby(['ua', 'path'], sort=False):
+        st, en, ip = grp['start'].tolist(), grp['end'].tolist(), grp['ip'].astype(str).tolist()
+        m1, ip1, m2, A1, I1, A2 = -1, None, -1, [], [], []
+        for e_, i_ in zip(en, ip):
+            if e_ > m1:
+                if i_ != ip1: m2 = m1
+                m1, ip1 = e_, i_
+            elif i_ != ip1 and e_ > m2: m2 = e_
+            A1.append(m1); I1.append(ip1); A2.append(m2)
+        pre[(ua, path)] = (st, A1, I1, A2)
+    for vid, ua, path, ip, t in zip(C.index, C['ua'], C['path'], C['ip'].astype(str), C['start']):
+        p = pre.get((ua, path))
+        if p is None: continue
+        k = bisect.bisect_right(p[0], t) - 1   # визиты, начавшиеся не позже отправки
+        if k >= 0 and (p[1][k] if p[2][k] != ip else p[3][k]) >= t - 1800: flags[vid] = True
+    return flags
+
+
+def _ip_switch_flags(V, mask):
+    """«Смена IP посреди визита»: вход со страницы сайта, которую за <= 2 ч до этого открыл ДРУГОЙ IP и получил 404.
+    Для каждого визита — число входов на 404 по тому же пути в окне [начало - 2 ч, начало] минус число таких же с тем же IP (сортировка и searchsorted)."""
+    flags = pd.Series(False, index=V.index)
+    E = V[V['entry_status'] == 404]
+    if not len(E) or not mask.any(): return flags
+    C = V.loc[mask, ['entry_ref', 'ip', 'start']].copy()
+    C['path'] = _entry_path(C['entry_ref'])
+    C = C[C['path'].isin(set(E['entry'].astype(str)))]
+    if not len(C): return flags
+    pcodes = pd.Index(pd.unique(pd.concat([E['entry'].astype(str), C['path']])))
+    icodes = pd.Index(pd.unique(pd.concat([E['ip'].astype(str), C['ip'].astype(str)])))
+    pe, ie = pcodes.get_indexer(E['entry'].astype(str)).astype(np.int64), icodes.get_indexer(E['ip'].astype(str)).astype(np.int64)
+    pc, ic = pcodes.get_indexer(C['path']).astype(np.int64), icodes.get_indexer(C['ip'].astype(str)).astype(np.int64)
+    te, tc = E['start'].values.astype(np.int64), C['start'].values.astype(np.int64)
+    k_all = np.sort(pe * _B32 + te)
+    n_all = np.searchsorted(k_all, pc * _B32 + tc, 'right') - np.searchsorted(k_all, pc * _B32 + tc - 7200, 'left')
+    NI = len(icodes)
+    pair_e, pair_c = pe * NI + ie, pc * NI + ic
+    pairs = pd.Index(np.unique(pair_e))
+    code_e, code_c = pairs.get_indexer(pair_e).astype(np.int64), pairs.get_indexer(pair_c).astype(np.int64)
+    k_same = np.sort(code_e * _B32 + te)
+    has = code_c >= 0
+    n_same = np.zeros(len(C), np.int64)
+    n_same[has] = np.searchsorted(k_same, code_c[has] * _B32 + tc[has], 'right') - np.searchsorted(k_same, code_c[has] * _B32 + tc[has] - 7200, 'left')
+    flags[C.index[(n_all - n_same) > 0]] = True
+    return flags
+
+
+def _caught_week_flags(V, caught_index, quick):
+    """Быстрая заявка с IP, который уже пойман (спам по другому правилу) в пределах +-7 дней: поиск в отсортированных (IP, время)."""
+    flags = pd.Series(False, index=V.index)
+    if not quick.any() or not len(caught_index): return flags
+    ci, ct = V.loc[caught_index, 'ip'].astype(str), V.loc[caught_index, 'start'].values.astype(np.int64)
+    Q = V.loc[quick, ['ip', 'start']]
+    icodes = pd.Index(pd.unique(pd.concat([ci, Q['ip'].astype(str)])))
+    keys = np.sort(icodes.get_indexer(ci).astype(np.int64) * _B32 + ct)
+    qi, qt = icodes.get_indexer(Q['ip'].astype(str)).astype(np.int64), Q['start'].values.astype(np.int64)
+    lo = np.searchsorted(keys, qi * _B32 + qt - 7 * 86400, 'left')
+    hi = np.searchsorted(keys, qi * _B32 + qt + 7 * 86400, 'right')
+    flags[Q.index[hi > lo]] = True
+    return flags
+
+
 def mark_form_spam(V, R):
     """Поведенческие признаки спама форм (универсальные). Переводит такие визиты в группу «Боты»."""
     V = V.copy()
@@ -938,37 +1030,18 @@ def mark_form_spam(V, R):
     nopage = g & (V['n_pages'] == 0) & (cls == '')
     # исключение: тот же человек сменил IP (мобильная сеть, прокси браузера) — страницу из реферера за ≤30 мин до отправки
     # открыл другой IP с тем же самым UA и это обычный визит человека; путь «/» не в счёт — слишком частый
-    same_user = pd.Series(False, index=V.index)
-    for vid in V.index[nopage & V['entry_ref_internal']]:
-        path = re.sub(r'^https?://[^/]+', '', V.at[vid, 'entry_ref']).split('?')[0]
-        if path in ('', '/'): continue
-        t, ua, ip = V.at[vid, 'start'], V.at[vid, 'ua'], V.at[vid, 'ip']
-        o = V[(V['ua'] == ua) & (V['ip'] != ip) & (V['group'] == 'Люди') & (V['start'] <= t) & (V['end'] >= t - 1800) & (V['n_pages'] > 0)]
-        if len(o) and path in set(R.loc[R['vid'].isin(o.index) & (R['base'] == path), 'base'].astype(str)):
-            same_user[vid] = True
+    same_user = _same_user_flags(V, R, nopage & V['entry_ref_internal'])
     cls[nopage & (V['n_static'] == 0) & ~same_user] = 'спам форм: отправка без просмотра страниц'
     # страница открыта другим IP: этот IP грузил только картинки/скрипты и отправил форму, а саму страницу не открывал (хостинг/VPN)
     cls[nopage & (V['n_static'] > 0) & V['entry_ref_internal'] & ~same_user & (V['nettype'].astype(str).str.startswith('дата-центр') | (V['nettype'] == 'VPN/прокси-релей')) & (cls == '')] = 'спам форм: страницу открыл другой IP'
     fast = g & (V['n_goal'] >= 2) & (V['n_pages'] >= 5) & (V['n_pages'] / V['dur'].clip(lower=1) > 0.4)
     cls[fast & (cls == '')] = 'спам форм: быстрый обход и пачка отправок'
     # смена IP посреди визита: вход со страницы сайта, которую за <= 2 ч до этого открыл ДРУГОЙ IP и получил 404
-    e404 = V[(V['entry_status'] == 404)][['ip', 'start', 'entry']]
-    if len(e404):
-        last404 = e404.sort_values('start').groupby('entry').agg(list)
-        cand = V[g & V['entry_ref_internal'] & (cls == '')]
-        for vid, r in cand.iterrows():
-            path = re.sub(r'^https?://[^/]+', '', r['entry_ref']).split('?')[0]
-            if path in last404.index:
-                ips, ts_ = last404.loc[path, 'ip'], last404.loc[path, 'start']
-                if any(i != r['ip'] and 0 <= r['start'] - t <= 7200 for i, t in zip(ips, ts_)):
-                    cls[vid] = 'спам форм: смена IP посреди визита'
+    cand = g & V['entry_ref_internal'] & (cls == '')
+    cls[_ip_switch_flags(V, cand)] = 'спам форм: смена IP посреди визита'
     # тот же IP уже пойман (±7 дней) — его быстрые заявки с прямого захода тоже спам
-    caught = V.loc[cls != '', ['ip', 'start']]
     quick = g & direct & (V['n_pages'] <= 2) & (V['dur'] < 120) & (cls == '')
-    for vid in V.index[quick]:
-        t = caught.loc[caught['ip'] == V.at[vid, 'ip'], 'start']
-        if len(t) and (abs(t - V.at[vid, 'start']) <= 7 * 86400).any():
-            cls[vid] = 'спам форм: быстрая заявка с IP, уже пойманного за неделю'
+    cls[_caught_week_flags(V, V.index[cls != ''], quick)] = 'спам форм: быстрая заявка с IP, уже пойманного за неделю'
     m = (cls != '') & (V['group'].isin(['Люди', 'Боты']))
     V.loc[m, 'group'] = 'Боты'
     V.loc[m, 'subgroup'] = cls[m]

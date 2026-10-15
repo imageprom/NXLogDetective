@@ -287,6 +287,8 @@ def test_ip_host_card_on_redirect(monkeypatch):
     x = card[0]
     assert x['блок'] == 'Нагрузка и безопасность' and '301' in x['факты'] and 'роботы — 1' in x['факты'] and 'IP' in x['факты']
     assert 'дошли 1' in x['факты'] and 'не 403/404: 1' in x['факты'] and 'отвечать 444' in x['что_сделать'], x['факты']
+    # переходы на IP с внешних сайтов — только запросы к IP-хосту с реферером не с этого сервера (3 перехода с yandex.ru); реферер с IP у запросов к сайту и у файлов страницы на IP — не ссылки
+    assert 'с внешних сайтов: 3.' in x['факты'], x['факты']
     from nxld import texts
     assert texts.card('ip_host_redirect')['action'] == x['что_сделать']   # тексты — в data/locale/ru/cards.json
 

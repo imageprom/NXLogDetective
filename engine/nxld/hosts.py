@@ -141,11 +141,12 @@ def ip_host_stats(R, V, table):
         gh = pd.DataFrame({'h': np.asarray(cats, dtype=object)[np.where(codes >= 0, codes, 0)][grows], 'st': st[grows]})
         guess_open = int(sum(1 for _, g in gh.groupby('h') if (~g['st'].isin([403, 404])).any()))
     rc = R['ref_host'].cat.categories if 'ref_host' in R else []
-    ref_ip = 0
+    ref_ip = 0   # переходы на IP сервера с внешних сайтов: реферер — не хост этого сервера и не пустой (реферер с IP у запросов к сайту — это сканеры после переадресации, не ссылки)
     if len(rc):
-        rm = np.array([normalize(c) in ipnames for c in rc], bool)
+        own = set(cats)
+        rm = np.array([normalize(c) not in own and normalize(c) not in ('', '-') for c in rc], bool)
         rcodes = R['ref_host'].cat.codes.values
-        ref_ip = int(np.where(rcodes >= 0, rm[np.where(rcodes >= 0, rcodes, 0)], False).sum())
+        ref_ip = int((rows & np.where(rcodes >= 0, rm[np.where(rcodes >= 0, rcodes, 0)], False)).sum())
     nf = lambda x: f'{int(x):,}'.replace(',', ' ')
     cnt = per_ip['rank'].value_counts()
     return dict(requests=nf(rows.sum()), ips=nf(len(per_ip)), codes=codes_text(st[rows]), scanners=nf(cnt.get(0, 0)), bots=nf(cnt.get(1, 0)), robots=nf(cnt.get(2, 0)),

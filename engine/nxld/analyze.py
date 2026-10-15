@@ -127,6 +127,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     E_02, E_srv, n_e02, n_ecopy = hosts_.split_error_log(E, m.get('hosts') or [])   # 02 — error-лог только хостов сайта; сбои и торможение — весь сервер без копий
     m['off_site'].update(error_log_не_вошло_в_02=n_e02, error_log_копии=n_ecopy)
     if n_e02 or n_ecopy: log(f'Error-лог: в 02 не вошло {n_e02:,} строк с хостов вне сайта, из них копии на других доменах — {n_ecopy:,}')
+    ip_stats = hosts_.ip_host_stats(R, V, m.get('hosts') or [])   # обращения по IP сервера — для карточки в 03 (считаются до среза: нераспознанные тоже обращались)
     Rc, Vc = _cut(R, V, ~hide_r, ~unrec_v)
     R, V = Rc, visits.freeze(Vc)   # правила закончились: повторяющиеся строки — категории
     c = blocks.Ctx(R, V, E_02, T, m, inv, G, E_srv=E_srv)
@@ -141,6 +142,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
     Rs = cs.R
     F = Findings()
+    if ip_stats and 'Нагрузка и безопасность' in selected:   # сервер отвечает на обращения по IP переадресацией или страницей (тексты — data/locale/<язык>/cards.json)
+        from . import texts
+        F.add('Нагрузка и безопасность', 'Важно', 'ip_host_redirect', 'all', texts.fmt('ip_host_redirect', 'title', **ip_stats), texts.fmt('ip_host_redirect', 'facts', **ip_stats),
+              texts.fmt('ip_host_redirect', 'where'), texts.fmt('ip_host_redirect', 'action'), ip_stats['n'], '')
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
            'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None,

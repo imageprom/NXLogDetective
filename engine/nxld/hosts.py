@@ -102,3 +102,51 @@ def split_error_log(E, table):
     not_site = k.map(lambda x: isinstance(x, tuple) and x[0] != 'сайт').astype(bool).values
     copy = k.map(lambda x: isinstance(x, tuple) and x[1] == 'другой домен').astype(bool).values
     return E[~not_site], E[~copy], int(not_site.sum()), int(copy.sum())
+
+
+def ip_host_stats(R, V, table):
+    """Обращения по IP сервера (хост «IP вместо имени»): сколько запросов и IP, кто (роботы, боты, сканеры, похожие на людей и сколько из них дошло до сайта),
+    сколько подобранных поддоменов ответили не 403/404, сколько рефереров с адресом IP. None — таких запросов нет или сервер на них не отвечает ни страницей, ни переадресацией."""
+    if 'vhost' not in R or not len(R): return None
+    ipnames = {normalize(r['хост']) for r in table if r['причина'] == 'IP вместо имени'}
+    if not ipnames: return None
+    cats = [normalize(c) for c in R['vhost'].cat.categories]
+    codes = R['vhost'].cat.codes.values
+    hit_cat = np.array([c in ipnames for c in cats], bool)
+    rows = np.where(codes >= 0, hit_cat[np.where(codes >= 0, codes, 0)], False)
+    st = R['status'].values
+    if not (rows & (st >= 200) & (st < 400)).any(): return None
+    from .common import codes_text
+    from .thresholds import value
+    ips = R['ip'].astype(str).values[rows]
+    vid = R['vid'].values[rows]
+    grp, sub = V['group'].astype(str).reindex(vid).values, V['subgroup'].astype(str).reindex(vid).values
+    rank = np.select([(grp == 'Боты') & pd.Series(sub).str.startswith('сканер').values, grp == 'Боты', grp == 'Роботы', grp == 'Люди'], [0, 1, 2, 3], 4)
+    D = pd.DataFrame({'ip': ips, 'rank': rank, 'ts': R['ts'].values[rows]})
+    per_ip = D.groupby('ip').agg(rank=('rank', 'min'), t0=('ts', 'min'))
+    win = int(float(value('ip_host_followup_minutes', 10)) * 60)
+    people = per_ip[per_ip['rank'] == 3]
+    S = R.loc[R['host_site'].values.astype(bool) if 'host_site' in R else np.zeros(len(R), bool), ['ip', 'ts']]
+    reached = 0
+    if len(people) and len(S):
+        icodes = pd.Index(pd.unique(pd.concat([S['ip'].astype(str), pd.Series(people.index)])))
+        keys = np.sort(icodes.get_indexer(S['ip'].astype(str)).astype(np.int64) * (1 << 32) + S['ts'].values.astype(np.int64))
+        pc, t0 = icodes.get_indexer(people.index).astype(np.int64), people['t0'].values.astype(np.int64)
+        reached = int((np.searchsorted(keys, pc * (1 << 32) + t0 + win, 'right') > np.searchsorted(keys, pc * (1 << 32) + t0, 'left')).sum())
+    guess = [normalize(r['хост']) for r in table if str(r['причина']).startswith('поддомен без страниц')]
+    guess_open = 0
+    if guess:
+        gm = np.array([c in set(guess) for c in cats], bool)
+        grows = np.where(codes >= 0, gm[np.where(codes >= 0, codes, 0)], False)
+        gh = pd.DataFrame({'h': np.asarray(cats, dtype=object)[np.where(codes >= 0, codes, 0)][grows], 'st': st[grows]})
+        guess_open = int(sum(1 for _, g in gh.groupby('h') if (~g['st'].isin([403, 404])).any()))
+    rc = R['ref_host'].cat.categories if 'ref_host' in R else []
+    ref_ip = 0
+    if len(rc):
+        rm = np.array([normalize(c) in ipnames for c in rc], bool)
+        rcodes = R['ref_host'].cat.codes.values
+        ref_ip = int(np.where(rcodes >= 0, rm[np.where(rcodes >= 0, rcodes, 0)], False).sum())
+    nf = lambda x: f'{int(x):,}'.replace(',', ' ')
+    cnt = per_ip['rank'].value_counts()
+    return dict(requests=nf(rows.sum()), ips=nf(len(per_ip)), codes=codes_text(st[rows]), scanners=nf(cnt.get(0, 0)), bots=nf(cnt.get(1, 0)), robots=nf(cnt.get(2, 0)),
+                people=nf(cnt.get(3, 0)), reached=nf(reached), guess_total=nf(len(guess)), guess_open=nf(guess_open), ref_ip=nf(ref_ip), n=int(rows.sum()))

@@ -254,3 +254,43 @@ def test_error_log_02_only_site_hosts_03_all_but_copies(monkeypatch):
         t = res['errors'].get('торможение') or {}
         tm = t.get('таймауты')
         assert tm is not None and int(tm.values.sum()) == 4 + 3 + 5 + 2   # торможение: весь сервер без копий (7 строк копии не в счёте)
+
+
+# ---------- A7 ----------
+def _ip_card(log, monkeypatch):
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        res, lines, work, c = _run(d, log)
+        return [x for x in res['findings'] if x['key'].split(':')[1] == 'ip_host_redirect']
+
+
+def _ip_host_log(status):
+    log, _ = _log(with_extra=False)
+    for d in range(3):
+        for k in range(6):   # роботы и сканеры по IP сервера
+            log.line('66.249.66.11', synth.T0 + timedelta(days=d, hours=7, minutes=k), '/', status, ua='Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', host=IPHOST)
+            log.line('203.0.113.80', synth.T0 + timedelta(days=d, hours=8, seconds=k), f'/x{k}.php', status, ua=SCAN_UA, host=IPHOST)
+        # похожий на человека: страница и оформление по IP, потом заходит на сайт
+        ip, t = f'203.0.113.9{d}', synth.T0 + timedelta(days=d, hours=9)
+        log.line(ip, t, '/', status, ref='https://yandex.ru/', host=IPHOST)
+        log.line(ip, t + timedelta(seconds=1), '/local/templates/main/style.css', status, ref=f'http://{IPHOST}/', host=IPHOST)
+        if d == 0: log.line(ip, t + timedelta(seconds=40), '/catalog/', 200, ref=f'http://{IPHOST}/', host=MAIN)
+    for j in range(3):   # подобранное имя: одно отвечает страницей
+        log.line('203.0.113.52', synth.T0 + timedelta(hours=5, seconds=j), '/', 200 if j == 0 else 404, ua=SCAN_UA, host='x7q2k.example.com')
+        log.line('203.0.113.52', synth.T0 + timedelta(hours=5, seconds=10 + j), '/', 404, ua=SCAN_UA, host='auth0.example.com')
+    return log
+
+
+def test_ip_host_card_on_redirect(monkeypatch):
+    card = _ip_card(_ip_host_log(301), monkeypatch)
+    assert len(card) == 1, card
+    x = card[0]
+    assert x['блок'] == 'Нагрузка и безопасность' and '301' in x['факты'] and 'роботы — 1' in x['факты'] and 'IP' in x['факты']
+    assert 'дошли 1' in x['факты'] and 'не 403/404: 1' in x['факты'] and 'отвечать 444' in x['что_сделать'], x['факты']
+    from nxld import texts
+    assert texts.card('ip_host_redirect')['action'] == x['что_сделать']   # тексты — в data/locale/ru/cards.json
+
+
+def test_no_ip_host_card_on_444_or_403(monkeypatch):
+    assert _ip_card(_ip_host_log(403), monkeypatch) == []
+    assert _ip_card(_ip_host_log(404), monkeypatch) == []

@@ -79,3 +79,55 @@ def test_analyze_accepted_count_follows_orders(monkeypatch):
         res = analyze.run(work, log=lambda *a: None)
         s = res['summary']['Общий анализ']
         assert s['Принято от людей'] == 9 and s['Отправок целей всего'] == 9, s
+
+
+def _lost_log(win_ok=True):
+    """3 ошибки 504 на оформлении, после двух — заказ в течение часа; третий покупатель заказа не оформил."""
+    log = _log(calls=(3, 3, 3, 3, 3))
+    for k in range(3):
+        ip = f'95.168.0.{k + 1}'
+        t = synth.T0 + timedelta(days=3, hours=10, minutes=30 * k)
+        log.visit(ip, t)
+        log.line(ip, t + timedelta(seconds=60), AJAX, 504, ref='https://site.ru/personal/order/make/', method='POST')
+        if k < 2: log.line(ip, t + timedelta(minutes=40), f'/personal/order/make/?ORDER_ID={2000 + k}', 200, ref='https://site.ru/personal/order/make/')
+    return log
+
+
+def _card(log, monkeypatch):
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
+        log.write(path)
+        prepare.run([path], work, log=lambda *a: None)
+        res = analyze.run(work, log=lambda *a: None)
+        return [x for x in res['findings'] if x['key'].split(':')[1] == 'lost_leads']
+
+
+def test_lost_leads_two_numbers_main_is_without_order(monkeypatch):
+    card = _card(_lost_log(), monkeypatch)
+    assert len(card) == 1, card
+    c0 = card[0]
+    assert c0['главная_цифра'] == 1   # потеряно 1 из 3
+    assert 'Ошибок всего 3, из них закончились заказом 2, без заказа 1' in c0['факты'], c0['факты']
+
+
+def test_lost_leads_all_ended_with_orders_no_card(monkeypatch):
+    log = _log(calls=(3,) * 5)
+    for k in range(2):
+        ip = f'95.168.0.{k + 1}'
+        t = synth.T0 + timedelta(days=3, hours=10, minutes=30 * k)
+        log.visit(ip, t)
+        log.line(ip, t + timedelta(seconds=60), AJAX, 504, ref='https://site.ru/personal/order/make/', method='POST')
+        log.line(ip, t + timedelta(minutes=50), f'/personal/order/make/?ORDER_ID={3000 + k}', 200, ref='https://site.ru/personal/order/make/')
+    assert _card(log, monkeypatch) == []
+
+
+def test_lost_leads_forms_without_number_as_before(monkeypatch):
+    log = _log(shop=False)
+    for k in range(2):   # форма обратной связи отвечает ошибкой, номера нет — потеря, как раньше
+        ip = f'95.169.0.{k + 1}'
+        t = synth.T0 + timedelta(days=3, hours=10, minutes=30 * k)
+        log.visit(ip, t)
+        log.line(ip, t + timedelta(seconds=60), '/contacts/send/', 500, ref='https://site.ru/contacts/', method='POST')
+    card = _card(log, monkeypatch)
+    assert len(card) == 1 and card[0]['главная_цифра'] == 2 and 'Ошибок всего' not in card[0]['факты']

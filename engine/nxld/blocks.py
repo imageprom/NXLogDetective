@@ -213,9 +213,29 @@ def overview(c, F):
               f"{len(bot_ok)} принятых отправок с {bot_ok['ip'].nunique()} IP; последняя {bot_ok['время'].max()}. Примеры IP: {', '.join(bot_ok['ip'].astype(str).unique()[:8])}",
               'защита форм (код сайта), CRM', 'Отсеять эти заявки у менеджеров; поставить защиту форм', len(bot_ok), 'Конверсии', also=('Боты',))
     lost = P[(P['группа'] == 'Люди') & (P['status'] >= 400) & (P['status'] != 499)]
-    if len(lost):
-        F.add('Общий анализ', 'Срочно' if (lost['status'] >= 500).any() else 'Важно', 'lost_leads', 'all', f'{len(lost)} отправок людей получили ошибку сервера',
-              f"Коды: {topn(lost['status'])}; цели: {topn(lost['goal'])}", 'код сайта', 'Проверить обработчики форм', len(lost), 'Конверсии', also=('Ошибки',))
+    ended, steps_err = 0, 0
+    if 'order_step' in R and R['order_step'].any():   # ошибка на шаге оформления — не потеря, если с того же IP номер заказа появился в окне после ошибки (#24)
+        from .thresholds import value
+        win = int(float(value('lost_order_window_hours', 3)) * 3600)
+        err = R['order_step'].values & c.human & (R['status'].values >= 400) & (R['status'].values != 499)
+        ipc, ts = R['ip'].cat.codes.values.astype(np.int64), R['ts'].values.astype(np.int64)
+        okeys = np.sort(ipc[R['is_order'].values] * (1 << 32) + ts[R['is_order'].values])
+        steps_err = int(err.sum())
+        if steps_err and len(okeys):
+            lo = np.searchsorted(okeys, ipc[err] * (1 << 32) + ts[err], 'right')   # заказы того же IP строго позже ошибки
+            hi = np.searchsorted(okeys, ipc[err] * (1 << 32) + ts[err] + win, 'right')
+            ended = int((hi > lo).sum())
+        lost_steps = steps_err - ended
+    else:
+        lost_steps = 0
+    if len(lost) or lost_steps:
+        n_lost = len(lost) + lost_steps
+        sev5 = (lost['status'] >= 500).any() or (steps_err > ended and bool((R['status'].values[err] >= 500).any()))
+        facts = f"Коды: {topn(lost['status'])}; цели: {topn(lost['goal'])}" if len(lost) else 'Оформление заказа: ошибки на шагах'
+        if steps_err:
+            facts = f"Ошибок всего {len(lost) + steps_err}, из них закончились заказом {ended}, без заказа {n_lost}. " + facts
+        F.add('Общий анализ', 'Срочно' if sev5 else 'Важно', 'lost_leads', 'all', f'{n_lost} отправок людей получили ошибку сервера',
+              facts, 'код сайта', 'Проверить обработчики форм', n_lost, 'Конверсии', also=('Ошибки',))
     if c.inv.get('hour_gaps'):
         F.add('Общий анализ', 'Важно', 'gaps', 'log', f"В логе пропущено {len(c.inv['hour_gaps'])} часов",
               ', '.join(c.inv['hour_gaps'][:10]), 'сервер / ротация логов', 'Проверить, были ли сбои или потеря логов', len(c.inv['hour_gaps']), 'О данных')

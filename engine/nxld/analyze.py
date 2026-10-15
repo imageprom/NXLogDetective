@@ -71,7 +71,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     selected = ['Общий анализ', 'Ошибки'] + [b for b in selected if b not in ('Общий анализ', 'Ошибки')]
     log('Загрузка подготовленных таблиц')
     R = pd.read_pickle(os.path.join(workdir, 'R.pkl'))
-    V = pd.read_pickle(os.path.join(workdir, 'V.pkl'))
+    V = visits.thaw(pd.read_pickle(os.path.join(workdir, 'V.pkl')))   # на время правил изменяемые колонки — строки
     T = pd.read_pickle(os.path.join(workdir, 'T.pkl'))
     G = pd.read_pickle(os.path.join(workdir, 'G.pkl'))
     E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
@@ -94,6 +94,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
+    V = visits.freeze(V)   # правила закончились: повторяющиеся строки — категории
     c = blocks.Ctx(R, V, E, T, m, inv, G)
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
     # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе скачивания

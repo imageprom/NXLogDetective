@@ -41,9 +41,8 @@ def compact_save(R, V, T, G, workdir):
     for c in R.columns:
         if str(R[c].dtype) == 'category': R[c] = R[c].cat.remove_unused_categories()
     R.to_pickle(os.path.join(workdir, 'R.pkl'))
-    V = V.copy()
-    for c in V.columns:
-        if V[c].dtype == object and V[c].nunique() < 0.5 * len(V): V[c] = V[c].astype('category')
+    from .visits import freeze
+    V = freeze(V)
     V.to_pickle(os.path.join(workdir, 'V.pkl'))
     T.to_pickle(os.path.join(workdir, 'T.pkl'))
     G = G.copy()

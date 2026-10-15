@@ -1167,7 +1167,7 @@ def bots(c, F, check_ips=()):
     bv = V[V['group'] == 'Боты']
     bn = bv.groupby(['asn', 'nettype']).agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), подгруппы=('subgroup', lambda s: topn(s, 2))).sort_values('IP', ascending=False).reset_index()
     bn['сеть'] = bn['asn'].map(c.T.drop_duplicates('asn').set_index('asn')['org'])
-    bn['что_делать_с_адресами'] = bn['nettype'].map({'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
+    bn['что_делать_с_адресами'] = bn['nettype'].astype(str).map({'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
                                                     'RU провайдер доступа': 'только по поведению', 'зарубежный провайдер доступа': 'по аудитории сайта'}).fillna('по ситуации')
     bn.loc[bn['nettype'].astype(str).map(ipdb.is_dc), 'что_делать_с_адресами'] = 'можно банить подсетью'
     S['Бот-сети'] = bn.head(300)
@@ -1180,7 +1180,7 @@ def bots(c, F, check_ips=()):
             if not len(vv):
                 rows.append(dict(ip=ip, в_логе='нет', сеть=t['org'], страна=t['cc']))
                 continue
-            rows.append(dict(ip=ip, в_логе='да', сеть=t['org'], страна=t['cc'], тип_сети=t['nettype'], визитов=len(vv), запросов=int(vv['n_req'].sum()), группа=topn(vv['group'] + ' ' + vv['subgroup'], 2),
+            rows.append(dict(ip=ip, в_логе='да', сеть=t['org'], страна=t['cc'], тип_сети=t['nettype'], визитов=len(vv), запросов=int(vv['n_req'].sum()), группа=topn(vv['group'].astype(str) + ' ' + vv['subgroup'].astype(str), 2),
                              отправок=int(vv['n_goal'].sum()), принято=int(vv['n_conv'].sum()), первый=dt(vv['start'].min()), последний=dt(vv['end'].max()), входы=topn(vv['entry'], 3), UA=topn(vv['ua'].str.slice(0, 60), 2)))
         S['Проверка IP'] = pd.DataFrame(rows)
     # ИИ-роботы

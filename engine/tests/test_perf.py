@@ -263,3 +263,58 @@ def test_data_sheet_style_objects_not_per_cell(monkeypatch):
     _sheet(df)
     cells = len(df) * len(df.columns)
     assert all(v < cells / 20 for v in made.values()), (cells, made)
+
+
+# ---------- 4. память визитов ----------
+import tempfile  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+import synth  # noqa: E402
+
+
+def _visits_frame(n=400):
+    r = random.Random(4)
+    return pd.DataFrame({'ip': [f'198.51.100.{i % 90}' for i in range(n)], 'ua': [r.choice(['UA-a', 'UA-b', 'UA-c']) for _ in range(n)], 'day': ['2026-09-01'] * n,
+                         'group': [r.choice(['Люди', 'Боты', 'Роботы']) for _ in range(n)], 'subgroup': [r.choice(['парсер', 'сканер', '']) for _ in range(n)],
+                         'entry': [f'/p{i}/' for i in range(n)], 'n_pages': range(n)})
+
+
+def test_freeze_makes_repeating_text_categories():
+    V = _visits_frame()
+    F = visits.freeze(V)
+    for c in ('ua', 'group', 'subgroup'): assert str(F[c].dtype) == 'category', c
+    for c in ('entry', 'n_pages'): assert str(F[c].dtype) != 'category', c   # почти все значения разные / не текст
+    for c in ('ip', 'day'): assert str(F[c].dtype) != 'category', c   # ip сворачивают в set и list, day — min/max: остаются строками
+    for c in V.columns: assert F[c].astype(str).tolist() == V[c].astype(str).tolist(), c
+    assert visits.freeze(F)['ua'].tolist() == F['ua'].tolist()
+    assert F.memory_usage(deep=True).sum() < V.memory_usage(deep=True).sum()
+
+
+def test_new_subgroup_values_after_thaw_and_freeze():
+    """Правило дописывает в subgroup значение, которого не было: у категории это ошибка, у размороженной колонки — нет."""
+    F = visits.freeze(_visits_frame())
+    try:
+        F.loc[F['group'] == 'Боты', 'subgroup'] = 'новая пометка'
+        raised = False
+    except (TypeError, ValueError):
+        raised = True
+    assert raised   # без thaw запись нового значения в категорию невозможна — поэтому правила идут по размороженному V
+    V = visits.thaw(F)
+    assert not any(str(V[c].dtype) == 'category' for c in V.columns)
+    m = V['group'] == 'Боты'
+    V.loc[m, 'subgroup'] = 'новая пометка'
+    V.loc[m & (V['n_pages'] % 2 == 0), 'group'] = 'Подозрительные лица'
+    V = visits.freeze(V)
+    assert str(V['subgroup'].dtype) == 'category' and 'новая пометка' in V['subgroup'].cat.categories
+    assert V['subgroup'].isna().sum() == 0 and (V.loc[m, 'subgroup'] == 'новая пометка').all()
+    assert 'Подозрительные лица' in set(V['group'])
+
+
+def test_run_keeps_visits_compact():
+    """Полный прогон: V.pkl хранит повторяющиеся строки категориями, отчёт собирается."""
+    log = synth.Log()
+    log.people()
+    with tempfile.TemporaryDirectory() as d:
+        res, out, text = synth.run(log, d)
+        V = pd.read_pickle(os.path.join(d, 'work', 'V.pkl'))
+        for c in ('ua', 'nettype', 'channel', 'group', 'subgroup'): assert str(V[c].dtype) == 'category', c

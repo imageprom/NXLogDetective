@@ -228,6 +228,31 @@ def robot_ranges():
     return _RANGES
 
 
+def _is_text(s):
+    return pd.api.types.is_string_dtype(s.dtype) or s.dtype == object
+
+
+def thaw(V):
+    """Категории → обычные строки. На время правил группировки V (mark_*, regroup…) колонки — строки: правила дописывают в group и subgroup
+    любые новые значения (V.loc[mask, 'subgroup'] = …), у категории же значение должно быть в списке заранее, и сворачивают колонки списками."""
+    V = V.copy()
+    for c in V.columns:
+        if isinstance(V[c].dtype, pd.CategoricalDtype): V[c] = V[c].astype(str)
+    return V
+
+
+NOT_CATEGORY = ('day', 'ip')   # day: по колонке берут min/max; ip: сворачивают в set и list (у категории так нельзя); IP разных много — выигрыш мал
+
+
+def freeze(V):
+    """Повторяющиеся строковые колонки (ua, entry, nettype, channel, group, subgroup, fam…) → категории: меньше памяти, результаты те же.
+    Колонка, где разных значений половина и больше, остаётся строкой (категория выигрыша не даёт)."""
+    V = V.copy()
+    for c in V.columns:
+        if c not in NOT_CATEGORY and _is_text(V[c]) and V[c].nunique() < 0.5 * len(V): V[c] = V[c].astype('category')
+    return V
+
+
 def reverify(R, V):
     """Подлинность объявленных роботов — заново по справочнику сетей (ipdb.VERIFIED), если он изменился после подготовки логов.
     Визит робота, который пришёл не из своей сети, — подделка: группа «Боты», подгруппа «подделки роботов»."""

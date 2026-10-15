@@ -1290,8 +1290,13 @@ def marketing(c, F):
     gp = (R['goal'] != '').values
     P = R.loc[gp & c.human, ['goal', 'goal_success', 'vid']]
     emb = set(e['шаблон'] for e in c.m.get('embedded_templates', []))
+    from . import orders as orders_, reference
+    spec_ = reference.engine_orders((c.m.get('orders') or {}).get('движки') or [])
+    S['Воронка заказа'] = orders_.funnel(R, V, spec_)   # магазин: вместо строк «Заказ» — воронка по визитам людей (B2, #22); не магазин — None
+    order_goals = set(R.loc[R['is_order'].values, 'goal'].astype(str)) if S['Воронка заказа'] and 'is_order' in R else set()   # строки «Заказ» заменяет воронка заказа
     fun = []
     for gname, g in P.groupby('goal', observed=True):
+        if str(gname) in order_goals: continue
         tplname = str(gname).split('?')[0]
         preloaded = tplname in emb
         fun.append(dict(цель=gname, визитов_людей=len(H), открыли_форму='не считается: форма грузится с каждой страницей' if preloaded else '', отправили_визитов=g['vid'].nunique(),

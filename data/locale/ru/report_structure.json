@@ -5235,7 +5235,29 @@
       ]
      ],
      "toc": "",
-     "blocks": []
+     "blocks": [
+      {
+       "code": "order_funnel",
+       "status": "approved",
+       "heading": [
+        [
+         {
+          "text": "Воронка заказа"
+         }
+        ]
+       ],
+       "subheading": [
+        [
+         {
+          "text": "Магазин: сколько визитов людей дошли до каждого шага, от просмотра сайта до заказа"
+         }
+        ]
+       ],
+       "notes": [],
+       "links": [],
+       "legend": false
+      }
+     ]
     },
     {
      "num": 6,

@@ -159,3 +159,62 @@ def test_no_error_card_when_success_page_ok(monkeypatch):
         prepare.run([path], work, log=lambda *a: None)
         res = analyze.run(work, log=lambda *a: None)
     assert not [x for x in res['findings'] if x['key'].split(':')[1] == 'order_page_error']
+
+
+def _funnel_log():
+    log = _log()
+    for k in range(25):   # 25 людей добавляют товар: POST на один обработчик со страниц каталога
+        ip = f'95.165.0.{k + 1}'
+        log.line(ip, synth.T0 + timedelta(hours=8, minutes=9 * k, seconds=30), '/catalog/add/', 200, ref=f'https://site.ru/catalog/p{k}/', method='POST')
+    for n in range(1, 6):   # все 5 заказов прошли корзину (с 3 ниже — 8 корзин) и оформление
+        ip, t = f'95.167.0.{n}', synth.T0 + timedelta(days=2, hours=10, minutes=20 * n)
+        log.line(ip, t + timedelta(seconds=20), '/personal/cart/', 200, ref='https://site.ru/catalog/')
+        log.line(ip, t + timedelta(seconds=30), '/personal/order/make/', 200, ref='https://site.ru/personal/cart/')
+    for k in range(3):   # корзина и оформление без заказа
+        ip, t = f'95.168.0.{k + 1}', synth.T0 + timedelta(days=3, hours=10, minutes=20 * k)
+        log.visit(ip, t)
+        log.line(ip, t + timedelta(seconds=20), '/personal/cart/', 200, ref='https://site.ru/catalog/')
+        log.line(ip, t + timedelta(seconds=30), '/personal/order/make/', 200, ref='https://site.ru/personal/cart/')
+    return log
+
+
+def test_order_funnel_steps(monkeypatch):
+    """B2: 5 заказов, 8 корзин, 3 визита с оформлением без заказа → числа шагов воронки."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
+        _funnel_log().write(path)
+        prepare.run([path], work, log=lambda *a: None)
+        res = analyze.run(work, log=lambda *a: None)
+    of = res['sheets']['Маркетинг']['Воронка заказа']
+    st = dict(of['шаги'])
+    assert st['order'] == 5 and st['cart'] == 8 and st['checkout'] == 8 and st['action'] == 25, st
+    assert st['people'] >= 41 and of['заказ_через_корзину'] == 5 and of['действия_определены']
+
+
+def test_order_funnel_absent_without_shop(monkeypatch):
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
+        _log(shop=False).write(path)
+        prepare.run([path], work, log=lambda *a: None)
+        res = analyze.run(work, log=lambda *a: None)
+    assert res['sheets']['Маркетинг']['Воронка заказа'] is None
+
+
+def test_order_funnel_on_funnels_sheet(tmp_path):
+    """B2: на листе «Воронки» файла 05 — воронка заказа с подписями из data/locale/ru/funnel.json и примечанием; строк «Заказ» среди форм нет."""
+    import glob
+    import openpyxl
+    _, out, _ = synth.run(_funnel_log(), str(tmp_path))
+    f = glob.glob(os.path.join(out, 'NXLD_05*.xlsx'))[0]
+    ws = openpyxl.load_workbook(f)['Воронки']
+    cells = [(c.row, c.value) for row in ws.iter_rows() for c in row if c.value is not None]
+    texts_ = [str(v) for _, v in cells]
+    assert 'ВОРОНКА ЗАКАЗА' in texts_
+    for lab in ('Визиты людей', 'Действия с товаром', 'Корзина', 'Оформление', 'Заказ'): assert lab in texts_, lab
+    row = {v: r for r, v in cells if v in ('Корзина', 'Оформление', 'Заказ')}
+    vals = {k: [c.value for c in ws[row[k]] if c.value is not None] for k in row}
+    assert vals['Корзина'][1:3] == [8, vals['Корзина'][2]] and vals['Оформление'][1] == 8 and vals['Заказ'][1] == 5 and vals['Заказ'][2] == round(5 / 8 * 100, 1), vals
+    assert any('Из визитов с заказом (5) были в корзине' in t and t.rstrip('.').endswith('5)') for t in texts_)
+    assert not any('/personal/order/make/?ORDER_ID' in t for t in texts_)   # строка цели «Заказ» среди форм заменена воронкой

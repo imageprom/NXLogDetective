@@ -476,5 +476,7 @@
   "order_success": [{"path": "^/personal/order/make/", "param": "ORDER_ID"}],
   "order_steps": ["^/bitrix/components/bitrix/sale\\.order\\.ajax/"],
   "not_goals": ["^/bitrix/components/bitrix/sale\\.order\\.ajax/", "^/bitrix/components/bitrix/catalog\\.product\\.subscribe/", "^/personal/", "^/bitrix/admin/sale_order"],
-  "to_verify": "заказы магазина: страница успеха /personal/order/make/ с параметром ORDER_ID; пересчёт оформления, проверка подписки, личный кабинет и админка магазина — не цели"
+  "to_verify": "заказы магазина: страница успеха /personal/order/make/ с параметром ORDER_ID; пересчёт оформления, проверка подписки, личный кабинет и админка магазина — не цели",
+  "cart_pages": ["^/personal/cart/"],
+  "checkout_pages": ["^/personal/order/make/"]
 }

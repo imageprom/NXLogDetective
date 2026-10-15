@@ -8,6 +8,14 @@ _PATH = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'da
 _CACHE = {}
 
 
+def file(name):
+    """Тексты листа или блока отчёта — data/locale/<язык>/<name>.json целиком."""
+    if name not in _CACHE:
+        try: _CACHE[name] = json.load(open(os.path.join(os.path.dirname(_PATH), name + '.json'), encoding='utf-8'))
+        except Exception: _CACHE[name] = {}
+    return _CACHE[name]
+
+
 def card(key):
     """Тексты карточки: found, check (для справочника проблем), title, facts, where, action."""
     if 'all' not in _CACHE:

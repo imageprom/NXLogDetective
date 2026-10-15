@@ -66,6 +66,14 @@ def restatus_late(prev, items, thr=STATUS_THRESHOLD):
         x['статус_вид'] = vid
 
 
+def block_failed(res, log, name, exc):
+    """Сбой расчёта блока не молчит: строка в журнале запуска и запись в выжимке (brief → проверка → сбои_блоков), с причиной."""
+    import traceback; traceback.print_exc()
+    why = f'{type(exc).__name__}: {exc}'
+    log(f'Блок не построен: «{name}» — {why}')
+    res.setdefault('сбои_блоков', []).append({'блок': name, 'причина': why})
+
+
 def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     selected = selected or BLOCKS
     selected = ['Общий анализ', 'Ошибки'] + [b for b in selected if b not in ('Общий анализ', 'Ошибки')]
@@ -186,6 +194,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['site_profile'] = profile.detect(c, res.get('site_map') or {})
     except Exception as e:
         res['site_profile'] = {'назначение': 'не определено', 'ошибка': str(e)}
+        block_failed(res, log, 'Профиль сайта', e)
     findings_meta.proofs(c, F.items, res['sheets'])
     flood_circumstance(F.items, res['sheets'])
     findings_text.humanize(F.items, res['sheets'], res['summary'])
@@ -218,7 +227,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['files_errors'] = recon.files_inventory(R[Rm], min_req=1, T=T_, addr=c.addr, people=(c.human | np.asarray(c.rg == 'Свои'))[Rm]).to_dict('records')
         res['unknown_extensions'] = classify.unknown_extensions(c.addr, R, T_('незнакомый_ключ'))
     except Exception as e:
-        log(f'files_inventory: {e}'); res['files'] = None
+        res['files'] = None
+        block_failed(res, log, 'Файлы', e)
     if res['files']:
         for x in res['findings']:
             if x['key'].split(':')[1] in ('missing_static', 'no_service', 'service_err', 'hotlink', 'ai_index', 'heavy_images'):
@@ -229,8 +239,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         if np_ and sp_.get('страниц'):   # одно число страниц везде: после склейки фильтров и без мусорных адресов
             sp_['страниц'] = np_; sp_['размер'] = 'маленький' if np_ <= 50 else 'средний' if np_ <= 5000 else 'большой'
     except Exception as e:
-        import traceback; traceback.print_exc()
         res['anatomy'] = {'ошибка': str(e)}
+        block_failed(res, log, 'Анатомия сайта', e)
     try:   # параметры — после «Анатомии»: нужны её системные папки и закрытые зоны; справочник — по найденному движку
         from .anatomy import PARAM_GROUPS, param_groups
         from . import reference
@@ -272,7 +282,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         ref.save()
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:
-        import traceback; traceback.print_exc(); res['params'] = None
+        res['params'] = None
+        block_failed(res, log, 'Параметры запросов', e)
     from . import intake
     res['intake'] = intake.build(c, res)   # реестр точек приёма данных — один для 01, 03 и (позже) 05
     intake.findings(res, F.items)
@@ -285,29 +296,33 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     try:
         res['profiles'] = profiles.build(c, res)
         res['bots_extra'] = profiles.extras(c, res)
-    except Exception:
-        import traceback; traceback.print_exc(); res['profiles'], res['bots_extra'] = None, None
+    except Exception as e:
+        res['profiles'], res['bots_extra'] = None, None
+        block_failed(res, log, 'Дела и меры по IP (04)', e)
     try:   # User-Agent по IP — для подделок и сканеров (04): самый частый и сколько ещё вариантов
         from .common import ua_by_ip
         ips_ = set(res['sheets'].get('Боты', {}).get('Подделки', pd.DataFrame(columns=['ip']))['ip'].astype(str))
         sc_ = (res.get('security') or {}).get('сканеры')
         if isinstance(sc_, tuple) and len(sc_) > 1 and sc_[1] is not None and len(sc_[1]): ips_ |= set(sc_[1]['ip'].astype(str))
         res['ua_ip'] = ua_by_ip(V, ips_)
-    except Exception:
-        import traceback; traceback.print_exc(); res['ua_ip'] = {}
+    except Exception as e:
+        res['ua_ip'] = {}
+        block_failed(res, log, 'User-Agent по IP (04)', e)
     if 'Маркетинг' in selected:   # 05: журнал, карты по времени, качество каналов, боты в рекламе
         from . import marketing
         try: res['marketing'] = marketing.build(c, res)
-        except Exception:
-            import traceback; traceback.print_exc(); res['marketing'] = None
+        except Exception as e:
+            res['marketing'] = None
+            block_failed(res, log, 'Маркетинг (05)', e)
     if 'SEO' in selected:   # 06: обход поисковиками, файлы для роботов, страницы без обхода; карточки о поиске переезжают сюда (ключи прежние)
         from . import seo
         try:
             res['seo'] = seo.build(c, res)
             seo.findings(res, F.items)
             if prev: restatus_late(prev, F.items)   # карточки SEO появились после сравнения с прошлым снимком
-        except Exception:
-            import traceback; traceback.print_exc(); res['seo'] = None
+        except Exception as e:
+            res['seo'] = None
+            block_failed(res, log, 'SEO (06)', e)
     if prev:
         from .snapshot import check_keys
         res['ключи'] = check_keys(prev, {'findings': F.items})   # стабильность ключей проблем относительно прошлой проверки

@@ -473,7 +473,7 @@ def files_inventory(R, min_req=3, T=None, addr=None, people=None):
     m = U['seg'].notna() & (U['grp'] != 'Для роботов')
     n = U[m].groupby(['seg', 'ext', 'grp'])['base'].transform('size')
     f = U[m][n >= 3]
-    U.loc[f.index, 'key'] = f['seg'] + '…/' + np.where(f['ext'] == '', '*', '*.' + f['ext'])
+    U.loc[f.index, 'key'] = [seg + '…/' + ('*' if ext == '' else '*.' + ext) for seg, ext in zip(f['seg'], f['ext'])]   # списком: строка pandas (arrow) + массив numpy не складываются
     S['key'] = S['base'].map(dict(zip(U['base'], U['key'])))
     rows = []
     for k, s in S.groupby('key', sort=False):

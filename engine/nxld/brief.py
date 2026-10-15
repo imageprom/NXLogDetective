@@ -87,9 +87,11 @@ def build(res, c, prev=None):
     if last.hour < 23: caveats.append(f'лог заканчивается {last:%d.%m в %H:%M}, последний день неполный')
     if inv.get('hour_gaps'): caveats.append(f"пропуски в логе: {', '.join(inv['hour_gaps'][:5])}")
     if not inv.get('errors_lines'): caveats.append('error-лога нет: причины 5xx по нему не проверялись')
+    for f_ in res.get('сбои_блоков', []): caveats.append(f"блок «{f_['блок']}» не построен: {f_['причина']}")
     B = {'проверка': dict(сайт=(m.get('site_hosts') or ['?'])[0], другие_хосты=(m.get('site_hosts') or [])[1:], период=[p0, p1], дней=days,
                           строк_access=inv.get('requests'), строк_error=inv.get('errors_lines'), блоки=res['selected'],
-                          тип='повторная' if prev else 'первичная', прошлая_проверка=(prev or {}).get('period'), оговорки=caveats)}
+                          тип='повторная' if prev else 'первичная', прошлая_проверка=(prev or {}).get('period'), оговорки=caveats,
+                          сбои_блоков=res.get('сбои_блоков', []))}   # блоки, которые не удалось построить, и почему
     # --- портрет сайта
     H = V[V['group'] == 'Люди']
     O = S.get('Общий анализ', {})

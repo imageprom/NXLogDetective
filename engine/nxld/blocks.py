@@ -1250,7 +1250,12 @@ def marketing(c, F):
     R, V, H = c.R, c.V, c.H
     S = {}
     from .marketing import metrics as stats   # одна метрика визитов на все срезы 05
-    S['Каналы подробно'] = H.groupby(['channel', 'channel_sub']).apply(stats).reset_index().sort_values('визитов', ascending=False).rename(columns={'channel': 'канал', 'channel_sub': 'источник'})
+    def by(df, keys):
+        """df.groupby(keys).apply(stats); пустой df (нет людей по каналам, рекламы…) — пустая таблица с теми же колонками, а не KeyError."""
+        if len(df): return df.groupby(keys).apply(stats)
+        idx = pd.MultiIndex.from_arrays([[] for _ in keys], names=keys) if isinstance(keys, list) else pd.Index([], name=keys)
+        return pd.DataFrame(columns=list(stats(df).index), index=idx)
+    S['Каналы подробно'] = by(H, ['channel', 'channel_sub']).reset_index().sort_values('визитов', ascending=False).rename(columns={'channel': 'канал', 'channel_sub': 'источник'})
     # воронки по целям
     gp = (R['goal'] != '').values
     P = R.loc[gp & c.human, ['goal', 'goal_success', 'vid']]
@@ -1271,8 +1276,8 @@ def marketing(c, F):
     first_seen = H.groupby('ip')['start'].transform('min')
     H2['визит'] = np.where(H2['start'] > first_seen, 'повторный', 'первый')
     for col, name in [('устройство', 'Устройства'), ('браузер_приложения', 'Встроенные браузеры'), ('hour', 'Часы'), ('weekday', 'Дни недели'), ('визит', 'Новые и повторные')]:
-        cut[name] = H2.groupby(col).apply(stats).reset_index()
-    ent = H2.groupby('вход_шаблон').apply(stats).reset_index().sort_values('визитов', ascending=False).head(200)
+        cut[name] = by(H2, col).reset_index()
+    ent = by(H2, 'вход_шаблон').reset_index().sort_values('визитов', ascending=False).head(200)
     cut['Страницы входа'] = ent
     S.update({f'Конверсии: {k}': v for k, v in cut.items()})
     # очистка по каналам
@@ -1295,17 +1300,17 @@ def marketing(c, F):
         AD = AD.join(pa)
         AD['тип_площадки'] = [placement_type(src, st_) for src, st_ in zip(AD.get('source', pd.Series('', index=AD.index)).fillna(''), AD.get('source_type', pd.Series('', index=AD.index)).fillna(''))]
         AD.loc[AD['channel_sub'] != 'Яндекс Директ', 'тип_площадки'] = AD['channel_sub']
-        S['Реклама: системы и типы площадок'] = AD.groupby(['channel_sub', 'тип_площадки']).apply(stats).reset_index().rename(columns={'channel_sub': 'система'})
+        S['Реклама: системы и типы площадок'] = by(AD, ['channel_sub', 'тип_площадки']).reset_index().rename(columns={'channel_sub': 'система'})
         for col, name in [('кампания', 'Кампании'), ('aid', 'Объявления'), ('фраза', 'Фразы'), ('source', 'Площадки'), ('region', 'Регионы'), ('device', 'Устройства (метка)')]:
             if col in AD:
-                t = AD.groupby(col).apply(stats).reset_index().sort_values('визитов', ascending=False)
+                t = by(AD, col).reset_index().sort_values('визитов', ascending=False)
                 if col == 'source':
                     t['тип'] = [placement_type(x, '') for x in t[col]]
                 S[f'Реклама: {name}'] = t.head(1000)
         AD['час'] = AD['hour']
-        S['Реклама: часы'] = AD.groupby('час').apply(stats).reset_index()
+        S['Реклама: часы'] = by(AD, 'час').reset_index()
         if 'source' in AD:
-            pl = AD.groupby('source').apply(stats)
+            pl = by(AD, 'source')
             off = pl[(pl['визитов'] >= 30) & (pl['принято'] == 0)].copy()
             off['почему'] = [f"{int(r['визитов'])} визитов, 0 заявок, уход сразу {r['мгновенный_уход_%']}%, каталог смотрели {r['смотрели_каталог_%']}%" for _, r in off.iterrows()]
             off = off.sort_values('визитов', ascending=False).reset_index()
@@ -1332,7 +1337,7 @@ def marketing(c, F):
                 F.add('Маркетинг', 'Важно', 'campaign_zero', str(r['кампания']), f"Кампания {r['кампания']}: {int(r['визитов'])} визитов и 0 заявок",
                       f"Уход сразу {r['мгновенный_уход_%']}%", 'рекламный кабинет', 'Разобрать площадки и настройки кампании', int(r['визитов']), 'Реклама: Кампании')
         # посадочные
-        lp = AD.assign(посадочная=AD['entry']).groupby(['посадочная', 'entry_status']).apply(stats).reset_index().sort_values('визитов', ascending=False)
+        lp = by(AD.assign(посадочная=AD['entry']), ['посадочная', 'entry_status']).reset_index().sort_values('визитов', ascending=False)
         S['Реклама: посадочные'] = lp.head(500)
         lerr = AD[AD['entry_status'] >= 400]
         if len(lerr):

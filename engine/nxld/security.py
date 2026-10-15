@@ -6,7 +6,7 @@ import re
 import numpy as np
 import pandas as pd
 from . import common
-from .common import ip_profile, codes_text, split_codes_arr, dmy, episode_id, who_text
+from .common import ip_profile, codes_text, split_codes_arr, dmy, dmy_many, episode_id, who_text
 
 GROUPS_HEAT = ('Все', 'Люди', 'Роботы', 'Боты')
 GB = 1024 ** 3
@@ -134,7 +134,7 @@ def mass_requests(c, per_min=30):
     D['кто'] = D['ip'].map(P['кто']).fillna('')
     D['сеть'] = D['ip'].map(P['организация']).fillna('')
     D['страна'] = D['ip'].map(P['страна']).fillna('')
-    D['первая'] = D['первая'].map(lambda v: dmy(v * 60)); D['последняя'] = D['последняя'].map(lambda v: dmy(v * 60))
+    D['первая'] = dmy_many(D['первая'].values * 60); D['последняя'] = dmy_many(D['последняя'].values * 60)
     return D.sort_values('максимум', ascending=False).reset_index(drop=True)
 
 
@@ -313,8 +313,8 @@ def admin(c, S):
     X = pd.DataFrame({'ip': _sv(R, 'ip', m), 'ts': R['ts'].values[m]}).groupby('ip')['ts'].agg(['min', 'max'])
     D = A.copy()
     D['ip'] = D['ip'].astype(str)
-    D['первый'] = D['ip'].map(X['min']).map(lambda v: dmy(v) if pd.notna(v) else '')
-    D['последний'] = D['ip'].map(X['max']).map(lambda v: dmy(v) if pd.notna(v) else '')
+    D['первый'] = dmy_many(D['ip'].map(X['min']).values)
+    D['последний'] = dmy_many(D['ip'].map(X['max']).values)
     D['живой'] = D['сотрудник'] | D['ip'].map(P['живой']).fillna(False).astype(bool)
     D['кто'] = np.where(D['сотрудник'], 'Сотрудник', np.where(D['живой'], 'Неизвестный', D['ip'].map(P['кто']).fillna('')))   # посторонний человек — «Неизвестный»
     D['чужой'] = ~D['сотрудник']
@@ -432,7 +432,7 @@ def methods(c):
                      'первый': dmy(ts.min()), 'последний': dmy(ts.max())})
     T = pd.DataFrame(rows).sort_values('запросов', ascending=False).reset_index(drop=True)
     odd = ~np.isin(mc.values[mcode], ('GET', 'POST', 'HEAD'))
-    Raw = pd.DataFrame({'время': [dmy(x) for x in R['ts'].values[odd]], 'ip': _sv(R, 'ip', odd), 'метод': mc.values[mcode[odd]],
+    Raw = pd.DataFrame({'время': dmy_many(R['ts'].values[odd]), 'ip': _sv(R, 'ip', odd), 'метод': mc.values[mcode[odd]],
                         'адрес': _sv(R, 'base', odd), 'код': st[odd], 'user_agent': _sv(R, 'ua', odd)})
     P = ip_profile(c)
     Raw['кто'] = Raw['ip'].map(P['кто']).fillna('')
@@ -493,8 +493,9 @@ def attacks(c):
         rows.append({'адрес': bc[b], 'вид': k, 'запросов': len(g), 'IP': len(ips), 'главный_IP': f"{ips.index[0]} ({ips.iloc[0]})", 'кто': P['кто'].get(ips.index[0], ''),
                      'ответы': st_ok, 'ошибки': st_bad, 'отдано_200': len(ok), 'размер_200': int(ok['by'].median()) if len(ok) else None,
                      'обычный_размер': (f"{int(arr.min()):,}–{int(arr.max()):,}".replace(',', '\u00a0') if arr is not None and len(arr) else '—'),
-                     'необычных': len(odd), 'пример': str(g['q'].iloc[0])[:200], 'первый': dmy(g['ts'].min()), 'последний': dmy(g['ts'].max())})
+                     'необычных': len(odd), 'пример': str(g['q'].iloc[0])[:200], 'первый': g['ts'].min(), 'последний': g['ts'].max()})
     D = pd.DataFrame(rows)
+    D['первый'], D['последний'] = dmy_many(D['первый'].values), dmy_many(D['последний'].values)   # даты — одним переводом на таблицу
     D['подозрительно'] = D['необычных'] > 0
     return D.sort_values('запросов', ascending=False).reset_index(drop=True)
 

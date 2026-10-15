@@ -189,9 +189,10 @@ def build(c, res):
     label_ads((res.get('sheets') or {}).get('Маркетинг', {}), out['реклама_боты'])   # подписи фраз и регионов — общий уровень, не оформление
     out.update(ad_tops((res.get('sheets') or {}).get('Маркетинг', {}), out['реклама_боты']))
     if len(A):
-        g = A.groupby('channel_sub')
+        As = A.astype({c_: str for c_ in A.columns if isinstance(A[c_].dtype, pd.CategoricalDtype)})   # строки: у пустого среза людей apply возвращает его же, и fillna(0) не терпит категорий
+        g = As.groupby('channel_sub')
         out['реклама_итог'] = {'кликов': int(len(A)), 'людей': int((A['group'] == 'Люди').sum()), 'ботов': int((A['group'] == 'Боты').sum()),
                                'роботов': int((A['group'] == 'Роботы').sum()), 'впустую': int(_wasted(A).sum()),
                                'заявок_людей': int(AH['n_conv'].sum()), 'заявок_ботов': int(A.loc[A['group'] == 'Боты', 'n_conv'].sum())}
-        out['реклама_по_системам'] = g.agg(кликов=('ip', 'size')).join(A[A['group'] == 'Люди'].groupby('channel_sub').apply(metrics)).fillna(0).reset_index()
+        out['реклама_по_системам'] = g.agg(кликов=('ip', 'size')).join(As[As['group'] == 'Люди'].groupby('channel_sub').apply(metrics)).fillna(0).reset_index()
     return out

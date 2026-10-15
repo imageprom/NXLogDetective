@@ -164,6 +164,28 @@ def window_share(c, ipset_codes, t0, t1):
     return (inside.sum() / max(1, b - a)), int(inside.sum()), int(before)
 
 
+class VisitTotals:
+    """Итоги по визитам для дел: считаются один раз на всю таблицу визитов, дальше — выборка по ключу."""
+
+    def __init__(self, V, Vip, orgV, Vhuman):
+        self.by_ip = Vip.value_counts()   # IP → визитов
+        self.hum_org = orgV[Vhuman].value_counts()   # сеть → визитов людей
+        self.hum_no_org = int(orgV[Vhuman].isna().sum())
+        self.famc = V.assign(_f=V['fam'].astype(str), _v=V['fam_verified'].astype(str)).groupby(['_f', '_v']).size().to_dict()
+
+    def visits_of(self, ips):
+        """Визитов с этих IP."""
+        return int(self.by_ip.reindex(pd.Index(ips).unique()).fillna(0).sum())
+
+    def humans_in(self, orgs):
+        """Визитов людей из этих сетей."""
+        return int(sum(self.hum_no_org if pd.isna(o) else self.hum_org.get(o, 0) for o in orgs))
+
+    def fam(self, name, verified):
+        """Визитов с этим именем робота и этой отметкой подлинности («да» / «нет»)."""
+        return int(self.famc.get((name, verified), 0))
+
+
 def build(c, res):
     R = c.R
     P = common.ip_profile(c)
@@ -227,6 +249,9 @@ def build(c, res):
     Vip_ = V['ip'].astype(str)   # один раз на все дела: на 2,5 млн визитов это минуты на каждое дело
     orgV_ = Vip_.map(P['организация'])
     Vhuman_ = (V['group'] == 'Люди').values
+    VT = VisitTotals(V, Vip_, orgV_, Vhuman_)   # итоги по визитам — один проход на все дела, а не проход по V на каждое дело
+    from . import alarms
+    open_leaks = set(alarms.leaks_open(res))
     for key, g in C.groupby('key'):
         agg = {f: (g[f].max() if f == 'maxpm' else g[f].sum()) for f in FEATURES if f in g}
         orgs = P['организация'].reindex(g.index).replace('', np.nan).fillna(P['сеть'].reindex(g.index))
@@ -285,8 +310,7 @@ def build(c, res):
         ch.sort(key=lambda x: -x[0]['вес'])
         top = ch[0][0]
         sev = 'Срочно' if top['вес'] >= 85 else ('Важно' if top['вес'] >= 45 else 'К сведению')
-        from . import alarms
-        op_ = set(alarms.leaks_open(res))
+        op_ = open_leaks
         sev0 = sev
         leak_hit = [f_ for f_ in (op_ if agg.get('leaks') else ()) if f_ in str(ctx.get('top_leaks', ''))]
         out_hit = any('продолжается' in str(o_) for o_ in outages_hit)
@@ -301,8 +325,7 @@ def build(c, res):
         if fam:
             rule = {'вид': 'подделка', 'user_agent': fam, 'сеть_не': sorted(ipdb.VERIFIED.get(fam, []))}
             tag, sig_text = 'FAKECRAWL', f"User-Agent содержит «{fam}» И сеть не из {', '.join('AS' + str(a) for a in rule['сеть_не']) or 'сетей робота'}"
-            mm = (V['fam'].astype(str) == fam)
-            hits = int((mm & (V['fam_verified'].astype(str) == 'нет')).sum()); spared = int((mm & (V['fam_verified'].astype(str) == 'да')).sum())
+            hits, spared = VT.fam(fam, 'нет'), VT.fam(fam, 'да')
             false_ = 0; check = f'{nf(hits)} визитов; настоящий {fam} не задет ({nf(spared)} визитов)'
         else:
             asns = pd.Series(P.loc[g.index, 'организация']).value_counts().index[:3].tolist()
@@ -315,9 +338,9 @@ def build(c, res):
                 tag = {'bot:Зонды и перебор': 'SCAN', 'bot:Маскировка': 'MASK', 'bot:Явный бот': 'BOT', 'bot:без User-Agent': 'NOUA', 'bot:Спам форм': 'SPAM'}.get(key.split('|')[0], key.split(':')[0].upper())
                 from .actors import sig_label
                 sig_text = f"{'; '.join(sig_label(x_).lower() for x_ in subs[:2] if x_)} — из сети {', '.join(a_ for a_ in asns if a_) or 'без названия'}"
-            hits = int(Vip_.isin(set(g.index)).sum())
+            hits = VT.visits_of(g.index)
             own_asn = set(P.loc[g.index, 'организация'])
-            false_ = int((orgV_.isin(own_asn).values & Vhuman_).sum())
+            false_ = VT.humans_in(own_asn)
             check = f'{nf(hits)} визитов этой группы; в тех же сетях визитов людей — {nf(false_)}' + (' (сеть целиком не закрывать)' if false_ else '')
         sig_id = f"SIG-{tag}-{h6(json.dumps(rule, sort_keys=True, ensure_ascii=False))}"
         case_id = h6(site, key)
@@ -356,10 +379,12 @@ def build(c, res):
     # состав по IP
     rows = []
     ppl = common.people_ips(c)
+    all_ips = [ip for x in cases for ip in x['ips']]
+    d0, d1 = dict(zip(all_ips, common.dmy_many(F.loc[all_ips, 't0'].values))), dict(zip(all_ips, common.dmy_many(F.loc[all_ips, 't1'].values)))   # даты — один расчёт на все IP дел
     for x in cases:
         for ip in x['ips']:
             rows.append({'дело': x['дело'], 'кличка': x['кличка'], 'ip': ip, 'подсеть': subnet(ip), 'сеть': P['организация'].get(ip, ''), 'страна': P['страна'].get(ip, ''),
-                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': common.dmy(F.at[ip, 't0']), 'последний': common.dmy(F.at[ip, 't1']),
+                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': d0[ip], 'последний': d1[ip],
                          'пометка': 'есть человеческие визиты' if ip in ppl else ''})
     S = pd.DataFrame([dict(id=x['сигнатура']['id'], правило=x['сигнатура']['правило'], вид=x['вид'], дело=x['дело'], кличка=x['кличка'],
                            проверка=x['сигнатура']['проверка'], ложных=x['сигнатура']['ложных'], IP=x['состав']['IP'], запросов=x['запросов']) for x in cases])
@@ -382,8 +407,7 @@ def measures_by_ip(c, res, cases, P, F):
         rows.append(dict(ip=ip, дело=дело, кличка=кличка, подсеть=subnet(ip), сеть=P['организация'].get(ip, ''), asn=int(P['asn'].get(ip, 0)) if 'asn' in P else 0, страна=P['страна'].get(ip, ''),
                          тип_сети=P['сеть'].get(ip, ''), визитов=int(vv['визитов'].get(ip, 0)), запросов=int(F['req'].get(ip, 0)) if ip in F.index else 0,
                          отправок=int(vv['отправок'].get(ip, 0)), приговор=приговор, основание=основание,
-                         первый=common.dmy(F.at[ip, 't0']) if ip in F.index and pd.notna(F.at[ip, 't0']) else '',
-                         последний=common.dmy(F.at[ip, 't1']) if ip in F.index and pd.notna(F.at[ip, 't1']) else ''))
+                         первый='', последний=''))
     seen = set()
     ppl = common.people_ips(c)   # за IP покупатели — не блокировать и не ограничивать (STIX и CSV — из этой же таблицы)
     for x in cases:
@@ -403,6 +427,9 @@ def measures_by_ip(c, res, cases, P, F):
                      ([m_['ip'] for m_ in c.m.get('monitors', []) if isinstance(m_, dict)], 'система мониторинга')):
         for ip in ips:
             if ip not in seen: seen.add(ip); row(ip, '', '', 'не трогать', why)
+    if rows:   # даты — один расчёт на все строки; нет IP в таблице признаков или нет времени — пусто
+        Fi = F.reindex([r_['ip'] for r_ in rows])
+        for r_, a_, b_ in zip(rows, common.dmy_many(Fi['t0'].values), common.dmy_many(Fi['t1'].values)): r_['первый'], r_['последний'] = a_, b_
     D = pd.DataFrame(rows)
     if len(D): D = D.sort_values(['приговор', 'запросов'], key=lambda s_: s_.map(VERDICT_ORDER) if s_.name == 'приговор' else -s_).reset_index(drop=True)
     return D

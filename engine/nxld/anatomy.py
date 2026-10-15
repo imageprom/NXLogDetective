@@ -95,7 +95,7 @@ def build(c, res):
     junk = pages['адрес'].str.contains(r'[&;=\s]|%20|text/html', regex=True) | pages['адрес'].map(junk_path)
     pages = pages[~junk]          # битые и мусорные адреса — не часть устройства          # битые адреса — не часть устройства
     cl = pages['адрес'].map(clean_path)
-    pages['фильтр'] = [f for _, f in cl]; pages['адрес'] = [p_ for p_, _ in cl]
+    pages['фильтр'] = np.array([f for _, f in cl], dtype=bool); pages['адрес'] = [p_ for p_, _ in cl]
     flt_pages = pages[pages['фильтр']].groupby('адрес').size()
     flt_visits = pages[pages['фильтр']].groupby('адрес')['визитов'].sum()
     pages = pages.groupby('адрес', as_index=False).agg(просмотров=('просмотров', 'sum'), визитов=('визитов', 'sum'))

@@ -5,6 +5,7 @@ import numpy as np, pandas as pd
 from . import recon, ipdb
 from .recon import mask_pd
 from . import operators
+from .common import top_values
 
 KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 VULN = r'(^/\.env|/\.git/|/\.aws|/\.ssh|/\.svn|/\.DS_Store|phpinfo|/wp-login\.php|/wp-admin|/xmlrpc\.php|/wp-content/plugins|/phpmyadmin|/pma/|/adminer|/vendor/phpunit|/actuator|/cgi-bin/|/server-status|/config\.(json|yml|yaml|php)|/backup|\.(sql|bak|old|swp|tar|tar\.gz|tgz|zip|rar)$|/shell|/eval-stdin|/boaform|/HNAP1|/owa/|/autodiscover|/\.well-known/(?!acme)|/restore\.php|/bitrixsetup\.php|/install\.php|/setup\.php|/telescope|/_profiler|/debug|/console)'
@@ -619,7 +620,8 @@ def errors(c, F):
         S['Служебные файлы'] = sd.rename(columns={'base': 'адрес', 'day': 'день'})
         legit_cat = R['fam_cat'].isin(['Поисковик', 'Реклама/аналитика', 'Фиды/площадки', 'Сервисы Google']).values[sv]
         SV = SV.assign(legit=legit_cat)
-        ever_ok = SV[SV['status'] == 200].groupby('base', observed=True).size()
+        S200 = SV[SV['status'] == 200]
+        ever_ok = S200.groupby(S200['base'].astype(str)).size()   # индекс — строки: поиск по метке в индексе из категорий адресов ломается на тысячах значений
         for b, g in SV.groupby('base', observed=True):
             gl = g[g['legit']]
             if not ((len(gl) >= 10 and (gl['status'] >= 400).mean() > 0.8) or (ever_ok.get(b, 0) >= 5 and (g['status'].iloc[-max(1, len(g) // 5):] >= 400).mean() > 0.8)):
@@ -1153,7 +1155,7 @@ def bots(c, F, check_ips=()):
         used = ev[ev['учтена'].str.startswith('да')]
         kinds = Counter(k for x in used['улика'] for k in x.split('; '))
         sp404 = gv[gv['ip'].isin(core) & (gv['entry_status'] == 404)]['entry']
-        okey = sp404.value_counts().index[0] if len(sp404) else (core[0] if core else label)
+        okey = top_values(sp404, 1)[0] if len(sp404) else (core[0] if core else label)
         ops.append(dict(_key=okey, оператор=label, улики=', '.join(f'{t} ({n})' for t, n in kinds.most_common()) or '—',
                         слабые_связи_с_другими=int((~ev['учтена'].str.startswith('да')).sum()), IP_спама=len(core), IP_разведки=len(rc), сети=topn(T.reindex(sorted(grp))['org'].astype(str), 3),
                         дни=', '.join(sorted(gv['day'].unique())[:20]), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
@@ -1167,7 +1169,7 @@ def bots(c, F, check_ips=()):
     bv = V[V['group'] == 'Боты']
     bn = bv.groupby(['asn', 'nettype']).agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), подгруппы=('subgroup', lambda s: topn(s, 2))).sort_values('IP', ascending=False).reset_index()
     bn['сеть'] = bn['asn'].map(c.T.drop_duplicates('asn').set_index('asn')['org'])
-    bn['что_делать_с_адресами'] = bn['nettype'].map({'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
+    bn['что_делать_с_адресами'] = bn['nettype'].astype(str).map({'VPN/прокси-релей': 'только по поведению', 'мобильный оператор': 'не банить',
                                                     'RU провайдер доступа': 'только по поведению', 'зарубежный провайдер доступа': 'по аудитории сайта'}).fillna('по ситуации')
     bn.loc[bn['nettype'].astype(str).map(ipdb.is_dc), 'что_делать_с_адресами'] = 'можно банить подсетью'
     S['Бот-сети'] = bn.head(300)
@@ -1180,7 +1182,7 @@ def bots(c, F, check_ips=()):
             if not len(vv):
                 rows.append(dict(ip=ip, в_логе='нет', сеть=t['org'], страна=t['cc']))
                 continue
-            rows.append(dict(ip=ip, в_логе='да', сеть=t['org'], страна=t['cc'], тип_сети=t['nettype'], визитов=len(vv), запросов=int(vv['n_req'].sum()), группа=topn(vv['group'] + ' ' + vv['subgroup'], 2),
+            rows.append(dict(ip=ip, в_логе='да', сеть=t['org'], страна=t['cc'], тип_сети=t['nettype'], визитов=len(vv), запросов=int(vv['n_req'].sum()), группа=topn(vv['group'].astype(str) + ' ' + vv['subgroup'].astype(str), 2),
                              отправок=int(vv['n_goal'].sum()), принято=int(vv['n_conv'].sum()), первый=dt(vv['start'].min()), последний=dt(vv['end'].max()), входы=topn(vv['entry'], 3), UA=topn(vv['ua'].str.slice(0, 60), 2)))
         S['Проверка IP'] = pd.DataFrame(rows)
     # ИИ-роботы
@@ -1250,7 +1252,12 @@ def marketing(c, F):
     R, V, H = c.R, c.V, c.H
     S = {}
     from .marketing import metrics as stats   # одна метрика визитов на все срезы 05
-    S['Каналы подробно'] = H.groupby(['channel', 'channel_sub']).apply(stats).reset_index().sort_values('визитов', ascending=False).rename(columns={'channel': 'канал', 'channel_sub': 'источник'})
+    def by(df, keys):
+        """df.groupby(keys).apply(stats); пустой df (нет людей по каналам, рекламы…) — пустая таблица с теми же колонками, а не KeyError."""
+        if len(df): return df.groupby(keys).apply(stats)
+        idx = pd.MultiIndex.from_arrays([[] for _ in keys], names=keys) if isinstance(keys, list) else pd.Index([], name=keys)
+        return pd.DataFrame(columns=list(stats(df).index), index=idx)
+    S['Каналы подробно'] = by(H, ['channel', 'channel_sub']).reset_index().sort_values('визитов', ascending=False).rename(columns={'channel': 'канал', 'channel_sub': 'источник'})
     # воронки по целям
     gp = (R['goal'] != '').values
     P = R.loc[gp & c.human, ['goal', 'goal_success', 'vid']]
@@ -1271,8 +1278,8 @@ def marketing(c, F):
     first_seen = H.groupby('ip')['start'].transform('min')
     H2['визит'] = np.where(H2['start'] > first_seen, 'повторный', 'первый')
     for col, name in [('устройство', 'Устройства'), ('браузер_приложения', 'Встроенные браузеры'), ('hour', 'Часы'), ('weekday', 'Дни недели'), ('визит', 'Новые и повторные')]:
-        cut[name] = H2.groupby(col).apply(stats).reset_index()
-    ent = H2.groupby('вход_шаблон').apply(stats).reset_index().sort_values('визитов', ascending=False).head(200)
+        cut[name] = by(H2, col).reset_index()
+    ent = by(H2, 'вход_шаблон').reset_index().sort_values('визитов', ascending=False).head(200)
     cut['Страницы входа'] = ent
     S.update({f'Конверсии: {k}': v for k, v in cut.items()})
     # очистка по каналам
@@ -1295,17 +1302,17 @@ def marketing(c, F):
         AD = AD.join(pa)
         AD['тип_площадки'] = [placement_type(src, st_) for src, st_ in zip(AD.get('source', pd.Series('', index=AD.index)).fillna(''), AD.get('source_type', pd.Series('', index=AD.index)).fillna(''))]
         AD.loc[AD['channel_sub'] != 'Яндекс Директ', 'тип_площадки'] = AD['channel_sub']
-        S['Реклама: системы и типы площадок'] = AD.groupby(['channel_sub', 'тип_площадки']).apply(stats).reset_index().rename(columns={'channel_sub': 'система'})
+        S['Реклама: системы и типы площадок'] = by(AD, ['channel_sub', 'тип_площадки']).reset_index().rename(columns={'channel_sub': 'система'})
         for col, name in [('кампания', 'Кампании'), ('aid', 'Объявления'), ('фраза', 'Фразы'), ('source', 'Площадки'), ('region', 'Регионы'), ('device', 'Устройства (метка)')]:
             if col in AD:
-                t = AD.groupby(col).apply(stats).reset_index().sort_values('визитов', ascending=False)
+                t = by(AD, col).reset_index().sort_values('визитов', ascending=False)
                 if col == 'source':
                     t['тип'] = [placement_type(x, '') for x in t[col]]
                 S[f'Реклама: {name}'] = t.head(1000)
         AD['час'] = AD['hour']
-        S['Реклама: часы'] = AD.groupby('час').apply(stats).reset_index()
+        S['Реклама: часы'] = by(AD, 'час').reset_index()
         if 'source' in AD:
-            pl = AD.groupby('source').apply(stats)
+            pl = by(AD, 'source')
             off = pl[(pl['визитов'] >= 30) & (pl['принято'] == 0)].copy()
             off['почему'] = [f"{int(r['визитов'])} визитов, 0 заявок, уход сразу {r['мгновенный_уход_%']}%, каталог смотрели {r['смотрели_каталог_%']}%" for _, r in off.iterrows()]
             off = off.sort_values('визитов', ascending=False).reset_index()
@@ -1332,12 +1339,12 @@ def marketing(c, F):
                 F.add('Маркетинг', 'Важно', 'campaign_zero', str(r['кампания']), f"Кампания {r['кампания']}: {int(r['визитов'])} визитов и 0 заявок",
                       f"Уход сразу {r['мгновенный_уход_%']}%", 'рекламный кабинет', 'Разобрать площадки и настройки кампании', int(r['визитов']), 'Реклама: Кампании')
         # посадочные
-        lp = AD.assign(посадочная=AD['entry']).groupby(['посадочная', 'entry_status']).apply(stats).reset_index().sort_values('визитов', ascending=False)
+        lp = by(AD.assign(посадочная=AD['entry']), ['посадочная', 'entry_status']).reset_index().sort_values('визитов', ascending=False)
         S['Реклама: посадочные'] = lp.head(500)
         lerr = AD[AD['entry_status'] >= 400]
         if len(lerr):
             F.add('Маркетинг', 'Срочно', 'ad_landing_errors', 'all', f'Реклама ведёт на страницы с ошибкой: {len(lerr)} кликов',
-                  f"Коды {topn(lerr['entry_status'])}; адреса: {', '.join(lerr['entry'].value_counts().index[:5])}", 'рекламный кабинет / сайт', 'Исправить ссылки в объявлениях или страницы', len(lerr), 'Реклама: посадочные', also=('Ошибки',))
+                  f"Коды {topn(lerr['entry_status'])}; адреса: {', '.join(top_values(lerr['entry'], 5))}", 'рекламный кабинет / сайт', 'Исправить ссылки в объявлениях или страницы', len(lerr), 'Реклама: посадочные', also=('Ошибки',))
         mac = AD[AD['макрос_не_подставлен']] if 'макрос_не_подставлен' in AD else []
         lab = []
         if len(mac): lab.append(dict(проблема='Макрос не подставился ({...} в адресе)', кликов=len(mac), пример=mac['entry_query'].iloc[0][:200]))

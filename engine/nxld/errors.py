@@ -225,17 +225,22 @@ def sources(c, m):
 SRC_ORDER = ('страницы сайта', 'реклама', 'поиск', 'сайты', 'напрямую')
 
 
-def sources_text(S_b):
-    """«страницы сайта: 120 (/projects/*/flat/, /action/*) · реклама: 40 · поиск: 12 (yandex.ru) · напрямую: 5»."""
-    parts = []
-    for k in SRC_ORDER:
-        g = S_b[S_b['вид'] == k]
-        if not len(g): continue
-        n = int(g['n'].sum())
-        det = g[g['деталь'] != ''].groupby('деталь')['n'].sum().sort_values(ascending=False)
-        tail = f" ({', '.join(det.index[:2])}{' и др.' if len(det) > 2 else ''})" if len(det) else ''
-        parts.append(f'{k}: {n}{tail}')
-    return ' · '.join(parts)
+def sources_texts(Sx):
+    """{b: «страницы сайта: 120 (/projects/*/flat/, /action/*) · реклама: 40 · поиск: 12 (yandex.ru) · напрямую: 5»} — один расчёт на все адреса.
+    Детали — по числу запросов по убыванию, при равных — по алфавиту; «и др.», если деталей больше двух."""
+    if Sx is None or not len(Sx): return {}
+    Sx = Sx[Sx['вид'].isin(SRC_ORDER)]
+    if not len(Sx): return {}
+    tot = Sx.groupby(['b', 'вид'])['n'].sum()
+    D = Sx[Sx['деталь'] != ''].groupby(['b', 'вид', 'деталь'])['n'].sum().reset_index().sort_values(['b', 'вид', 'n', 'деталь'], ascending=[True, True, False, True])
+    det = {}
+    for b, k, d, _ in D.itertuples(index=False, name=None): det.setdefault((b, k), []).append(d)
+    parts = {}
+    for (b, k), n in tot.items():
+        dl = det.get((b, k))
+        tail = f" ({', '.join(dl[:2])}{' и др.' if len(dl) > 2 else ''})" if dl else ''
+        parts.setdefault(b, {})[k] = f'{k}: {int(n)}{tail}'
+    return {b: ' · '.join(p[k] for k in SRC_ORDER if k in p) for b, p in parts.items()}
 
 
 def codes_table(c):
@@ -284,7 +289,7 @@ def by_family(T, family, Sr=None):
     D['источник'] = g['источник'].agg(lambda s: next((x for x in s if x), ''))
     if Sr is not None and len(Sr):
         Sx = Sr[f(Sr['код'].values) & Sr['b'].isin(D.index)]
-        txt = {b: sources_text(gb) for b, gb in Sx.groupby('b')}
+        txt = sources_texts(Sx)
         D['источники'] = [txt.get(b, '') for b in D.index]
     D['первый'] = g['первый'].min(); D['последний'] = g['последний'].max()
     D['чужое'] = (D['зонд'] != '') | (D['форма'] == 'конструкт') & (D[['Люди', 'Свои']].sum(axis=1) == 0)
@@ -368,7 +373,7 @@ def broken(T, Sr=None):
     D['первый'] = g['первый'].min(); D['последний'] = g['последний'].max()
     if Sr is not None and len(Sr):
         Sx = Sr[Sr['b'].isin(D.index) & (Sr['код'] != 499)]
-        tx = {b: sources_text(gb) for b, gb in Sx.groupby('b')}
+        tx = sources_texts(Sx)
         D['источники'] = [tx.get(b, '') for b in D.index]
     D['починился'] = ~D['актуально']
     return D.sort_values(['критично', 'актуально', 'Люди', 'запросов'], ascending=[False, False, False, False]).reset_index(drop=True)
@@ -417,7 +422,7 @@ def summary(c, T, Sr=None):
         top = top[top['критично']].sort_values('запросов', ascending=False).head(10) if top['критично'].any() else top.sort_values('запросов', ascending=False).head(10)
         if Sr is not None and len(Sr):
             Sx = Sr[Sr['b'].isin(top.index) & (Sr['код'] != 499)]
-            tx = {b: sources_text(g) for b, g in Sx.groupby('b')}
+            tx = sources_texts(Sx)
             top['источник'] = [tx.get(b, '') for b in top.index]
         out['страницы'] = top.reset_index(drop=True)
         Fi = E[E['форма'] == 'файл']

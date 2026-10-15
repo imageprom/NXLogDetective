@@ -22,14 +22,17 @@ def cleaning_stats(R, V):
 def important_ips(c, S_bots):
     V, T = c.V, c.T.set_index('ip')
     rows = []
+    # итоги по визитам — один groupby по IP, дальше выборка по ключу
+    A = V.groupby('ip', observed=True).agg(визитов=('ip', 'size'), запросов=('n_req', 'sum'), отправок=('n_goal', 'sum'), принято=('n_conv', 'sum'), первый=('start', 'min'), последний=('end', 'max')).to_dict('index')
     def add(ips, cat, action):
         for ip in ips:
-            vv = V[V['ip'] == ip]
+            a = A.get(ip)
             t = T.loc[ip] if ip in T.index else None
             rows.append(dict(ip=ip, категория=cat, сеть=t['org'] if t is not None else '', ASN=int(t['asn']) if t is not None else 0,
                              страна=t['cc'] if t is not None else '', тип_сети=t['nettype'] if t is not None else '',
-                             визитов=len(vv), запросов=int(vv['n_req'].sum()), отправок=int(vv['n_goal'].sum()), принято=int(vv['n_conv'].sum()),
-                             первый=blocks.dt(vv['start'].min()) if len(vv) else None, последний=blocks.dt(vv['end'].max()) if len(vv) else None,
+                             визитов=int(a['визитов']) if a is not None else 0, запросов=int(a['запросов']) if a is not None else 0,
+                             отправок=int(a['отправок']) if a is not None else 0, принято=int(a['принято']) if a is not None else 0,
+                             первый=blocks.dt(a['первый']) if a is not None else None, последний=blocks.dt(a['последний']) if a is not None else None,
                              действие=action if t is None or ipdb.is_dc(t['nettype']) else ('проверить/метка' if action.startswith('бан') else action)))
     spam = V[V['subgroup'].str.startswith('спам форм')]['ip'].unique()
     add(spam, 'спам форм', 'бан')
@@ -68,7 +71,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     selected = ['Общий анализ', 'Ошибки'] + [b for b in selected if b not in ('Общий анализ', 'Ошибки')]
     log('Загрузка подготовленных таблиц')
     R = pd.read_pickle(os.path.join(workdir, 'R.pkl'))
-    V = pd.read_pickle(os.path.join(workdir, 'V.pkl'))
+    V = visits.thaw(pd.read_pickle(os.path.join(workdir, 'V.pkl')))   # на время правил изменяемые колонки — строки
     T = pd.read_pickle(os.path.join(workdir, 'T.pkl'))
     G = pd.read_pickle(os.path.join(workdir, 'G.pkl'))
     E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
@@ -91,6 +94,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
+    V = visits.freeze(V)   # правила закончились: повторяющиеся строки — категории
     c = blocks.Ctx(R, V, E, T, m, inv, G)
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
     # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе скачивания

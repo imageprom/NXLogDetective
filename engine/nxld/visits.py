@@ -181,6 +181,15 @@ def monitor_name(ua):
     return None
 
 
+def monitor_names(ua):
+    """monitor_name для колонки: регулярки считаются по разным User-Agent, не по визитам. Серия с индексом колонки."""
+    codes, uniq = pd.factorize(ua.astype(str))
+    nm = pd.Series([monitor_name(u) for u in uniq])   # тип — как у списка по визитам
+    out = nm.take(codes)
+    out.index = ua.index
+    return out
+
+
 def learn_monitors(items, site=''):
     """Запись Детектива: [{сервис, шаблон, ссылка}] → learned/monitors.json (без ссылки не принимается)."""
     import json, os
@@ -217,6 +226,31 @@ def robot_ranges():
         except Exception:
             _RANGES = {}
     return _RANGES
+
+
+def _is_text(s):
+    return pd.api.types.is_string_dtype(s.dtype) or s.dtype == object
+
+
+def thaw(V):
+    """Категории → обычные строки. На время правил группировки V (mark_*, regroup…) колонки — строки: правила дописывают в group и subgroup
+    любые новые значения (V.loc[mask, 'subgroup'] = …), у категории же значение должно быть в списке заранее, и сворачивают колонки списками."""
+    V = V.copy()
+    for c in V.columns:
+        if isinstance(V[c].dtype, pd.CategoricalDtype): V[c] = V[c].astype(str)
+    return V
+
+
+NOT_CATEGORY = ('day', 'ip')   # day: по колонке берут min/max; ip: сворачивают в set и list (у категории так нельзя); IP разных много — выигрыш мал
+
+
+def freeze(V):
+    """Повторяющиеся строковые колонки (ua, entry, nettype, channel, group, subgroup, fam…) → категории: меньше памяти, результаты те же.
+    Колонка, где разных значений половина и больше, остаётся строкой (категория выигрыша не даёт)."""
+    V = V.copy()
+    for c in V.columns:
+        if c not in NOT_CATEGORY and _is_text(V[c]) and V[c].nunique() < 0.5 * len(V): V[c] = V[c].astype('category')
+    return V
 
 
 def reverify(R, V):
@@ -283,7 +317,7 @@ def regroup(V, R=None):
         n_addr = V.groupby(key)['entry'].nunique()
     addr = key.map(n_addr).fillna(1).values
     MX = monitors_ref()['max_addr']
-    named = pd.Series([monitor_name(u) for u in V['ua'].astype(str)], index=V.index)
+    named = monitor_names(V['ua'])
     by_name = ((V['fam'] != '') & (V['fam_cat'] == 'Мониторинг')) | named.notna()
     by_name &= V['group'].isin(['Роботы', 'Люди', 'Боты', 'Системы мониторинга']) & (V['subgroup'] != 'сотрудники')
     rhythm = V['subgroup'].isin(['мониторинги', 'неопознанный мониторинг'])

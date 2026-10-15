@@ -195,6 +195,28 @@ def dmy(ts):
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m.%Y %H:%M')
 
 
+def plain(df):
+    """Срез таблицы визитов без категорий: категориальные колонки → строки. Поиск по метке в индексе, построенном из категории
+    (groupby по entry, ua…, затем .get, .loc, in), у категорий с тысячами значений ломается (OverflowError на узких кодах) — ключи группировки должны быть строками."""
+    cat = [c_ for c_ in df.columns if isinstance(df[c_].dtype, pd.CategoricalDtype)]
+    return df.astype({c_: str for c_ in cat}) if cat else df
+
+
+def top_values(s, n):
+    """n самых частых значений колонки: при равных числах — в порядке первого появления, значения без записей не попадают в список.
+    value_counts по категории иначе: равные числа — по порядку категорий, а категории с нулём записей идут в конец списка."""
+    return list(s.astype(object).value_counts().index[:n])
+
+
+def dmy_many(values, na=''):
+    """dmy для всей колонки сразу: список строк той же формы «16.09.2026 14:08»; пустое значение — na."""
+    v = pd.Series(np.asarray(values, dtype='float64') if len(values) else [], dtype='float64')
+    ok = v.notna().values
+    out = np.full(len(v), na, dtype=object)
+    if ok.any(): out[ok] = pd.to_datetime(v.values[ok].astype('int64'), unit='s').strftime('%d.%m.%Y %H:%M')
+    return out.tolist()
+
+
 def episode_id(ts):
     """Код эпизода по времени начала — как у сбоев: «27.09 22:25»."""
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m %H:%M')

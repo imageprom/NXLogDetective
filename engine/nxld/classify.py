@@ -62,8 +62,18 @@ def ext_of(path):
     return m.group(1).lower() if m else ''
 
 
+_FORM = {}   # адрес → результат form_of: один адрес считается один раз, сколько бы мест его ни спрашивало
+
+
 def form_of(path):
-    """(форма, группа, расширение, расширение_незнакомое) по виду адреса."""
+    """(форма, группа, расширение, расширение_незнакомое) по виду адреса. Результат по адресу запоминается до смены справочника расширений."""
+    k = str(path)
+    r = _FORM.get(k)
+    if r is None: r = _FORM[k] = _form_of(k)
+    return r
+
+
+def _form_of(path):
     global _EXT
     if _EXT is None: _EXT = load_extensions()
     p = re.sub(r'^https?://[^/]+', '', str(path)) or '/'   # абсолютная форма запроса (GET http://сайт/путь) — законна
@@ -162,4 +172,5 @@ def learn_extensions(items, site=''):
         json.dump(L, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
         global _EXT
         _EXT = None
+        _FORM.clear()
     return ok

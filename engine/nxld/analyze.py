@@ -113,7 +113,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     site_ = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
     if site_.all(): cs = c
     else:
-        Rs, Vs = R[site_], V[V['host_site'].astype(bool)] if 'host_site' in V else V
+        Vs = V[V['host_site'].astype(bool)].copy()
+        Rs = R[site_].reset_index(drop=True)
+        Rs['vid'] = pd.Series(np.arange(len(Vs)), index=Vs.index).reindex(Rs['vid'].values).values.astype(R['vid'].dtype)   # номера визитов подряд: блоки берут визит по номеру как позицию
+        Vs.index = pd.RangeIndex(len(Vs), name=V.index.name)
         cs = blocks.Ctx(Rs, Vs, E, T, m, inv, G)
         cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
     Rs = cs.R

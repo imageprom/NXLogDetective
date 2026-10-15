@@ -153,7 +153,7 @@ def run(paths, workdir, log=print, map_override=None):
     fkey = pd.Series(R['tpl'].astype(str).values + np.where(fq != '', '?form=' + fq, ''), index=R.index)
     from . import orders as orders_, reference
     spec = reference.engine_orders([e.get('движок') for e in engines.to_dict('records')])   # заказы магазина — по справочнику найденных движков (#22)
-    is_goal = post & fkey.isin(list(rules.keys())).values & ~orders_.not_goals(R, spec)   # шаги оформления, проверка подписки, кабинет и админка — не цели
+    is_goal = post & fkey.isin(list(rules.keys())).values & ~orders_.not_goals(R, spec) & R['host_site'].values   # к хостам вне сайта цели не считаются (#23); шаги оформления, проверка подписки, кабинет и админка — не цели
     succ = np.zeros(len(R), dtype=bool)
     for k, rule in rules.items():
         m = is_goal & (fkey.values == k)
@@ -161,7 +161,7 @@ def run(paths, workdir, log=print, map_override=None):
         else: succ |= m & (R['status'].values == 200)
     goal = np.where(is_goal, fkey.values, '').astype(object)
     is_order = np.zeros(len(R), dtype=bool)
-    pos, ids = orders_.first_orders(R, spec)   # заказ — один раз: в визите, где номер встретился впервые (V.n_conv — число таких номеров)
+    pos, ids = orders_.first_orders(R, spec, R['host_site'].values)   # заказ — один раз: в визите, где номер встретился впервые (V.n_conv — число таких номеров)
     if len(pos):
         goal[pos] = R['tpl'].astype(str).values[pos]; is_goal[pos] = True; succ[pos] = True; is_order[pos] = True
     site_map['orders'] = dict(движки=spec['движки'], заказов=len(pos), to_verify=spec['to_verify'])

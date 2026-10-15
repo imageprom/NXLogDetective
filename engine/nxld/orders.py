@@ -27,7 +27,7 @@ def steps(R, spec):
     return _rows(R, spec.get('order_steps'))
 
 
-def first_orders(R, spec):
+def first_orders(R, spec, site=None):
     """Индексы строк R (позиции), в которых номер заказа встретился впервые, и сами номера. Успех — ответ 2xx/3xx на странице успеха оформления."""
     pos, ids = [], []
     seen = set()
@@ -36,6 +36,7 @@ def first_orders(R, spec):
     bcodes = R['base'].cat.codes.values
     for k, e in enumerate(spec.get('order_success') or []):
         m = _rows(R, [e['path']]) & (R['status'].values < 400)
+        if site is not None: m &= site   # заказы на хостах вне сайта не считаются
         if not m.any(): continue
         idx = np.flatnonzero(m)
         if e.get('param'):

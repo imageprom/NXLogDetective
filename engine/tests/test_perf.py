@@ -186,3 +186,14 @@ def test_monitor_names_per_unique_ua(monkeypatch):
     pd.testing.assert_series_equal(got, expect)
     assert len(calls) == 5, len(calls)   # по разным User-Agent, не по визитам
 
+
+def test_form_of_once_per_address(monkeypatch):
+    paths = [f'/catalog/item{i % 40}/' for i in range(400)] + ['/upload/a.jpg', '/.env', '/x.php']
+    expect = [classify._form_of(p) for p in paths]
+    classify._FORM.clear()
+    calls = []
+    orig = classify._form_of
+    monkeypatch.setattr(classify, '_form_of', lambda p: (calls.append(p), orig(p))[1])
+    for _ in range(3): got = [classify.form_of(p) for p in paths]
+    assert got == expect
+    assert len(calls) == len(set(paths)), (len(calls), len(set(paths)))

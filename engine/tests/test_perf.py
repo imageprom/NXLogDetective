@@ -221,7 +221,8 @@ def _sheet(df):
                          row_rule=row_rule, font_rule=font_rule, red=('Доля',)), (fill_rule, bold_rule, row_rule, font_rule)
 
 
-def test_data_sheet_cell_styles_as_before():
+def test_data_sheet_cell_styles_as_before(monkeypatch):
+    monkeypatch.delenv('NXLD_STRICT_CATALOG', raising=False)   # лист «Тест» вне каталога
     """Оформление каждой ячейки данных — по прежним правилам (шрифт, выравнивание, формат, граница, заливка)."""
     df = _sheet_df()
     ws, (fill_rule, bold_rule, row_rule, font_rule) = _sheet(df)
@@ -249,6 +250,7 @@ def test_data_sheet_cell_styles_as_before():
 
 
 def test_data_sheet_style_objects_not_per_cell(monkeypatch):
+    monkeypatch.delenv('NXLD_STRICT_CATALOG', raising=False)   # лист «Тест» вне каталога
     """Шрифты и заливки создаются по числу разных стилей, а не по числу ячеек."""
     made = {'Font': 0, 'PatternFill': 0, 'Alignment': 0, 'Border': 0}
     for nm in made:

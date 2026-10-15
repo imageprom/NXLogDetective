@@ -5,7 +5,7 @@ import numpy as np, pandas as pd
 from . import recon, ipdb
 from .recon import mask_pd
 from . import operators
-from .common import top_values
+from .common import top_values, dmy
 
 KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 VULN = r'(^/\.env|/\.git/|/\.aws|/\.ssh|/\.svn|/\.DS_Store|phpinfo|/wp-login\.php|/wp-admin|/xmlrpc\.php|/wp-content/plugins|/phpmyadmin|/pma/|/adminer|/vendor/phpunit|/actuator|/cgi-bin/|/server-status|/config\.(json|yml|yaml|php)|/backup|\.(sql|bak|old|swp|tar|tar\.gz|tgz|zip|rar)$|/shell|/eval-stdin|/boaform|/HNAP1|/owa/|/autodiscover|/\.well-known/(?!acme)|/restore\.php|/bitrixsetup\.php|/install\.php|/setup\.php|/telescope|/_profiler|/debug|/console)'
@@ -25,12 +25,15 @@ def topn(s, n=3):
 class Ctx:
     """Общие данные для блоков."""
 
-    def __init__(self, R, V, E, T, site_map, inv, G=None):
+    def __init__(self, R, V, E, T, site_map, inv, G=None, E_srv=None):
         R['day'] = R['day'].cat.reorder_categories(sorted(R['day'].cat.categories)).cat.as_ordered()
         self.R, self.V, self.E, self.T, self.m, self.inv, self.G = R, V, E, T, site_map, inv, G
+        self.E_srv = E if E_srv is None else E_srv   # error-лог всего сервера (без копий): сбои и признаки торможения; E — для 02 только хосты сайта
         gc = pd.Categorical(V['group'].values)
         sc = pd.Categorical(V['subgroup'].values)
         vid = R['vid'].values
+        if not (len(V) and V.index.is_monotonic_increasing and V.index[0] == 0 and V.index[-1] == len(V) - 1):   # срез визитов (только сайт): номера визитов не подряд
+            vid = V.index.get_indexer(vid)
         self.rg = pd.Categorical.from_codes(gc.codes[vid], categories=gc.categories)
         self.rsub = pd.Categorical.from_codes(sc.codes[vid], categories=sc.categories)
         self.human = np.asarray(self.rg == 'Люди')
@@ -210,10 +213,39 @@ def overview(c, F):
         F.add('Общий анализ', 'Срочно', 'bot_leads', 'all', f'Среди принятых заявок {len(bot_ok)} от ботов',
               f"{len(bot_ok)} принятых отправок с {bot_ok['ip'].nunique()} IP; последняя {bot_ok['время'].max()}. Примеры IP: {', '.join(bot_ok['ip'].astype(str).unique()[:8])}",
               'защита форм (код сайта), CRM', 'Отсеять эти заявки у менеджеров; поставить защиту форм', len(bot_ok), 'Конверсии', also=('Боты',))
-    lost = P[(P['группа'] == 'Люди') & (P['status'] >= 400) & (P['status'] != 499)]
-    if len(lost):
-        F.add('Общий анализ', 'Срочно' if (lost['status'] >= 500).any() else 'Важно', 'lost_leads', 'all', f'{len(lost)} отправок людей получили ошибку сервера',
-              f"Коды: {topn(lost['status'])}; цели: {topn(lost['goal'])}", 'код сайта', 'Проверить обработчики форм', len(lost), 'Конверсии', also=('Ошибки',))
+    is_ord = R['is_order'].values[gp] if 'is_order' in R else np.zeros(len(P), bool)   # заказ с ошибкой на странице успеха — не потеря: заказ создан (карточка order_page_error)
+    lost = P[(P['группа'] == 'Люди') & (P['status'] >= 400) & (P['status'] != 499) & ~is_ord]
+    ended, steps_err = 0, 0
+    if 'order_step' in R and R['order_step'].any():   # ошибка на шаге оформления — не потеря, если с того же IP номер заказа появился в окне после ошибки (#24)
+        from .thresholds import value
+        win = int(float(value('lost_order_window_hours', 3)) * 3600)
+        err = R['order_step'].values & c.human & (R['status'].values >= 400) & (R['status'].values != 499)
+        ipc, ts = R['ip'].cat.codes.values.astype(np.int64), R['ts'].values.astype(np.int64)
+        okeys = np.sort(ipc[R['is_order'].values] * (1 << 32) + ts[R['is_order'].values])
+        steps_err = int(err.sum())
+        if steps_err and len(okeys):
+            lo = np.searchsorted(okeys, ipc[err] * (1 << 32) + ts[err], 'right')   # заказы того же IP строго позже ошибки
+            hi = np.searchsorted(okeys, ipc[err] * (1 << 32) + ts[err] + win, 'right')
+            ended = int((hi > lo).sum())
+        lost_steps = steps_err - ended
+    else:
+        lost_steps = 0
+    if len(lost) or lost_steps:
+        n_lost = len(lost) + lost_steps
+        sev5 = (lost['status'] >= 500).any() or (steps_err > ended and bool((R['status'].values[err] >= 500).any()))
+        facts = f"Коды: {topn(lost['status'])}; цели: {topn(lost['goal'])}" if len(lost) else 'Оформление заказа: ошибки на шагах'
+        if steps_err:
+            facts = f"Ошибок всего {len(lost) + steps_err}, из них закончились заказом {ended}, без заказа {n_lost}. " + facts
+        F.add('Общий анализ', 'Срочно' if sev5 else 'Важно', 'lost_leads', 'all', f'{n_lost} отправок людей получили ошибку сервера',
+              facts, 'код сайта', 'Проверить обработчики форм', n_lost, 'Конверсии', also=('Ошибки',))
+    if 'is_order' in R and R['is_order'].any():   # заказ создан, а страница успеха ответила ошибкой (B1, #22)
+        bad = R[R['is_order'].values & (R['status'].values >= 400)]
+        if len(bad):
+            from . import texts
+            codes = ', '.join(f'{k} ({v})' for k, v in bad['status'].astype(int).value_counts().sort_index().items())
+            kw = dict(n=len(bad), total=int(R['is_order'].sum()), codes=codes, first=dmy(bad['ts'].min()), last=dmy(bad['ts'].max()))
+            F.add('Общий анализ', 'Срочно', 'order_page_error', 'all', texts.fmt('order_page_error', 'title', **kw), texts.fmt('order_page_error', 'facts', **kw),
+                  texts.fmt('order_page_error', 'where'), texts.fmt('order_page_error', 'action'), len(bad), 'Конверсии')
     if c.inv.get('hour_gaps'):
         F.add('Общий анализ', 'Важно', 'gaps', 'log', f"В логе пропущено {len(c.inv['hour_gaps'])} часов",
               ', '.join(c.inv['hour_gaps'][:10]), 'сервер / ротация логов', 'Проверить, были ли сбои или потеря логов', len(c.inv['hour_gaps']), 'О данных')
@@ -500,7 +532,7 @@ def errors(c, F):
     K['кто'] = WHO[K['w']]
     S['Коды ответа'] = K.pivot_table(index='код', columns='кто', values='n', fill_value=0).reset_index()
     # сбои: пик (страницы массово отдают 5xx) и деградация вокруг него (доля 5xx+499 в разы выше обычной для этого часа или провал трафика)
-    S['Сбои'], outages = outage_windows(R, st, c.E)
+    S['Сбои'], outages = outage_windows(R, st, c.E_srv)
     for w in outages:
         if w['пик_минут'] >= 2 and w['страниц_с_5xx'] >= 10:
             deg = f"деградация {str(w['деградация_с'])[:16]}–{str(w['деградация_по'])[11:16]}, " if w['деградация_с'] != w['начало'] or w['деградация_по'] != w['конец'] else ''
@@ -1122,11 +1154,8 @@ def bots(c, F, check_ips=()):
         S['Явные боты'] = ex.groupby('ua').agg(визитов=('ip', 'size'), IP=('ip', 'nunique'), запросов=('n_req', 'sum'), сети=('nettype', lambda s: topn(s, 2))).sort_values('запросов', ascending=False).head(300).reset_index()
     # маскирующиеся: классы по визиту
     B = V[(V['group'] == 'Боты') | ((V['group'] == 'Люди') & (V['n_goal'] > 0))].copy()
-    cls = np.full(len(B), '', dtype=object)
-    e404 = (B['entry_status'] == 404) & (B['entry_ref'] == '-')
-    cls = np.where((B['n_goal'] > 0) & (B['n_pages'] == 0), 'спам форм: отправка без просмотра страниц', cls)
-    cls = np.where((B['n_goal'] > 0) & e404 & (B['n_pages'] <= 4) & (cls == ''), 'спам форм: битый адрес → главная → форма', cls)
-    cls = np.where((B['n_goal'] >= 3) & (B['dur'] < 120) & (cls == ''), 'спам форм: пачка отправок', cls)
+    st_ = B['subgroup'].astype(str)
+    cls = np.where(st_.str.startswith('спам форм').values, st_.values, '')   # спам форм — одно правило для всех листов: V.subgroup из visits.mark_form_spam
     cls = np.where((B['n_pages'] >= 10) & (B['n_static'] == 0) & (cls == ''), 'парсер страниц', cls)
     cls = np.where(B['ua'].str.contains('HeadlessChrome|Puppeteer|Playwright|PhantomJS|Lightpanda', regex=True) & (cls == ''), 'headless', cls)
     cls = np.where((B['subgroup'] == 'маскирующиеся: без загрузки ресурсов') & (cls == ''), 'без загрузки ресурсов', cls)
@@ -1158,7 +1187,7 @@ def bots(c, F, check_ips=()):
         okey = top_values(sp404, 1)[0] if len(sp404) else (core[0] if core else label)
         ops.append(dict(_key=okey, оператор=label, улики=', '.join(f'{t} ({n})' for t, n in kinds.most_common()) or '—',
                         слабые_связи_с_другими=int((~ev['учтена'].str.startswith('да')).sum()), IP_спама=len(core), IP_разведки=len(rc), сети=topn(T.reindex(sorted(grp))['org'].astype(str), 3),
-                        дни=', '.join(sorted(gv['day'].unique())[:20]), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
+                        дни=', '.join(sorted(gv['day'].unique())[:20]), дней=int(gv['day'].nunique()), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
                         битые_входы=', '.join(sorted(set(gv.loc[gv['entry_status'] == 404, 'entry']))[:6]), адреса_спама=', '.join(core), адреса_разведки=', '.join(rc)))
     S['Операторы'] = pd.DataFrame(ops).drop(columns='_key', errors='ignore')
     for o in ops:
@@ -1262,8 +1291,13 @@ def marketing(c, F):
     gp = (R['goal'] != '').values
     P = R.loc[gp & c.human, ['goal', 'goal_success', 'vid']]
     emb = set(e['шаблон'] for e in c.m.get('embedded_templates', []))
+    from . import orders as orders_, reference
+    spec_ = reference.site_orders(reference.engine_orders((c.m.get('orders') or {}).get('движки') or []), c.m)   # поправки карты (своя корзина, свой обработчик действий) — поверх справочника движка
+    S['Воронка заказа'] = orders_.funnel(R, V, spec_)   # магазин: вместо строк «Заказ» — воронка по визитам людей (B2, #22); не магазин — None
+    order_goals = set(R.loc[R['is_order'].values, 'goal'].astype(str)) if S['Воронка заказа'] and 'is_order' in R else set()   # строки «Заказ» заменяет воронка заказа
     fun = []
     for gname, g in P.groupby('goal', observed=True):
+        if str(gname) in order_goals: continue
         tplname = str(gname).split('?')[0]
         preloaded = tplname in emb
         fun.append(dict(цель=gname, визитов_людей=len(H), открыли_форму='не считается: форма грузится с каждой страницей' if preloaded else '', отправили_визитов=g['vid'].nunique(),

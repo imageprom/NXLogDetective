@@ -87,9 +87,16 @@ def build(res, c, prev=None):
     if last.hour < 23: caveats.append(f'лог заканчивается {last:%d.%m в %H:%M}, последний день неполный')
     if inv.get('hour_gaps'): caveats.append(f"пропуски в логе: {', '.join(inv['hour_gaps'][:5])}")
     if not inv.get('errors_lines'): caveats.append('error-лога нет: причины 5xx по нему не проверялись')
+    of_ = ((res.get('sheets') or {}).get('Маркетинг') or {}).get('Воронка заказа')
+    if of_ and not of_.get('действия_определены'):   # своя корзина или свой обработчик: адрес нужно указать в поправках карты
+        caveats.append('воронка заказа: обработчик действий с товаром (корзина, избранное, сравнение) не определён — укажите его адрес в поправках карты (product_action) и перезапустите prepare')
+    for f_ in res.get('сбои_блоков', []): caveats.append(f"блок «{f_['блок']}» не построен: {f_['причина']}")
     B = {'проверка': dict(сайт=(m.get('site_hosts') or ['?'])[0], другие_хосты=(m.get('site_hosts') or [])[1:], период=[p0, p1], дней=days,
                           строк_access=inv.get('requests'), строк_error=inv.get('errors_lines'), блоки=res['selected'],
-                          тип='повторная' if prev else 'первичная', прошлая_проверка=(prev or {}).get('period'), оговорки=caveats)}
+                          тип='повторная' if prev else 'первичная', прошлая_проверка=(prev or {}).get('period'), оговорки=caveats,
+                          сбои_блоков=res.get('сбои_блоков', []))}   # блоки, которые не удалось построить, и почему
+    off_ = m.get('off_site') or {}
+    if off_.get('хостов'): B['проверка']['хосты_вне_сайта'] = off_   # запросы к копиям, IP-хосту и подобранным именам: исключены из сайта (01, 02, 05, 06), учтены в 03 и 04
     # --- портрет сайта
     H = V[V['group'] == 'Люди']
     O = S.get('Общий анализ', {})

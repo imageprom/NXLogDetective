@@ -66,6 +66,26 @@ def restatus_late(prev, items, thr=STATUS_THRESHOLD):
         x['статус_вид'] = vid
 
 
+def _cut(R, V, rmask, vmask):
+    """Срез запросов и визитов с номерами визитов подряд (блоки берут визит по номеру как позицию). Без отсева — те же таблицы."""
+    rmask, vmask = np.asarray(rmask, bool), np.asarray(vmask, bool)
+    if rmask.all() and vmask.all(): return R, V
+    Vn = V[vmask].copy()
+    Rn = R[rmask].reset_index(drop=True)
+    Rn['vid'] = pd.Series(np.arange(len(Vn)), index=Vn.index).reindex(Rn['vid'].values).values.astype(R['vid'].dtype)
+    Vn.index = pd.RangeIndex(len(Vn), name=V.index.name)
+    Rn['ip'] = Rn['ip'].cat.remove_unused_categories()   # IP срезанных запросов не остаются в таблице IP: признаки по IP и профиль строятся по одному набору
+    return Rn, Vn
+
+
+def block_failed(res, log, name, exc):
+    """Сбой расчёта блока не молчит: строка в журнале запуска и запись в выжимке (brief → проверка → сбои_блоков), с причиной."""
+    import traceback; traceback.print_exc()
+    why = f'{type(exc).__name__}: {exc}'
+    log(f'Блок не построен: «{name}» — {why}')
+    res.setdefault('сбои_блоков', []).append({'блок': name, 'причина': why})
+
+
 def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     selected = selected or BLOCKS
     selected = ['Общий анализ', 'Ошибки'] + [b for b in selected if b not in ('Общий анализ', 'Ошибки')]
@@ -94,13 +114,38 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
-    V = visits.freeze(V)   # правила закончились: повторяющиеся строки — категории
-    c = blocks.Ctx(R, V, E, T, m, inv, G)
+    # тип хоста посчитан в prepare (R.host_site). Визиты к хостам вне сайта прошли все обычные правила, как визиты к сайту (сканеры, боты, роботы, утилиты, мониторинг…).
+    # Кто остался «Людьми» на хосте вне сайта — не выводится нигде в отчёте (только счёт в журнале и выжимке); распознанные идут в 03 и 04.
+    # «Сайт» (cs): 01, 02, 05, 06 — запросы только к сайту; «всё» (c): 03, 04 — сайт и распознанные запросы к хостам вне сайта.
+    site_r = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
+    site_v = V['host_site'].astype(bool) if 'host_site' in V else pd.Series(True, index=V.index)
+    unrec_v = ~site_v & (V['group'] == 'Люди')   # нераспознанные визиты на хостах вне сайта
+    hide_r = unrec_v.reindex(R['vid'].values).values
+    m['off_site'] = dict(m.get('off_site') or {}, не_распознано_визитов=int(unrec_v.sum()))
+    if m['off_site'].get('запросов'): log(f"Хосты вне сайта: запросов {m['off_site']['запросов']:,}, из них не распознано {int(unrec_v.sum()):,} визитов (в отчёт не входят)")
+    from . import hosts as hosts_
+    E_02, E_srv, n_e02, n_ecopy = hosts_.split_error_log(E, m.get('hosts') or [])   # 02 — error-лог только хостов сайта; сбои и торможение — весь сервер без копий
+    m['off_site'].update(error_log_не_вошло_в_02=n_e02, error_log_копии=n_ecopy)
+    if n_e02 or n_ecopy: log(f'Error-лог: в 02 не вошло {n_e02:,} строк с хостов вне сайта, из них копии на других доменах — {n_ecopy:,}')
+    ip_stats = hosts_.ip_host_stats(R, V, m.get('hosts') or [])   # обращения по IP сервера — для карточки в 03 (считаются до среза: нераспознанные тоже обращались)
+    Rc, Vc = _cut(R, V, ~hide_r, ~unrec_v)
+    R, V = Rc, visits.freeze(Vc)   # правила закончились: повторяющиеся строки — категории
+    c = blocks.Ctx(R, V, E_02, T, m, inv, G, E_srv=E_srv)
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
-    # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе скачивания
-    # того же бэкапа чужими не считались бы утечкой и не шли бы в дела
+    # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе он считался бы утечкой и шёл бы в дела
     c.addr = classify.build(R, c.human, np.asarray((c.rg == 'Свои') & (np.asarray(c.rsub) != 'скачал бэкап')), engines_)
+    s_r = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
+    if s_r.all(): cs = c
+    else:
+        Rs, Vs = _cut(R, V, s_r, V['host_site'].astype(bool))
+        cs = blocks.Ctx(Rs, Vs, E_02, T, m, inv, G, E_srv=E_srv)
+        cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
+    Rs = cs.R
     F = Findings()
+    if ip_stats and 'Нагрузка и безопасность' in selected:   # сервер отвечает на обращения по IP переадресацией или страницей (тексты — data/locale/<язык>/cards.json)
+        from . import texts
+        F.add('Нагрузка и безопасность', 'Важно', 'ip_host_redirect', 'all', texts.fmt('ip_host_redirect', 'title', **ip_stats), texts.fmt('ip_host_redirect', 'facts', **ip_stats),
+              texts.fmt('ip_host_redirect', 'where'), texts.fmt('ip_host_redirect', 'action'), ip_stats['n'], '')
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
            'mobile_share': round(float(V.loc[V['group'] == 'Люди', 'ua_mobile'].mean()) * 100, 1) if (V['group'] == 'Люди').any() else None,
@@ -108,10 +153,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
            'backups': backups_,   # скачанные бэкапы: кто, что, вывод и улики за обе версии (profiles дописывает снятые обвинения)
            'suspects': V.loc[V['group'] == 'Подозрительные лица', ['ip', 'ua', 'start', 'subgroup', 'evidence_people', 'evidence_bot']].reset_index(drop=True)
            if 'evidence_people' in V else pd.DataFrame()}   # «Подозрительные лица»: улики за людей и за бота   # страна основной аудитории и доля людей из неё — на сводку 01
-    fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
+    fn = {'Общий анализ': lambda: blocks.overview(cs, F), 'Ошибки': lambda: blocks.errors(cs, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
-          'Маркетинг': lambda: blocks.marketing(c, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)
-    c.selected = tuple(selected)   # карточки блока, которого нет в отчёте, — в соседний выбранный (серверный фильтр)
+          'Маркетинг': lambda: blocks.marketing(cs, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)
+    c.selected = cs.selected = tuple(selected)   # карточки блока, которого нет в отчёте, — в соседний выбранный (серверный фильтр)
     for b in BLOCKS:
         if b in selected or b == 'Боты':   # боты считаем всегда: нужны для листа IP и спама форм
             log(f'Блок: {b}')
@@ -120,7 +165,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
     from . import actors
-    res['actors'] = actors.build(c)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
+    res['actors'] = actors.build(c)   # реестр обращающихся: все запросы — для листов 04 (роботы, утилиты, мониторинг, виды ботов)
+    res['actors_site'] = actors.build(cs) if cs is not c else None   # и только запросы к сайту — для сводки «Активность» (01)
     # незнакомые системы мониторинга (имя не из справочника) — Детективу: найти сервис и записать (edits.json → «мониторинги»)
     mv_ = V[V['group'] == 'Системы мониторинга']
     res['unknown_monitors'] = [dict(имя=str(sg), user_agent=str(g['ua'].iloc[0])[:200], IP=int(g['ip'].nunique()), визитов=len(g))
@@ -133,7 +179,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
                   f"проверяет {r_['проверяет']} примерно раз в {int(r_['интервал'] or 0) // 60} мин; {int(r_['запросов'])} запросов; коды: {r_['коды']}",
                   'хостинг, мониторинги компании', 'Выяснить, чья это система: если своя — отметить как норму; если чужая — решить, нужна ли она', int(r_['запросов']), '')
     from . import errors as errors_
-    res['errors'] = errors_.build(c, res['sheets'].get('Ошибки', {}).get('Сбои'))   # «адрес × код», журнал и сводка ошибок — для файла 02
+    res['errors'] = errors_.build(cs, res['sheets'].get('Ошибки', {}).get('Сбои'))   # «адрес × код», журнал и сводка ошибок — для файла 02
     lk = getattr(c, 'leaks', None)   # служебные файлы, отданные посторонним (03): подсветка в «Файлах» и «Анатомии»
     res['leaks'] = [] if lk is None else [dict(файл=str(r['base']), ответов=int(r['ответов_200']), IP=int(r['IP']), размер=float(r['размер'])) for _, r in lk.iterrows()]
     # GET-отправки — в «Нагрузку и безопасность» (03), рядом с карточкой о персональных данных
@@ -183,9 +229,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['prev_period'] = prev.get('period')
         res['prev_format'] = prev.get('format')   # /1 или /2: от формата зависит, что можно сравнить
     try:
-        res['site_profile'] = profile.detect(c, res.get('site_map') or {})
+        res['site_profile'] = profile.detect(cs, res.get('site_map') or {})
     except Exception as e:
         res['site_profile'] = {'назначение': 'не определено', 'ошибка': str(e)}
+        block_failed(res, log, 'Профиль сайта', e)
     findings_meta.proofs(c, F.items, res['sheets'])
     flood_circumstance(F.items, res['sheets'])
     findings_text.humanize(F.items, res['sheets'], res['summary'])
@@ -196,11 +243,11 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         if isinstance(x, dict) and 'сигнал' in x: x['сигнал'] = findings_text.tidy(x['сигнал'])
     sp = res.get('site_profile') or {}
     if isinstance(sp.get('признаки'), list): sp['признаки'] = [findings_text.tidy(t) for t in sp['признаки']]
-    res['query_params'] = getattr(c, 'query_params', None)
+    res['query_params'] = getattr(cs, 'query_params', None)
     from .thresholds import Sizes
     T_ = Sizes(визиты=int((V['group'] == 'Люди').sum()), запросы=len(R), ip=int(R['ip'].nunique()))   # пороги — доли от размера лога
     try:
-        res['files'] = recon.files_inventory(R, T=T_, addr=c.addr, people=c.human | np.asarray(c.rg == 'Свои')).to_dict('records')
+        res['files'] = recon.files_inventory(Rs, T=T_, addr=cs.addr, people=cs.human | np.asarray(cs.rg == 'Свои')).to_dict('records')
         T_c = res['errors']['коды']
         if len(T_c):   # «Файлы с ошибками» — тот же расчёт, что «Файлы», на файлах, которым хоть раз ответили 4xx/5xx
             # поломка — файл, на который ссылаются: страницы сайта, реклама, другие сайты. Просят только напрямую — перебор или
@@ -209,28 +256,29 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             fb = set(T_c.loc[(T_c['форма'] == 'файл') & (T_c['код'] != 499), 'b'])
             linked = set(Sr_.loc[Sr_['вид'].isin(['страницы сайта', 'реклама', 'сайты', 'поиск']), 'b']) if Sr_ is not None and len(Sr_) else set()
             OPT_ = classify.optional_files()[0]   # необязательные стандартные файлы — справочник extensions.json, «optional_files»
-            A_c = c.addr
+            A_c = cs.addr
             from_site = set(Sr_.loc[Sr_['вид'] == 'страницы сайта', 'b']) if Sr_ is not None and len(Sr_) else set()
             opt = {b for b in fb - from_site if re.search(OPT_, str(A_c['адрес'].values[b]))}   # нужны не сайту, а роботам и нейросетям
             eb = (fb & linked) - opt
             res['files_optional'] = sorted(str(A_c['адрес'].values[b]) for b in opt)
-            Rm = np.isin(R['base'].cat.codes.values, list(eb))
-            res['files_errors'] = recon.files_inventory(R[Rm], min_req=1, T=T_, addr=c.addr, people=(c.human | np.asarray(c.rg == 'Свои'))[Rm]).to_dict('records')
-        res['unknown_extensions'] = classify.unknown_extensions(c.addr, R, T_('незнакомый_ключ'))
+            Rm = np.isin(Rs['base'].cat.codes.values, list(eb))
+            res['files_errors'] = recon.files_inventory(Rs[Rm], min_req=1, T=T_, addr=cs.addr, people=(cs.human | np.asarray(cs.rg == 'Свои'))[Rm]).to_dict('records')
+        res['unknown_extensions'] = classify.unknown_extensions(cs.addr, Rs, T_('незнакомый_ключ'))
     except Exception as e:
-        log(f'files_inventory: {e}'); res['files'] = None
+        res['files'] = None
+        block_failed(res, log, 'Файлы', e)
     if res['files']:
         for x in res['findings']:
             if x['key'].split(':')[1] in ('missing_static', 'no_service', 'service_err', 'hotlink', 'ai_index', 'heavy_images'):
                 x['ещё_листы'] = ['Файлы']
     try:
-        res['anatomy'] = anatomy.build(c, res)
+        res['anatomy'] = anatomy.build(cs, res)
         sp_, np_ = res.get('site_profile') or {}, res['anatomy'].get('всего_страниц')
         if np_ and sp_.get('страниц'):   # одно число страниц везде: после склейки фильтров и без мусорных адресов
             sp_['страниц'] = np_; sp_['размер'] = 'маленький' if np_ <= 50 else 'средний' if np_ <= 5000 else 'большой'
     except Exception as e:
-        import traceback; traceback.print_exc()
         res['anatomy'] = {'ошибка': str(e)}
+        block_failed(res, log, 'Анатомия сайта', e)
     try:   # параметры — после «Анатомии»: нужны её системные папки и закрытые зоны; справочник — по найденному движку
         from .anatomy import PARAM_GROUPS, param_groups
         from . import reference
@@ -253,7 +301,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         allref = reference.Reference([n_ for n_ in reference.all_engine_names()], (), site_)
         ref.other = allref
         ref.foreign_paths = reference.foreign_paths(allref, ref)
-        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(c.rg == 'Свои'), zone_prefixes=zones_, T=T_)
+        Pr = recon.query_params_inventory(Rs, cs.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(cs.rg == 'Свои'), zone_prefixes=zones_, T=T_)
         res['params'] = Pr.to_dict('records')
         # незнакомые: нет в справочнике (или запись из поиска устарела) и заметное число запросов — Детектив ищет их в сети
         unk = Pr[(Pr['источник'] == 'дедукция') & ~Pr['группа'].isin(['Атаки и зонды', 'Логика сайта']) & (Pr['запросов'] >= T_('незнакомый_ключ'))
@@ -268,13 +316,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             if h_ and h_.get('файл', '').startswith('engines/'): u['есть_у_другого_движка'] = f"{h_['название_файла']}: {h_['группа']} — {h_.get('что', '')}"
         res['reference_files'] = [f['файл'] for f in ref.files]
         adm_ = [p_ for p_ in ref.folders(('админка',)) if p_.startswith('/')]
-        res['embedded'] = recon.embedded_inventory(R, c.human, m.get('embedded_templates'), adm_, zones_, T=T_).to_dict('records')
+        res['embedded'] = recon.embedded_inventory(Rs, cs.human, m.get('embedded_templates'), adm_, zones_, T=T_).to_dict('records')
         ref.save()
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:
-        import traceback; traceback.print_exc(); res['params'] = None
+        res['params'] = None
+        block_failed(res, log, 'Параметры запросов', e)
     from . import intake
-    res['intake'] = intake.build(c, res)   # реестр точек приёма данных — один для 01, 03 и (позже) 05
+    res['intake'] = intake.build(cs, res)   # реестр точек приёма данных — один для 01, 03 и (позже) 05
     intake.findings(res, F.items)
     if 'Нагрузка и безопасность' in selected:   # срезы 03 на общих расчётах (common): после реестров, ошибок и параметров
         from . import security
@@ -285,29 +334,33 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     try:
         res['profiles'] = profiles.build(c, res)
         res['bots_extra'] = profiles.extras(c, res)
-    except Exception:
-        import traceback; traceback.print_exc(); res['profiles'], res['bots_extra'] = None, None
+    except Exception as e:
+        res['profiles'], res['bots_extra'] = None, None
+        block_failed(res, log, 'Дела и меры по IP (04)', e)
     try:   # User-Agent по IP — для подделок и сканеров (04): самый частый и сколько ещё вариантов
         from .common import ua_by_ip
         ips_ = set(res['sheets'].get('Боты', {}).get('Подделки', pd.DataFrame(columns=['ip']))['ip'].astype(str))
         sc_ = (res.get('security') or {}).get('сканеры')
         if isinstance(sc_, tuple) and len(sc_) > 1 and sc_[1] is not None and len(sc_[1]): ips_ |= set(sc_[1]['ip'].astype(str))
         res['ua_ip'] = ua_by_ip(V, ips_)
-    except Exception:
-        import traceback; traceback.print_exc(); res['ua_ip'] = {}
+    except Exception as e:
+        res['ua_ip'] = {}
+        block_failed(res, log, 'User-Agent по IP (04)', e)
     if 'Маркетинг' in selected:   # 05: журнал, карты по времени, качество каналов, боты в рекламе
         from . import marketing
-        try: res['marketing'] = marketing.build(c, res)
-        except Exception:
-            import traceback; traceback.print_exc(); res['marketing'] = None
+        try: res['marketing'] = marketing.build(cs, res)
+        except Exception as e:
+            res['marketing'] = None
+            block_failed(res, log, 'Маркетинг (05)', e)
     if 'SEO' in selected:   # 06: обход поисковиками, файлы для роботов, страницы без обхода; карточки о поиске переезжают сюда (ключи прежние)
         from . import seo
         try:
-            res['seo'] = seo.build(c, res)
+            res['seo'] = seo.build(cs, res)
             seo.findings(res, F.items)
             if prev: restatus_late(prev, F.items)   # карточки SEO появились после сравнения с прошлым снимком
-        except Exception:
-            import traceback; traceback.print_exc(); res['seo'] = None
+        except Exception as e:
+            res['seo'] = None
+            block_failed(res, log, 'SEO (06)', e)
     if prev:
         from .snapshot import check_keys
         res['ключи'] = check_keys(prev, {'findings': F.items})   # стабильность ключей проблем относительно прошлой проверки
@@ -315,7 +368,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
     derive.build(res)   # признаки и сводки для оформления, выжимки и снимка
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
-    brief.save(brief.build(res, c, prev), workdir)
+    brief.save(brief.build(res, cs, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')
     return res
 

@@ -450,7 +450,7 @@ def slowness(c):
            '_499_n': n.unstack().reindex(columns=range(24)).fillna(0)}
     gw = np.isin(st, (502, 504))
     out['шлюз'] = pd.DataFrame({'d': day[gw], 'h': hr[gw]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
-    E = c.E
+    E = c.E_srv
     if E is not None and len(E) and 'msg' in E:
         m = E['msg'].astype(str).str.contains(TIMEOUT_RX, regex=True, case=False).values
         t = pd.to_datetime(E['ts'].values[m].astype('int64'), unit='s')

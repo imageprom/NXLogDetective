@@ -107,6 +107,25 @@ def build_sheets(wb, res, S):
         d['Принято, %'] = (d['Принято'] / d['Отправок'].clip(lower=1) * 100).round(1)
         _sheet(wb, 'Воронки', d, None, {'Форма': 26, 'Обработчик': 46, 'Открыли форму': 34}, ('Обработчик', 'Открыли форму'),
                [('Форм', len(d)), ('Отправок', int(d['Отправок'].sum())), ('Принято', int(d['Принято'].sum()))], 'Отправок', red=())
+    OF = S.get('Воронка заказа')   # магазин: воронка заказа по визитам людей (B2, #22); подписи — data/locale/<язык>/funnel.json, блок order_funnel каталога
+    if OF and OF.get('шаги'):
+        from . import texts
+        from .catalog import K
+        tx = texts.file('funnel')
+        st = OF['шаги']; hv = max(1, st[0][1])
+        f = pd.DataFrame({tx['columns']['step']: [tx['steps'][k] for k, _ in st], tx['columns']['visits']: [v for _, v in st]})
+        prev = [None] + [v for _, v in st[:-1]]
+        f[tx['columns']['of_prev']] = [None if p_ is None else round(v / max(1, p_) * 100, 1) for (_, v), p_ in zip(st, prev)]
+        f[tx['columns']['of_people']] = [round(v / hv * 100, 1) for _, v in st]
+        if 'Воронки' in wb.sheetnames:
+            ws = wb['Воронки']
+            shown = extra_table(ws, f, 'order_funnel', widths=None, red=()) is not False
+        else:
+            ws = _sheet(wb, 'Воронки', f, None, {tx['columns']['step']: 26}, (), [(tx['steps']['order'], st[-1][1])], tx['columns']['visits'], red=())
+            shown = ws is not None and K(ws).h('order_funnel') is not None
+        if shown and OF.get('заказ_через_корзину') is not None and ws is not None:
+            from openpyxl.styles import Font
+            ws.cell(ws.max_row + 2, 2, tx['note'].format(orders=st[-1][1], in_cart=OF['заказ_через_корзину'])).font = Font(name='Arial', size=9, italic=True, color='808080')
     # Конверсии по времени
     T = [b for b in MK.get('время') or [] if b[2] is not None and len(b[2])]
     if T:

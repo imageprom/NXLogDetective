@@ -23,8 +23,9 @@ class Log:
         self.L = []
         random.seed(seed)
 
-    def line(self, ip, t, url, code=200, ua=UA_CHROME, ref='-', size=None, method='GET'):
-        self.L.append((t, f'{ip} - - [{t:%d/%b/%Y:%H:%M:%S} +0300] "{method} {url} HTTP/1.1" {code} {size if size is not None else random.randint(2000, 60000)} "{ref}" "{ua}"'))
+    def line(self, ip, t, url, code=200, ua=UA_CHROME, ref='-', size=None, method='GET', host=None):
+        hp = f' {host}' if host else ''   # имя хоста после $remote_user (мультисайт)
+        self.L.append((t, f'{ip} - -{hp} [{t:%d/%b/%Y:%H:%M:%S} +0300] "{method} {url} HTTP/1.1" {code} {size if size is not None else random.randint(2000, 60000)} "{ref}" "{ua}"'))
 
     def visit(self, ip, t, pages=None, ref='https://yandex.ru/', entry=None):
         """Человек: страница входа, оформление, ещё несколько страниц."""

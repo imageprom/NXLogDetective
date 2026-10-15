@@ -254,6 +254,8 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
     from . import alarms, derive
     alarms.apply(res)   # после правок Детектива (проверки из сети) — тревоги заново
     alarms.recheck_cases(res)   # и у дел в 04
+    from .profiles import remeasure
+    remeasure(res)   # «Меры по IP» и STIX — по окончательной важности дел: после правок Детектива и пересчёта тревог
     derive.build(res)   # признаки и сводки для оформления — готовыми
     from . import report_errors
     report_errors.relink(res['findings'])   # карточки ссылаются на новые листы 02

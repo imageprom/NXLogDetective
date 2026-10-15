@@ -6,8 +6,11 @@
 import re
 import numpy as np
 import pandas as pd
+from . import texts
 
 META = {
+    'order_page_error': (texts.card('order_page_error').get('found', ''), texts.card('order_page_error').get('check', '')),
+    'ip_host_redirect': (texts.card('ip_host_redirect').get('found', ''), texts.card('ip_host_redirect').get('check', '')),   # тексты — data/locale/<язык>/cards.json
     'bot_leads': ('Отправка формы принята сервером, а визит по поведению — бот (битый вход → главная → форма за секунды, отправка без просмотра страниц, смена IP посреди визита и т. п.)',
                   'В новом логе нет принятых отправок от визитов, которые Детектив относит к ботам'),
     'operator': ('Адреса спама связаны уликами: смена IP посреди визита, общие редкие битые входы, тот же приём входа; слабые улики (браузер, сеть, время) поодиночке не связывают',
@@ -102,9 +105,9 @@ def proofs(c, items, sheets):
                 if len(b):
                     r = b.iloc[0]
                     p = f"{r['ip']}, {str(r['время'])[:16]}: вход на {r['вход']}, через {int(r['сек_от_входа'])} с отправка {r['цель']} — сервер принял"
-            elif t in ('outage', 'degradation') and c.E is not None and len(c.E):
+            elif t in ('outage', 'degradation') and c.E_srv is not None and len(c.E_srv):
                 a = pd.Timestamp(obj).timestamp()
-                e = c.E[(c.E['ts'] >= a) & (c.E['ts'] <= a + 3600)]
+                e = c.E_srv[(c.E_srv['ts'] >= a) & (c.E_srv['ts'] <= a + 3600)]
                 e = e[e['msg'].astype(str).str.contains('timed out|failed|refused', regex=True)]
                 if len(e):
                     r = e.iloc[0]

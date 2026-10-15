@@ -957,6 +957,34 @@ def heat_sheet(wb, name, blocks, unit='Запросов за час', absent=(),
     return ws
 
 
+def merge_bulk(ws, ranges):
+    """Объединения пачкой. ws.merge_cells перед добавлением сверяет диапазон со всеми прежними (MultiCellRange.add) — время растёт квадратично с числом
+    объединений (таблица улик операторов на тысячах пар IP строилась больше 45 минут), а оформление границ (MergedCellRange.format) создаёт объекты стиля на каждую
+    ячейку. Диапазоны одной таблицы не пересекаются: добавляем сразу в ws.merged_cells.ranges; границы однострочных диапазонов с одинаковой границей левой ячейки
+    считаются один раз и копируются. ranges — (строка1, колонка1, строка2, колонка2). Результат тот же, что у merge_cells."""
+    from copy import copy as cp
+    from openpyxl.cell.cell import MergedCell
+    from openpyxl.worksheet.cell_range import CellRange
+    from openpyxl.worksheet.merge import MergedCellRange
+    cache = {}   # граница левой ячейки → {'mid': стиль средней ячейки, 'last': стиль последней}
+    for r1, c1, r2, c2 in ranges:
+        mcr = MergedCellRange(ws, CellRange(min_col=c1, min_row=r1, max_col=c2, max_row=r2).coord)
+        ws.merged_cells.ranges.add(mcr)
+        if r1 != r2 or c2 == c1:
+            ws._clean_merge_range(mcr); continue
+        b = ws.cell(r1, c1).border
+        key = tuple((getattr(b, sd).style, getattr(getattr(b, sd).color, 'rgb', None)) if getattr(b, sd) is not None else None for sd in ('left', 'right', 'top', 'bottom'))
+        for c in range(c1 + 1, c2 + 1): ws._cells[(r1, c)] = MergedCell(ws, r1, c)
+        need = {'last'} | ({'mid'} if c2 - c1 > 1 else set())
+        if key in cache and need <= set(cache[key]):
+            for c in range(c1 + 1, c2 + 1): ws._cells[(r1, c)]._style = cp(cache[key]['last' if c == c2 else 'mid'])
+            continue
+        mcr.format()
+        st = cache.setdefault(key, {})
+        st['last'] = cp(ws._cells[(r1, c2)]._style)
+        if c2 - c1 > 1: st['mid'] = cp(ws._cells[(r1, c1 + 1)]._style)
+
+
 def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=None, red=('Ошибки',), font_rule=None, groups=None):
     """Вторая таблица на листе — под первой (после ссылок и заметок): заголовок, подпись, оранжевая шапка, строки.
     code — блок листа в каталоге: заголовок и подзаголовок оттуда; блок не выводится (статус) — таблицы нет, возвращается False.
@@ -1031,6 +1059,7 @@ def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=No
                 w_ = max(len(x) for x in words) * 1.1 + 1
             lines = max(lines, math.ceil(len(str(c)) * 1.15 / max(4, w_ - 1)))
         ws.row_dimensions[r].height = max(20, 13 * lines + 8)
+    row_merges = []   # объединения строк — пачкой в конце: в объединённую ячейку писать нельзя, а merge_cells на каждую строку квадратичен
     for row in df.itertuples(index=False):
         r += 1
         rf = row_rule(dict(zip(cols, row))) if row_rule else None
@@ -1050,7 +1079,7 @@ def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=No
                 cc = ws.cell(r, pos[j] + k_); cc.border = Border(bottom=SEP)
                 if rf: cc.fill = PatternFill('solid', fgColor=rf)
         for j in range(len(cols)):
-            if span[j] > 1: ws.merge_cells(start_row=r, start_column=pos[j], end_row=r, end_column=pos[j] + span[j] - 1)
+            if span[j] > 1: row_merges.append((r, pos[j], r, pos[j] + span[j] - 1))
         if max(span) > 1:   # высота строки — по самому длинному тексту в объединённых ячейках
             from openpyxl.utils import get_column_letter as L_
             lines = 1
@@ -1059,6 +1088,7 @@ def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=No
                     w_ = sum((ws.column_dimensions[L_(pos[j] + k_)].width or 10) for k_ in range(span[j]))
                     lines = max(lines, sum(max(1, -(-len(x) // max(5, int(w_ * 1.05)))) for x in str(v).split('\n')))
             ws.row_dimensions[r].height = max(15, 12.5 * lines + 3)
+    merge_bulk(ws, row_merges)
     return ws
 
 

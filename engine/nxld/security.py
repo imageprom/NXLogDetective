@@ -493,8 +493,9 @@ def attacks(c):
         rows.append({'адрес': bc[b], 'вид': k, 'запросов': len(g), 'IP': len(ips), 'главный_IP': f"{ips.index[0]} ({ips.iloc[0]})", 'кто': P['кто'].get(ips.index[0], ''),
                      'ответы': st_ok, 'ошибки': st_bad, 'отдано_200': len(ok), 'размер_200': int(ok['by'].median()) if len(ok) else None,
                      'обычный_размер': (f"{int(arr.min()):,}–{int(arr.max()):,}".replace(',', '\u00a0') if arr is not None and len(arr) else '—'),
-                     'необычных': len(odd), 'пример': str(g['q'].iloc[0])[:200], 'первый': dmy(g['ts'].min()), 'последний': dmy(g['ts'].max())})
+                     'необычных': len(odd), 'пример': str(g['q'].iloc[0])[:200], 'первый': g['ts'].min(), 'последний': g['ts'].max()})
     D = pd.DataFrame(rows)
+    D['первый'], D['последний'] = dmy_many(D['первый'].values), dmy_many(D['последний'].values)   # даты — одним переводом на таблицу
     D['подозрительно'] = D['необычных'] > 0
     return D.sort_values('запросов', ascending=False).reset_index(drop=True)
 

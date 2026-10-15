@@ -1158,7 +1158,7 @@ def bots(c, F, check_ips=()):
         okey = top_values(sp404, 1)[0] if len(sp404) else (core[0] if core else label)
         ops.append(dict(_key=okey, оператор=label, улики=', '.join(f'{t} ({n})' for t, n in kinds.most_common()) or '—',
                         слабые_связи_с_другими=int((~ev['учтена'].str.startswith('да')).sum()), IP_спама=len(core), IP_разведки=len(rc), сети=topn(T.reindex(sorted(grp))['org'].astype(str), 3),
-                        дни=', '.join(sorted(gv['day'].unique())[:20]), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
+                        дни=', '.join(sorted(gv['day'].unique())[:20]), дней=int(gv['day'].nunique()), отправок=int(gv['n_goal'].sum()), принято=int(gv['n_conv'].sum()),
                         битые_входы=', '.join(sorted(set(gv.loc[gv['entry_status'] == 404, 'entry']))[:6]), адреса_спама=', '.join(core), адреса_разведки=', '.join(rc)))
     S['Операторы'] = pd.DataFrame(ops).drop(columns='_key', errors='ignore')
     for o in ops:

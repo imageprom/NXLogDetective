@@ -356,10 +356,12 @@ def build(c, res):
     # состав по IP
     rows = []
     ppl = common.people_ips(c)
+    all_ips = [ip for x in cases for ip in x['ips']]
+    d0, d1 = dict(zip(all_ips, common.dmy_many(F.loc[all_ips, 't0'].values))), dict(zip(all_ips, common.dmy_many(F.loc[all_ips, 't1'].values)))   # даты — один расчёт на все IP дел
     for x in cases:
         for ip in x['ips']:
             rows.append({'дело': x['дело'], 'кличка': x['кличка'], 'ip': ip, 'подсеть': subnet(ip), 'сеть': P['организация'].get(ip, ''), 'страна': P['страна'].get(ip, ''),
-                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': common.dmy(F.at[ip, 't0']), 'последний': common.dmy(F.at[ip, 't1']),
+                         'роль': ops.get(ip, (None, P['подгруппа'].get(ip, '')))[1], 'запросов': int(F.at[ip, 'req']), 'первый': d0[ip], 'последний': d1[ip],
                          'пометка': 'есть человеческие визиты' if ip in ppl else ''})
     S = pd.DataFrame([dict(id=x['сигнатура']['id'], правило=x['сигнатура']['правило'], вид=x['вид'], дело=x['дело'], кличка=x['кличка'],
                            проверка=x['сигнатура']['проверка'], ложных=x['сигнатура']['ложных'], IP=x['состав']['IP'], запросов=x['запросов']) for x in cases])
@@ -382,8 +384,7 @@ def measures_by_ip(c, res, cases, P, F):
         rows.append(dict(ip=ip, дело=дело, кличка=кличка, подсеть=subnet(ip), сеть=P['организация'].get(ip, ''), asn=int(P['asn'].get(ip, 0)) if 'asn' in P else 0, страна=P['страна'].get(ip, ''),
                          тип_сети=P['сеть'].get(ip, ''), визитов=int(vv['визитов'].get(ip, 0)), запросов=int(F['req'].get(ip, 0)) if ip in F.index else 0,
                          отправок=int(vv['отправок'].get(ip, 0)), приговор=приговор, основание=основание,
-                         первый=common.dmy(F.at[ip, 't0']) if ip in F.index and pd.notna(F.at[ip, 't0']) else '',
-                         последний=common.dmy(F.at[ip, 't1']) if ip in F.index and pd.notna(F.at[ip, 't1']) else ''))
+                         первый='', последний=''))
     seen = set()
     ppl = common.people_ips(c)   # за IP покупатели — не блокировать и не ограничивать (STIX и CSV — из этой же таблицы)
     for x in cases:
@@ -403,6 +404,9 @@ def measures_by_ip(c, res, cases, P, F):
                      ([m_['ip'] for m_ in c.m.get('monitors', []) if isinstance(m_, dict)], 'система мониторинга')):
         for ip in ips:
             if ip not in seen: seen.add(ip); row(ip, '', '', 'не трогать', why)
+    if rows:   # даты — один расчёт на все строки; нет IP в таблице признаков или нет времени — пусто
+        Fi = F.reindex([r_['ip'] for r_ in rows])
+        for r_, a_, b_ in zip(rows, common.dmy_many(Fi['t0'].values), common.dmy_many(Fi['t1'].values)): r_['первый'], r_['последний'] = a_, b_
     D = pd.DataFrame(rows)
     if len(D): D = D.sort_values(['приговор', 'запросов'], key=lambda s_: s_.map(VERDICT_ORDER) if s_.name == 'приговор' else -s_).reset_index(drop=True)
     return D

@@ -124,3 +124,48 @@ def test_important_ips_not_quadratic(monkeypatch):
     monkeypatch.setattr(pd.Series, '__eq__', lambda self, other: (calls.append(1), orig(self, other))[1])
     analyze.important_ips(c, {})
     assert len(calls) < 20, len(calls)
+
+
+# ---------- 2. даты и меры по IP ----------
+from nxld import common, profiles  # noqa: E402
+
+
+def test_dmy_many_same_as_dmy():
+    vals = [1_790_000_000, 1_790_000_000.9, 1_700_000_123, 0, 1_790_086_399.5, np.float64(1_800_000_000)]
+    assert common.dmy_many(vals) == [common.dmy(v) for v in vals]
+    assert common.dmy_many([1_790_000_000, np.nan, None]) == [common.dmy(1_790_000_000), '', '']
+    assert common.dmy_many([]) == []
+
+
+def test_dmy_many_one_conversion(monkeypatch):
+    calls = []
+    orig = pd.to_datetime
+    monkeypatch.setattr(pd, 'to_datetime', lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
+    out = common.dmy_many(np.arange(1_790_000_000, 1_790_000_000 + 5000 * 60, 60))
+    assert len(out) == 5000 and len(calls) == 1
+
+
+def _measures_ctx(n=300):
+    ips = [f'198.51.{i // 250}.{i % 250 + 1}' for i in range(n)]
+    V = pd.DataFrame({'ip': ips * 2, 'n_req': 3, 'n_goal': 1})
+    F = pd.DataFrame({'req': range(1, n + 1), 't0': [1_790_000_000 + 60 * i for i in range(n)], 't1': [1_790_100_000 + 60 * i for i in range(n)]}, index=ips)
+    F.loc[ips[5], 't0'] = np.nan   # нет времени — пусто
+    P = pd.DataFrame({'организация': 'Example Net', 'asn': 64500, 'страна': 'RU', 'сеть': 'дата-центр'}, index=ips)
+    cases = [dict(дело='D1', кличка='k1', важность='Тревога', обвинения=[dict(статья='Разведка')], сигнатура=dict(ложных=0), ips=ips[:200]),
+             dict(дело='D2', кличка='k2', важность='К сведению', обвинения=[dict(статья='Спам')], сигнатура=dict(ложных=2), ips=ips[150:])]
+    c = SimpleNamespace(V=V, T=pd.DataFrame({'ip': ips}), m=dict(staff_ips=['203.0.113.9'], server_ips=[ips[1]], monitors=[]))
+    return c, cases, P, F
+
+
+def test_measures_by_ip_dates_in_bulk(monkeypatch):
+    c, cases, P, F = _measures_ctx()
+    monkeypatch.setattr(common, 'people_ips', lambda c_: set())
+    calls = []
+    orig = pd.to_datetime
+    monkeypatch.setattr(pd, 'to_datetime', lambda *a, **k: (calls.append(1), orig(*a, **k))[1])
+    D = profiles.measures_by_ip(c, {}, cases, P, F)
+    assert len(D) == 300 + 1 and len(calls) <= 4, (len(D), len(calls))
+    r = D.set_index('ip')
+    assert r.at['198.51.0.1', 'первый'] == common.dmy(F.at['198.51.0.1', 't0']) and r.at['198.51.0.1', 'последний'] == common.dmy(F.at['198.51.0.1', 't1'])
+    assert r.at['198.51.0.6', 'первый'] == '' and r.at['198.51.0.6', 'последний'] != ''
+    assert r.at['203.0.113.9', 'первый'] == '' and r.at['203.0.113.9', 'приговор'] == 'не трогать'

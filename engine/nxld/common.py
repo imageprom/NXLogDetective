@@ -195,6 +195,15 @@ def dmy(ts):
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m.%Y %H:%M')
 
 
+def dmy_many(values, na=''):
+    """dmy для всей колонки сразу: список строк той же формы «16.09.2026 14:08»; пустое значение — na."""
+    v = pd.Series(np.asarray(values, dtype='float64') if len(values) else [], dtype='float64')
+    ok = v.notna().values
+    out = np.full(len(v), na, dtype=object)
+    if ok.any(): out[ok] = pd.to_datetime(v.values[ok].astype('int64'), unit='s').strftime('%d.%m.%Y %H:%M')
+    return out.tolist()
+
+
 def episode_id(ts):
     """Код эпизода по времени начала — как у сбоев: «27.09 22:25»."""
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m %H:%M')

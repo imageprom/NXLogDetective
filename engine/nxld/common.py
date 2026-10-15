@@ -195,6 +195,13 @@ def dmy(ts):
     return pd.to_datetime(int(ts), unit='s').strftime('%d.%m.%Y %H:%M')
 
 
+def plain(df):
+    """Срез таблицы визитов без категорий: категориальные колонки → строки. Поиск по метке в индексе, построенном из категории
+    (groupby по entry, ua…, затем .get, .loc, in), у категорий с тысячами значений ломается (OverflowError на узких кодах) — ключи группировки должны быть строками."""
+    cat = [c_ for c_ in df.columns if isinstance(df[c_].dtype, pd.CategoricalDtype)]
+    return df.astype({c_: str for c_ in cat}) if cat else df
+
+
 def dmy_many(values, na=''):
     """dmy для всей колонки сразу: список строк той же формы «16.09.2026 14:08»; пустое значение — na."""
     v = pd.Series(np.asarray(values, dtype='float64') if len(values) else [], dtype='float64')

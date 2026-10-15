@@ -14,6 +14,7 @@ import re
 from collections import defaultdict
 from itertools import combinations
 import pandas as pd
+from .common import plain
 
 W = {'сильная': 3, 'средняя': 2, 'слабая': 1}
 WAVE = 7200
@@ -29,7 +30,7 @@ def _ts(x):
 
 def link(V, spam_ips, human_direct_max=5):
     spam_ips = set(spam_ips)
-    sv = V[V['ip'].isin(spam_ips)]
+    sv = plain(V[V['ip'].isin(spam_ips)])   # ключи группировки ниже (entry) — строки, не категории
     spam_v = sv[sv['subgroup'].str.startswith('спам форм')]
     ev = []   # (a, b, тип, сила, доказательство)
 
@@ -38,7 +39,7 @@ def link(V, spam_ips, human_direct_max=5):
             a, b = sorted((a, b))
             ev.append(dict(IP_A=a, IP_B=b, улика=typ, сила=force, доказательство=proof))
 
-    e404 = V[(V['entry_status'] == 404) & (V['fam_verified'] != 'да')]
+    e404 = plain(V[(V['entry_status'] == 404) & (V['fam_verified'] != 'да')])
     direct = e404['entry_ref'].isin(['-', ''])
     hum_direct = e404[(e404['group'] == 'Люди') & direct].groupby('entry')['ip'].nunique()
     # 1. общий битый вход

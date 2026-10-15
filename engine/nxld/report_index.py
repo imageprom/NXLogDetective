@@ -405,9 +405,10 @@ class Wide(Sheet):
             if c.value: c.font = Font(name='Arial', size=c.font.sz if c.font and c.font.sz else 11, color=RED)
 
 
+# «Основная страна» и предупреждение на сводке 01 — выключено до согласования; данные (res['audience']) считаются
 SHOW_AUDIENCE = False
 # строка «Подозрительные лица» в таблице «Трафик и заявки» — новая строка на сводке Обзора: выключена до согласования структуры
-SHOW_SUSPECTS = False   # «Основная страна» и предупреждение на сводке 01 — выключено до согласования; данные (res['audience']) считаются
+SHOW_SUSPECTS = False
 
 
 def build_index(wb, res, sheet_names, title='Обзор'):

@@ -23,6 +23,7 @@ def is_ip(h):
 def normalize(h):
     """Имя хоста: строчные буквы, без порта и без ведущего www."""
     h = str(h or '').strip().lower()
+    if h == '-': return ''   # пустой запрос: имя хоста не записано
     if h.count(':') == 1: h = h.split(':')[0]
     return re.sub(r'^www\.', '', h)
 

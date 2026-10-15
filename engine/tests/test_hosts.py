@@ -138,3 +138,16 @@ def test_subdomain_crawled_only_by_robots_is_site(monkeypatch):
         res, lines, work, c = _run(d, log)
         kind = {r['хост']: r['тип'] for r in json.load(open(os.path.join(work, 'site_map.json'), encoding='utf-8'))['hosts']}
         assert kind[ROBOT] == 'сайт' and kind['auth0.example.com'] == 'не сайт', kind
+
+
+def test_dash_host_is_unrecorded_name_and_site(monkeypatch):
+    """Хост «-» (пустой запрос) — «имя хоста не записано» → сайт, а не «другой домен»."""
+    assert hosts.normalize('-') == ''
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    log, _ = _log(with_extra=False)
+    for j in range(5): log.line('203.0.113.60', synth.T0 + timedelta(hours=1, seconds=j), '/', 400, ua=SCAN_UA, host='-')
+    with tempfile.TemporaryDirectory() as d:
+        res, lines, work, c = _run(d, log)
+        rows = {r['хост']: r for r in json.load(open(os.path.join(work, 'site_map.json'), encoding='utf-8'))['hosts']}
+        assert rows['(не записан)']['тип'] == 'сайт' and rows['(не записан)']['причина'] == 'имя хоста не записано', rows
+        assert '-' not in rows

@@ -44,7 +44,7 @@ python3 engine/nxld_run.py --work ./work --out ./out --stage report --edits edit
 | `--out` | Папка для результата |
 | `--stage` | `prepare`, `analyze`, `report` или `all` |
 | `--blocks` | `overview,errors,load,bots,marketing,seo` или `all`. Обзор и Ошибки строятся всегда |
-| `--map-override` | Поправки карты сайта: `site_hosts`, `staff_ips`, `staff_ips_remove` |
+| `--map-override` | Поправки карты сайта: `site_hosts`, `not_site_hosts`, `staff_ips`, `staff_ips_remove`, `form_success_rules`; для своей корзины и своего обработчика действий с товаром — `product_action`, `cart_pages`, `checkout_pages`, `order_success`, `order_steps`, `not_goals` (регулярные выражения адресов) |
 | `--check-ips` | IP через запятую для отдельной проверки |
 | `--prev` | Снимок прошлой проверки (`.snapshot.json`): сравнение «было → стало» |
 | `--marks` | Отметки «это норма»: `{ключ_проблемы: комментарий}` |

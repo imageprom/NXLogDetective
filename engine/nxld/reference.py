@@ -235,6 +235,21 @@ def engine_orders(engines):
     return out
 
 
+SHOP_KEYS = ('order_success', 'order_steps', 'not_goals', 'cart_pages', 'checkout_pages', 'product_action')
+
+
+def site_orders(spec, override):
+    """Справочник заказов движка с поправками карты сайта (map_override, те же ключи латиницей): своя корзина, свой обработчик действий с товаром
+    (например, /include/actions.php шаблона) — у сайта, а не у движка. Ключ из поправки заменяет ключ движка целиком."""
+    out = {k: list(v) if isinstance(v, list) else v for k, v in spec.items()}
+    keys = [k for k in SHOP_KEYS if (override or {}).get(k)]
+    for k in keys:
+        v = override[k]
+        out[k] = list(v) if isinstance(v, (list, tuple)) else [v]
+    if keys and 'поправка карты' not in out['движки']: out['движки'] = list(out['движки']) + ['поправка карты']
+    return out
+
+
 def engine_backup_paths():
     """Шаблоны адресов бэкапов всех движков справочника («backup_paths»): Битрикс /bitrix/backup/, WordPress updraft и ai1wm, Joomla Akeeba."""
     out = []

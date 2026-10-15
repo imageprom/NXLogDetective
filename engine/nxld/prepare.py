@@ -161,7 +161,7 @@ def run(paths, workdir, log=print, map_override=None):
     fq = qc[R['query'].cat.codes.values]
     fkey = pd.Series(R['tpl'].astype(str).values + np.where(fq != '', '?form=' + fq, ''), index=R.index)
     from . import orders as orders_, reference
-    spec = reference.engine_orders([e.get('движок') for e in engines.to_dict('records')])   # заказы магазина — по справочнику найденных движков (#22)
+    spec = reference.site_orders(reference.engine_orders([e.get('движок') for e in engines.to_dict('records')]), map_override)   # заказы магазина — по справочнику найденных движков (#22) и поправкам карты (своя корзина)
     is_goal = post & fkey.isin(list(rules.keys())).values & ~orders_.not_goals(R, spec) & R['host_site'].values   # к хостам вне сайта цели не считаются (#23); шаги оформления, проверка подписки, кабинет и админка — не цели
     succ = np.zeros(len(R), dtype=bool)
     for k, rule in rules.items():

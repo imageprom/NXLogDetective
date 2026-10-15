@@ -222,3 +222,46 @@ def test_order_funnel_on_funnels_sheet(tmp_path):
     assert vals['Корзина'][1:3] == [8, vals['Корзина'][2]] and vals['Оформление'][1] == 8 and vals['Заказ'][1] == 5 and vals['Заказ'][2] == round(5 / 8 * 100, 1), vals
     assert any('Через корзину прошли 5 из 5 визитов с заказом.' in t for t in texts_), [t for t in texts_ if 'корзин' in t]
     assert not any('/personal/order/make/?ORDER_ID' in t for t in texts_)   # строка цели «Заказ» среди форм заменена воронкой
+
+
+def _custom_cart_log():
+    """Свой обработчик действий с товаром у шаблона (/include/actions.php, вызовы с 3 страниц — по поведению не определить) и своя корзина (/basket/)."""
+    log = _log()
+    for k in range(12):
+        ip = f'95.165.0.{k + 1}'
+        log.line(ip, synth.T0 + timedelta(hours=8, minutes=9 * k, seconds=30), '/include/actions.php', 200, ref=f'https://site.ru/catalog/p{k % 3}/', method='POST')
+    for n in range(1, 4):
+        ip, t = f'95.167.0.{n}', synth.T0 + timedelta(days=2, hours=10, minutes=20 * n)
+        log.line(ip, t + timedelta(seconds=20), '/basket/', 200, ref='https://site.ru/catalog/')
+    return log
+
+
+def _funnel_with(log, override, monkeypatch):
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
+        log.write(path)
+        prepare.run([path], work, log=lambda *a: None, map_override=override)
+        res = analyze.run(work, log=lambda *a: None)
+        import json
+        brief = json.load(open(os.path.join(work, 'brief.json')))
+    return res['sheets']['Маркетинг']['Воронка заказа'], brief
+
+
+def test_funnel_site_handler_and_cart_from_map_override(monkeypatch):
+    """Свой обработчик действий и своя корзина — из поправок карты (product_action, cart_pages), а не из справочника движка."""
+    of, _ = _funnel_with(_custom_cart_log(), {'product_action': ['^/include/actions\\.php$'], 'cart_pages': ['^/basket/']}, monkeypatch)
+    st = dict(of['шаги'])
+    assert st['action'] == 12 and st['cart'] == 3 and of['действия_определены'] and of['заказ_через_корзину'] == 3, of
+
+
+def test_funnel_undetermined_handler_hint_in_brief(monkeypatch):
+    """Обработчик действий не определён — шага нет, в выжимке подсказка указать его в поправках карты."""
+    of, brief = _funnel_with(_custom_cart_log(), None, monkeypatch)
+    assert 'action' not in dict(of['шаги']) and not of['действия_определены']
+    assert any('product_action' in t for t in json_caveats(brief)), brief
+
+
+def json_caveats(brief):
+    import json
+    return [t for t in json.dumps(brief, ensure_ascii=False).split('"') if 'product_action' in t]

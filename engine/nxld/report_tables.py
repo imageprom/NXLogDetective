@@ -1,5 +1,6 @@
 """NXLD: простые листы-таблицы в общем стиле (заголовок, пояснение, оранжевая шапка, фильтр, закреплённая шапка)."""
 import numbers
+from copy import copy
 import numpy as np, pandas as pd
 from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
 from .report_index import ORANGE, ORANGE2, INK, GREY, F_NOTE, NUM_FMT, RED
@@ -87,6 +88,7 @@ def data_sheet(wb, name, df, widths=None, wrap=(), fill_rule=None, bold_rule=Non
         cell.border = Border(left=WHITE, right=WHITE)
     ws.cell(H, 1 + X)
     ws.row_dimensions[H].height = 32
+    styles = {}
     for i, row in enumerate(df.itertuples(index=False), H + 1):
         rf = row_rule(dict(zip(cols, row))) if row_rule else None   # заливка всей строки
         ff = font_rule(dict(zip(cols, row))) if font_rule else None   # цвет текста всей строки (неактуальное — серым)
@@ -98,14 +100,22 @@ def data_sheet(wb, name, df, widths=None, wrap=(), fill_rule=None, bold_rule=Non
             cell = ws.cell(i, j + X, v)
             col = cols[j - 1]
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
-            cell.font = Font(name='Arial', size=size, bold=bool(bold_rule and bold_rule(col, v)), color=ff or (RED if col in red else '000000'))
+            bold = bool(bold_rule and bold_rule(col, v))
+            color = ff or (RED if col in red else '000000')
             hz = 'center' if col in center else ('right' if isnum else 'left')
-            cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
-            if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
-            elif isnum and isinstance(v, float): cell.number_format = '# ##0.0#' if abs(v) >= 1000 else '0.0#'
-            cell.border = Border(bottom=SEP)
+            fmt = NUM_FMT if isnum and isinstance(v, int) and abs(v) >= 1000 else (('# ##0.0#' if abs(v) >= 1000 else '0.0#') if isnum and isinstance(v, float) else None)
             f = rf or (fill_rule(col, v) if fill_rule else None)
+            key = (bold, color, hz, col in wrap, fmt, f)
+            st = styles.get(key)   # шрифт, выравнивание, формат, граница и заливка — один раз на сочетание; дальше готовый стиль ячейки
+            if st is not None:
+                cell._style = copy(st)
+                continue
+            cell.font = Font(name='Arial', size=size, bold=bold, color=color)
+            cell.alignment = Alignment(horizontal=hz, vertical='top', wrap_text=col in wrap, indent=1 if hz != 'center' else 0)
+            if fmt: cell.number_format = fmt
+            cell.border = Border(bottom=SEP)
             if f: cell.fill = PatternFill('solid', fgColor=f)
+            styles[key] = copy(cell._style)
     for j, c in enumerate(cols, 1):
         letter = ws.cell(H, j + X).column_letter
         q90 = df[c].astype(str).str.len().quantile(0.9) if len(df) else None   # пустая колонка (категория из одних NaN) — длина NaN

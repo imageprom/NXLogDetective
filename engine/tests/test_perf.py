@@ -197,3 +197,67 @@ def test_form_of_once_per_address(monkeypatch):
     for _ in range(3): got = [classify.form_of(p) for p in paths]
     assert got == expect
     assert len(calls) == len(set(paths)), (len(calls), len(set(paths)))
+
+
+# ---------- 5. запись больших листов ----------
+import openpyxl  # noqa: E402
+
+from nxld import report_tables as RT  # noqa: E402
+
+
+def _sheet_df(n=600, seed=2):
+    r = np.random.RandomState(seed)
+    return pd.DataFrame({'Адрес': [f'/catalog/item{i}/' for i in range(n)], 'Запросов': r.randint(1, 5000, n), 'Доля': r.rand(n) * 1500, 'Ошибки': r.randint(0, 3, n),
+                         'Тип': r.choice(['страница', 'файл'], n), 'Первый': ['16.09.2026 14:08'] * n, 'Пусто': [None] * n})
+
+
+def _sheet(df):
+    wb = openpyxl.Workbook()
+    fill_rule = lambda c, v: 'FFF2CC' if c == 'Ошибки' and v > 1 else None  # noqa: E731
+    bold_rule = lambda c, v: c == 'Адрес' and v.endswith('7/')  # noqa: E731
+    row_rule = lambda row: 'FDE9D9' if row['Запросов'] % 50 == 0 else None  # noqa: E731
+    font_rule = lambda row: '808080' if row['Ошибки'] == 0 else None  # noqa: E731
+    return RT.data_sheet(wb, 'Тест', df, title='ТЕСТ', note='проверка', fill_rule=fill_rule, bold_rule=bold_rule, center=('Тип',), wrap=('Адрес',),
+                         row_rule=row_rule, font_rule=font_rule, red=('Доля',)), (fill_rule, bold_rule, row_rule, font_rule)
+
+
+def test_data_sheet_cell_styles_as_before():
+    """Оформление каждой ячейки данных — по прежним правилам (шрифт, выравнивание, формат, граница, заливка)."""
+    df = _sheet_df()
+    ws, (fill_rule, bold_rule, row_rule, font_rule) = _sheet(df)
+    cols = list(df.columns)
+    n_fill = n_bold = 0
+    for i, row in enumerate(df.itertuples(index=False), 5):
+        rd = dict(zip(cols, row))
+        for j, v in enumerate(row, 2):
+            c, col = ws.cell(i, j), cols[j - 2]
+            isnum = isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool) and not (isinstance(v, float) and pd.isna(v))
+            bold = bool(bold_rule(col, v)); ff = font_rule(rd)
+            assert (c.font.name, c.font.sz, bool(c.font.b)) == ('Arial', 9, bold), (i, j)
+            assert c.font.color.rgb[-6:] == (ff or (RT.RED if col == 'Доля' else '000000'))[-6:], (i, j, c.font.color.rgb)
+            hz = 'center' if col == 'Тип' else ('right' if isnum else 'left')
+            assert (c.alignment.horizontal, c.alignment.vertical, bool(c.alignment.wrap_text), c.alignment.indent) == (hz, 'top', col == 'Адрес', 0 if hz == 'center' else 1)
+            if isinstance(v, (int, np.integer)) and abs(v) >= 1000: assert c.number_format == RT.NUM_FMT, (i, j)
+            elif isinstance(v, (float, np.floating)) and not pd.isna(v): assert c.number_format == ('# ##0.0#' if abs(v) >= 1000 else '0.0#'), (i, j, c.number_format)
+            else: assert c.number_format == 'General', (i, j, c.number_format)
+            assert c.border.bottom.style == RT.SEP.style and c.border.bottom.color.rgb == RT.SEP.color.rgb
+            f = row_rule(rd) or fill_rule(col, v)
+            if f: assert c.fill.fill_type == 'solid' and c.fill.fgColor.rgb[-6:] == f, (i, j); n_fill += 1
+            else: assert c.fill.fill_type is None, (i, j)
+            n_bold += bold
+    assert n_fill > 20 and n_bold > 20   # правила заливки и жирного действительно срабатывали
+
+
+def test_data_sheet_style_objects_not_per_cell(monkeypatch):
+    """Шрифты и заливки создаются по числу разных стилей, а не по числу ячеек."""
+    made = {'Font': 0, 'PatternFill': 0, 'Alignment': 0, 'Border': 0}
+    for nm in made:
+        orig = getattr(RT, nm)
+        def mk(*a, _o=orig, _n=nm, **k):
+            made[_n] += 1
+            return _o(*a, **k)
+        monkeypatch.setattr(RT, nm, mk)
+    df = _sheet_df(3000)
+    _sheet(df)
+    cells = len(df) * len(df.columns)
+    assert all(v < cells / 20 for v in made.values()), (cells, made)

@@ -36,7 +36,7 @@ def period(a, b):
 
 
 def build_activity(wb, res, names, index=3, title='Активность', files=None):
-    A = res.get('actors') or {}
+    A = res.get('actors_site') or res.get('actors') or {}   # 01 — только запросы к сайту (хосты вне сайта в 03 и 04)
     if not A: return None
     files = files or {}
     bots_file = files.get('Боты')

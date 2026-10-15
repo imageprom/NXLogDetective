@@ -96,6 +96,9 @@ def test_people_and_errors_only_for_site_hosts(monkeypatch):
         assert c.R['host_site'].astype(bool).sum() < len(c.R)
         brief = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))
         assert brief['проверка']['хосты_вне_сайта']['хостов'] == 5   # выжимка
+        # реестр обращающихся: для 04 — все запросы, для «Активности» 01 — только сайт
+        g_all, g_site = res['actors']['группы'], res['actors_site']['группы']
+        assert int(g_all['визитов'].sum()) == len(c.V) and int(g_site['визитов'].sum()) == int(c.V['host_site'].astype(bool).sum()) < len(c.V)
 
 
 def test_without_extra_hosts_nothing_changes(monkeypatch):

@@ -140,7 +140,8 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
     from . import actors
-    res['actors'] = actors.build(cs)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
+    res['actors'] = actors.build(c)   # реестр обращающихся: все запросы — для листов 04 (роботы, утилиты, мониторинг, виды ботов)
+    res['actors_site'] = actors.build(cs) if cs is not c else None   # и только запросы к сайту — для сводки «Активность» (01)
     # незнакомые системы мониторинга (имя не из справочника) — Детективу: найти сервис и записать (edits.json → «мониторинги»)
     mv_ = V[V['group'] == 'Системы мониторинга']
     res['unknown_monitors'] = [dict(имя=str(sg), user_agent=str(g['ua'].iloc[0])[:200], IP=int(g['ip'].nunique()), визитов=len(g))

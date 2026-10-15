@@ -619,7 +619,8 @@ def errors(c, F):
         S['Служебные файлы'] = sd.rename(columns={'base': 'адрес', 'day': 'день'})
         legit_cat = R['fam_cat'].isin(['Поисковик', 'Реклама/аналитика', 'Фиды/площадки', 'Сервисы Google']).values[sv]
         SV = SV.assign(legit=legit_cat)
-        ever_ok = SV[SV['status'] == 200].groupby('base', observed=True).size()
+        S200 = SV[SV['status'] == 200]
+        ever_ok = S200.groupby(S200['base'].astype(str)).size()   # индекс — строки: поиск по метке в индексе из категорий адресов ломается на тысячах значений
         for b, g in SV.groupby('base', observed=True):
             gl = g[g['legit']]
             if not ((len(gl) >= 10 and (gl['status'] >= 400).mean() > 0.8) or (ever_ok.get(b, 0) >= 5 and (g['status'].iloc[-max(1, len(g) // 5):] >= 400).mean() > 0.8)):

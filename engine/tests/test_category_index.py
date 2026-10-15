@@ -47,6 +47,8 @@ def _wide_log(path, nv=6000, seed=11):
         for k in range(2): line(t + timedelta(seconds=1), ip, 'GET', f'/upload/i{R.randint(0, 300)}.jpg', 200, 'https://example.com' + p, ua)
         line(t + timedelta(seconds=40), ip, 'GET', f'/section{R.randint(1, 9)}/page{R.randint(0, np_)}/', 200, 'https://example.com' + p, ua)
         if R.random() < 0.03: line(t + timedelta(seconds=70), ip, 'POST', '/contacts/send/', 200, 'https://example.com/contacts/', ua)
+    for k in range(40):   # служебные файлы: sitemap.xml стоит в конце списка категорий адресов (номер > 127)
+        line(T0 + timedelta(seconds=R.randint(0, span)), f'95.{R.randint(1, 250)}.7.{k + 1}', 'GET', '/sitemap.xml', R.choice([200, 404]), '-', R.choice(uas))
     for k in range(max(40, nv // 150)):
         dead = f'/zz-old-{R.randint(0, np_)}/'
         t = T0 + timedelta(seconds=R.randint(0, span - 20000))

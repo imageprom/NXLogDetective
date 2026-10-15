@@ -76,7 +76,8 @@ def run(paths, workdir, log=print, map_override=None):
     if map_override and map_override.get('site_hosts'): hosts = list(map_override['site_hosts']) + hosts   # поправка добавляет домены сайта (первый — основной)
     not_site = [hosts_.normalize(h) for h in (map_override or {}).get('not_site_hosts') or []]   # поправка убирает домены: это не сайт
     hosts = [h for h in hosts_.names_only(hosts) if h not in not_site]   # только имена: IP сервера — не домен сайта
-    R = load.add_features(R, hosts)
+    vh_names = [n for n in dict.fromkeys(hosts_.normalize(v) for v in (R['vhost'].cat.categories if 'vhost' in R else [])) if n]   # хосты, к которым обращаются в этом логе (включая IP сервера)
+    R = load.add_features(R, hosts + [h for h in vh_names if h not in hosts])   # реферер с любого из них — переход внутри сервера, не «внешний сайт»
     R['host_site'], host_table = hosts_.classify(R, hosts, not_site)   # тип хоста — один раз, по запросам к нему; дальше его берут блоки
     off_ = hosts_.summary(host_table)
     if off_['хостов']:

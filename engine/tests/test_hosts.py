@@ -151,3 +151,27 @@ def test_dash_host_is_unrecorded_name_and_site(monkeypatch):
         rows = {r['хост']: r for r in json.load(open(os.path.join(work, 'site_map.json'), encoding='utf-8'))['hosts']}
         assert rows['(не записан)']['тип'] == 'сайт' and rows['(не записан)']['причина'] == 'имя хоста не записано', rows
         assert '-' not in rows
+
+
+# ---------- A3 ----------
+def test_referer_from_server_ip_host_is_internal(monkeypatch):
+    """Реферер http://<IP-хост из лога>/page — переход внутри сервера: не «Битые внешние» и не канал «Ссылки с сайтов»."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    log, _ = _log()
+    for d in range(3):
+        for k in range(6):   # люди приходят на сайт со страницы на IP сервера; часть адресов не найдена
+            ip = f'95.170.{d}.{k + 1}'
+            t = synth.T0 + timedelta(days=d, hours=11, minutes=5 * k)
+            entry = '/missing-from-ip/' if k % 2 else '/catalog/'
+            log.line(ip, t, entry, 404 if k % 2 else 200, ref=f'http://{IPHOST}/page', host=MAIN)
+            log.line(ip, t + timedelta(seconds=1), '/local/templates/main/style.css', 200, ref=f'https://{MAIN}{entry}', host=MAIN)
+            log.line(ip, t + timedelta(seconds=30), '/catalog/', 200, ref=f'https://{MAIN}{entry}', host=MAIN)
+    with tempfile.TemporaryDirectory() as d:
+        res, lines, work, c = _run(d, log)
+        V = c.V
+        ip_ref = V[V['entry_ref'].astype(str).str.contains(IPHOST, regex=False) & V['host_site'].astype(bool)]
+        assert len(ip_ref) >= 18 and bool(ip_ref['entry_ref_internal'].all())
+        assert 'Ссылки с сайтов' not in set(ip_ref['channel'].astype(str)) and set(ip_ref['channel'].astype(str)) == {'Внутренний переход'}
+        S = res['errors']['источники']   # «сайты» — внешние источники ошибок; IP сервера среди них быть не должно
+        ext = S[(S['вид'] == 'сайты') & (S['деталь'].astype(str).str.contains(IPHOST, regex=False))]
+        assert not len(ext), ext

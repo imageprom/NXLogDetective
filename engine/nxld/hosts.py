@@ -38,13 +38,15 @@ def names_only(hosts):
 
 
 def classify(R, site_hosts, not_site=(), pages_min=None):
-    """(маска «сайт» по запросам, таблица хостов). Маска — numpy bool по строкам R; без имён хостов в логе все запросы считаются сайтом."""
+    """(маска «сайт» по запросам, таблица хостов, маска «копии»). Маски — numpy bool по строкам R; без имён хостов в логе все запросы считаются сайтом.
+    Копии — хосты с причиной «другой домен» (копии сайта у разработчика, технические имена хостинга): к сайту клиента не относятся, их запросы вне всех блоков отчёта.
+    IP сервера и подобранные поддомены основного домена — не копии: они идут по общему правилу хостов вне сайта."""
     pages_min = value('host_site_pages_min', 10) if pages_min is None else pages_min
     n = len(R)
-    if 'vhost' not in R or n == 0: return np.ones(n, bool), []
+    if 'vhost' not in R or n == 0: return np.ones(n, bool), [], np.zeros(n, bool)
     cats = [str(c) for c in R['vhost'].cat.categories]
     codes = R['vhost'].cat.codes.values
-    if not any(normalize(c) for c in cats): return np.ones(n, bool), []   # формат лога без имени хоста
+    if not any(normalize(c) for c in cats): return np.ones(n, bool), [], np.zeros(n, bool)   # формат лога без имени хоста
     ncat = len(cats)
     ok_page = (R['method'].values == 'GET') & ~R['is_static'].values & (R['status'].values >= 200) & (R['status'].values < 300)   # страницы с ответом 2xx — от всех: региональные поддомены обходят и одни поисковики
     sel = codes >= 0
@@ -74,9 +76,13 @@ def classify(R, site_hosts, not_site=(), pages_min=None):
     for name, d in by_name.items():
         for i in d['cats']: is_site_cat[i] = kind[name][0] == 'сайт'
     mask = np.where(sel, is_site_cat[np.where(sel, codes, 0)], True)
+    copy_cat = np.zeros(ncat, bool)
+    for name, d in by_name.items():
+        for i in d['cats']: copy_cat[i] = kind[name] == ('не сайт', 'другой домен')
+    copy = np.where(sel, copy_cat[np.where(sel, codes, 0)], False)
     table = sorted([dict(хост=name or '(не записан)', тип=kind[name][0], причина=kind[name][1], запросов=d['запросов'], страниц=d['страниц']) for name, d in by_name.items()],
                    key=lambda r: (r['тип'] != 'сайт', -r['запросов']))
-    return mask, table
+    return mask, table, copy
 
 
 def summary(table):

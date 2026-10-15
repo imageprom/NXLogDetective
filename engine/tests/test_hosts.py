@@ -92,9 +92,9 @@ def test_people_and_errors_only_for_site_hosts(monkeypatch):
         site_err = set(site_errors(res['errors']['коды'])['адрес'])
         assert '/old-page/' in site_err and '/old-copy/' not in site_err and '/phpmyadmin/' not in site_err
         # 03 и 04 — все запросы ко всем хостам
-        assert len(c.R) < len(pd.read_pickle(os.path.join(work, 'R.pkl'))) and c.R['host_site'].astype(bool).sum() < len(c.R)   # распознанное вне сайта — в 03 и 04, нераспознанное — нет
+        assert len(c.R) <= len(pd.read_pickle(os.path.join(work, 'R.pkl'))) and c.R['host_site'].astype(bool).sum() < len(c.R)   # распознанное вне сайта — в 03 и 04
         brief = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))
-        assert brief['проверка']['хосты_вне_сайта']['хостов'] == 5 and brief['проверка']['хосты_вне_сайта']['не_распознано_визитов'] >= 1   # выжимка
+        assert brief['проверка']['хосты_вне_сайта']['хостов'] == 5 and brief['проверка']['хосты_вне_сайта']['не_распознано_визитов'] == 0   # выжимка: человек на копии вне данных вообще, остальное вне сайта распознано
         # реестр обращающихся: для 04 — все запросы, для «Активности» 01 — только сайт
         g_all, g_site = res['actors']['группы'], res['actors_site']['группы']
         assert int(g_all['визитов'].sum()) == len(c.V) and int(g_site['визитов'].sum()) == int(c.V['host_site'].astype(bool).sum()) < len(c.V)
@@ -201,3 +201,24 @@ def test_off_site_visits_pass_usual_rules_and_unrecognized_are_hidden(monkeypatc
         off = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))['проверка']['хосты_вне_сайта']
         assert off['не_распознано_визитов'] == 3 and off['запросов'] == 30, off
         assert any('из них не распознано 3 визитов' in x for x in lines), lines
+
+
+# ---------- A5 ----------
+def test_copies_on_other_domains_are_out_of_every_block(monkeypatch):
+    """Хосты с причиной «другой домен» — вне всех блоков, включая 03 и 04; IP сервера и подобранные имена — не копии (правило A4)."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        log, n = _log()
+        res, lines, work, c = _run(d, log)
+        m = json.load(open(os.path.join(work, 'site_map.json'), encoding='utf-8'))
+        R_all = pd.read_pickle(os.path.join(work, 'R.pkl'))
+        assert COPY not in set(R_all['vhost'].astype(str))   # копии нет в данных
+        ips = set(c.V['ip'].astype(str))
+        assert '203.0.113.50' not in ips and '203.0.113.7' not in ips   # сканер копии и разработчик на копии — нигде, даже в 03 и 04
+        assert {'203.0.113.51', '203.0.113.52'} <= ips   # IP-хост и подобранные имена: распознанные сканеры остаются
+        rows = {r['хост']: r for r in m['hosts']}
+        assert rows[COPY]['причина'] == 'другой домен' and rows[COPY]['запросов'] > 0   # счёт копии — в таблице хостов
+        assert m['off_site']['копии_запросов'] == rows[COPY]['запросов']   # и в сводке
+        assert any('копии на других доменах' in x for x in lines), lines   # и в журнале
+        brief = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))
+        assert brief['проверка']['хосты_вне_сайта']['копии_запросов'] == rows[COPY]['запросов']

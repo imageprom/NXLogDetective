@@ -78,10 +78,18 @@ def run(paths, workdir, log=print, map_override=None):
     hosts = [h for h in hosts_.names_only(hosts) if h not in not_site]   # только имена: IP сервера — не домен сайта
     vh_names = [n for n in dict.fromkeys(hosts_.normalize(v) for v in (R['vhost'].cat.categories if 'vhost' in R else [])) if n]   # хосты, к которым обращаются в этом логе (включая IP сервера)
     R = load.add_features(R, hosts + [h for h in vh_names if h not in hosts])   # реферер с любого из них — переход внутри сервера, не «внешний сайт»
-    R['host_site'], host_table = hosts_.classify(R, hosts, not_site)   # тип хоста — один раз, по запросам к нему; дальше его берут блоки
+    site_mask, host_table, copy_mask = hosts_.classify(R, hosts, not_site)   # тип хоста — один раз, по запросам к нему; дальше его берут блоки
     off_ = hosts_.summary(host_table)
+    if copy_mask.any() and not copy_mask.all():   # копии на других доменах — вне всех блоков отчёта, включая 03 и 04: из данных убираем (счёт — в сводке хостов)
+        R = R[~copy_mask].reset_index(drop=True)
+        site_mask = site_mask[~copy_mask]
+        for c_ in R.columns:
+            if str(R[c_].dtype) == 'category': R[c_] = R[c_].cat.remove_unused_categories()
+        off_['копии_запросов'] = int(copy_mask.sum())
+    R['host_site'] = site_mask
     if off_['хостов']:
-        log(f"   хостов вне сайта: {off_['хостов']}, запросов к ним {off_['запросов']:,} ({off_['запросов'] / max(1, len(R)):.1%}): " + ', '.join(f"{r['хост']} ({r['запросов']:,})" for r in off_['хосты'][:8]))
+        log(f"   хостов вне сайта: {off_['хостов']}, запросов к ним {off_['запросов']:,} ({off_['запросов'] / max(1, len(R)):.1%}): " + ', '.join(f"{r['хост']} ({r['запросов']:,})" for r in off_['хосты'][:8])
+            + (f"; копии на других доменах — {off_['копии_запросов']:,} запросов, вне всех блоков отчёта" if off_.get('копии_запросов') else ''))
     T = load.ip_table(R)
     R = load.attach_ip(R, T)
     log(f'   запросов {len(R):,}, IP {len(T):,}, {time.time()-t0:.0f} с')

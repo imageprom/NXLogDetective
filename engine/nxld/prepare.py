@@ -88,6 +88,8 @@ def run(paths, workdir, log=print, map_override=None):
     R = visits.build(R, emb_codes)
     R['tpl'] = pd.Categorical(tpl[R['base'].cat.codes.values])
     forms, rules = recon.detect_forms(R, tpl)
+    if map_override and map_override.get('form_success_rules'):   # поправки карты — до расчёта целей (R.goal, goal_success, n_goal, n_conv), а не только в site_map.json
+        rules = {k: v for k, v in dict(map_override['form_success_rules']).items() if str(v).startswith('цель')}
     # сотрудники: успешные запросы к админке движка
     admin_rx = '|'.join(recon.ADMIN_PATHS[e] for e in engines['движок'] if e in recon.ADMIN_PATHS) or recon.GENERIC_ADMIN
     bases = R['base'].cat.categories.to_series()

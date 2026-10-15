@@ -66,6 +66,18 @@ def restatus_late(prev, items, thr=STATUS_THRESHOLD):
         x['статус_вид'] = vid
 
 
+def _cut(R, V, rmask, vmask):
+    """Срез запросов и визитов с номерами визитов подряд (блоки берут визит по номеру как позицию). Без отсева — те же таблицы."""
+    rmask, vmask = np.asarray(rmask, bool), np.asarray(vmask, bool)
+    if rmask.all() and vmask.all(): return R, V
+    Vn = V[vmask].copy()
+    Rn = R[rmask].reset_index(drop=True)
+    Rn['vid'] = pd.Series(np.arange(len(Vn)), index=Vn.index).reindex(Rn['vid'].values).values.astype(R['vid'].dtype)
+    Vn.index = pd.RangeIndex(len(Vn), name=V.index.name)
+    Rn['ip'] = Rn['ip'].cat.remove_unused_categories()   # IP срезанных запросов не остаются в таблице IP: признаки по IP и профиль строятся по одному набору
+    return Rn, Vn
+
+
 def block_failed(res, log, name, exc):
     """Сбой расчёта блока не молчит: строка в журнале запуска и запись в выжимке (brief → проверка → сбои_блоков), с причиной."""
     import traceback; traceback.print_exc()
@@ -91,7 +103,6 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
-    V = visits.mark_not_site(V)   # визиты к хостам вне сайта (копия, IP, подобранные имена) — не «Люди»
     V = visits.mark_app_agents(V)   # встроенный браузер приложения (Битрикс24) — «Люди», дальше обычные правила (system_agents.json)
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V, backups_ = visits.mark_backups(V, R, m.get('staff_ips') or [], m.get('admin_regex'))   # бэкапы и дампы с ответом 200 — раньше всех правил
@@ -103,20 +114,25 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
-    V = visits.freeze(V)   # правила закончились: повторяющиеся строки — категории
+    # тип хоста посчитан в prepare (R.host_site). Визиты к хостам вне сайта прошли все обычные правила, как визиты к сайту (сканеры, боты, роботы, утилиты, мониторинг…).
+    # Кто остался «Людьми» на хосте вне сайта — не выводится нигде в отчёте (только счёт в журнале и выжимке); распознанные идут в 03 и 04.
+    # «Сайт» (cs): 01, 02, 05, 06 — запросы только к сайту; «всё» (c): 03, 04 — сайт и распознанные запросы к хостам вне сайта.
+    site_r = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
+    site_v = V['host_site'].astype(bool) if 'host_site' in V else pd.Series(True, index=V.index)
+    unrec_v = ~site_v & (V['group'] == 'Люди')   # нераспознанные визиты на хостах вне сайта
+    hide_r = unrec_v.reindex(R['vid'].values).values
+    m['off_site'] = dict(m.get('off_site') or {}, не_распознано_визитов=int(unrec_v.sum()))
+    if m['off_site'].get('запросов'): log(f"Хосты вне сайта: запросов {m['off_site']['запросов']:,}, из них не распознано {int(unrec_v.sum()):,} визитов (в отчёт не входят)")
+    Rc, Vc = _cut(R, V, ~hide_r, ~unrec_v)
+    R, V = Rc, visits.freeze(Vc)   # правила закончились: повторяющиеся строки — категории
     c = blocks.Ctx(R, V, E, T, m, inv, G)
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
-    # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе скачивания
-    # того же бэкапа чужими не считались бы утечкой и не шли бы в дела
+    # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе он считался бы утечкой и шёл бы в дела
     c.addr = classify.build(R, c.human, np.asarray((c.rg == 'Свои') & (np.asarray(c.rsub) != 'скачал бэкап')), engines_)
-    # тип хоста посчитан в prepare (R.host_site): блоки «сайт» — 01, 02, 05, 06 — берут запросы только к сайту (cs); «всё» — 03, 04 — все запросы (c)
-    site_ = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
-    if site_.all(): cs = c
+    s_r = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
+    if s_r.all(): cs = c
     else:
-        Vs = V[V['host_site'].astype(bool)].copy()
-        Rs = R[site_].reset_index(drop=True)
-        Rs['vid'] = pd.Series(np.arange(len(Vs)), index=Vs.index).reindex(Rs['vid'].values).values.astype(R['vid'].dtype)   # номера визитов подряд: блоки берут визит по номеру как позицию
-        Vs.index = pd.RangeIndex(len(Vs), name=V.index.name)
+        Rs, Vs = _cut(R, V, s_r, V['host_site'].astype(bool))
         cs = blocks.Ctx(Rs, Vs, E, T, m, inv, G)
         cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
     Rs = cs.R

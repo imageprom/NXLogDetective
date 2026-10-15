@@ -85,17 +85,16 @@ def test_people_and_errors_only_for_site_hosts(monkeypatch):
         people = V[V['group'] == 'Люди']
         assert bool(people['host_site'].all()) and len(people) >= n[MAIN] + n[MSK] + n[SPB] - 3   # люди — только визиты к хостам сайта
         off = V[~V['host_site'].astype(bool)]
-        assert len(off) and 'Люди' not in set(off['group'])   # сканер и разработчик на копии — не «Люди»
-        assert (off['group'] == 'Боты').any()
+        assert len(off) and 'Люди' not in set(off['group'])   # нераспознанные «Люди» на хостах вне сайта в отчёт не входят
+        assert (off['group'] == 'Боты').any()   # а сканеры копии и подобранных имён — распознаны и остаются (03 и 04)
         # 02: ошибки — только по адресам сайта
         from nxld.errors import site_errors
         site_err = set(site_errors(res['errors']['коды'])['адрес'])
         assert '/old-page/' in site_err and '/old-copy/' not in site_err and '/phpmyadmin/' not in site_err
         # 03 и 04 — все запросы ко всем хостам
-        assert len(c.R) == len(pd.read_pickle(os.path.join(work, 'R.pkl')))
-        assert c.R['host_site'].astype(bool).sum() < len(c.R)
+        assert len(c.R) < len(pd.read_pickle(os.path.join(work, 'R.pkl'))) and c.R['host_site'].astype(bool).sum() < len(c.R)   # распознанное вне сайта — в 03 и 04, нераспознанное — нет
         brief = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))
-        assert brief['проверка']['хосты_вне_сайта']['хостов'] == 5   # выжимка
+        assert brief['проверка']['хосты_вне_сайта']['хостов'] == 5 and brief['проверка']['хосты_вне_сайта']['не_распознано_визитов'] >= 1   # выжимка
         # реестр обращающихся: для 04 — все запросы, для «Активности» 01 — только сайт
         g_all, g_site = res['actors']['группы'], res['actors_site']['группы']
         assert int(g_all['визитов'].sum()) == len(c.V) and int(g_site['визитов'].sum()) == int(c.V['host_site'].astype(bool).sum()) < len(c.V)
@@ -175,3 +174,30 @@ def test_referer_from_server_ip_host_is_internal(monkeypatch):
         S = res['errors']['источники']   # «сайты» — внешние источники ошибок; IP сервера среди них быть не должно
         ext = S[(S['вид'] == 'сайты') & (S['деталь'].astype(str).str.contains(IPHOST, regex=False))]
         assert not len(ext), ext
+
+
+# ---------- A4 ----------
+def test_off_site_visits_pass_usual_rules_and_unrecognized_are_hidden(monkeypatch):
+    """Визит под браузером к IP-хосту с зондами — «сканер под браузер», а не «вне сайта»; визит, похожий на человека (страница, оформление, 301), — нигде в отчёте; счёт — в выжимке."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    log, _ = _log(with_extra=False)
+    scan_ip, human_ip = '203.0.113.71', '203.0.113.72'
+    for d in range(3):
+        t = synth.T0 + timedelta(days=d, hours=4)
+        log.line(scan_ip, t, '/', 200, ref='https://yandex.ru/', host=IPHOST)   # браузерный User-Agent по умолчанию: сначала похож на человека
+        log.line(scan_ip, t + timedelta(seconds=1), '/local/templates/main/style.css', 200, ref=f'http://{IPHOST}/', host=IPHOST)
+        for j, u in enumerate(('/.env', '/wp-login.php', '/phpinfo.php', '/.git/config', '/backup.sql')):
+            log.line(scan_ip, t + timedelta(seconds=2 + j), u, 404, host=IPHOST)
+        t = synth.T0 + timedelta(days=d, hours=6)
+        log.line(human_ip, t, '/', 301, ref='https://yandex.ru/', host=IPHOST)
+        log.line(human_ip, t + timedelta(seconds=1), '/local/templates/main/style.css', 200, ref=f'http://{IPHOST}/', host=IPHOST)
+        log.line(human_ip, t + timedelta(seconds=30), '/catalog/', 301, ref=f'http://{IPHOST}/', host=IPHOST)
+    with tempfile.TemporaryDirectory() as d:
+        res, lines, work, c = _run(d, log)
+        V = c.V
+        sc = V[V['ip'].astype(str) == scan_ip]
+        assert len(sc) and bool(sc['subgroup'].astype(str).str.startswith('сканер под браузер').all()) and not sc['host_site'].astype(bool).any(), sc[['group', 'subgroup']]
+        assert human_ip not in set(V['ip'].astype(str))   # не «Люди» и не 04: в отчёт не входит
+        off = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))['проверка']['хосты_вне_сайта']
+        assert off['не_распознано_визитов'] == 3 and off['запросов'] == 30, off
+        assert any('из них не распознано 3 визитов' in x for x in lines), lines

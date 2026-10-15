@@ -389,10 +389,39 @@ def build(c, res):
     S = pd.DataFrame([dict(id=x['сигнатура']['id'], правило=x['сигнатура']['правило'], вид=x['вид'], дело=x['дело'], кличка=x['кличка'],
                            проверка=x['сигнатура']['проверка'], ложных=x['сигнатура']['ложных'], IP=x['состав']['IP'], запросов=x['запросов']) for x in cases])
     learn_signatures(cases, site, c)
-    return dict(дела=cases, состав=pd.DataFrame(rows), сигнатуры=S, меры_ip=measures_by_ip(c, res, cases, P, F))
+    from . import alarms
+    alarms.recheck_cases(dict(res, profiles=dict(дела=cases)))   # меры — по важности дел после пересчёта тревог, а не до него
+    return dict(дела=cases, состав=pd.DataFrame(rows), сигнатуры=S, меры_ip=measures_by_ip(c, res, cases, P, F), меры_ip_люди=sorted(common.people_ips(c)))
 
 
 VERDICT_ORDER = {'заблокировать': 0, 'ограничить частоту': 1, 'наблюдать': 2, 'не трогать': 3}
+
+
+def verdict_of(x, mobile, in_ppl):
+    """Приговор IP из дела x: (приговор, основание). Зависит от окончательной важности дела: «к сведению» — только наблюдать."""
+    main = x['обвинения'][0]['статья']
+    people = x['сигнатура']['ложных']
+    if in_ppl: return 'не трогать', f'{main}; есть человеческие визиты — в деле только как улика'
+    if x['важность'] == 'К сведению': return 'наблюдать', f'{main}; дело к сведению'
+    if mobile: return 'ограничить частоту', f'{main}; мобильный оператор — за одним IP много абонентов'
+    if people: return 'ограничить частоту', f'{main}; из этой сети ходят люди ({nf(people)} визитов)'
+    return 'заблокировать', f'{main}; людей из этой сети нет'
+
+
+def remeasure(res):
+    """«Меры по IP» заново по окончательной важности дел: после правок Детектива (edits.json) и пересчёта тревог (alarms.recheck_cases) в report.
+    Строки из своих (сотрудники, сервер, мониторинг) не меняются; порядок — как при первой сборке."""
+    Pf = res.get('profiles') or {}
+    D, M = Pf.get('дела') or [], Pf.get('меры_ip')
+    if not D or not isinstance(M, pd.DataFrame) or not len(M) or 'дело' not in M: return
+    by_id, ppl = {x['дело']: x for x in D}, set(Pf.get('меры_ip_люди') or [])
+    v0, v, w = M['приговор'].tolist(), M['приговор'].tolist(), M['основание'].tolist()
+    for i, (ip, case, net) in enumerate(zip(M['ip'], M['дело'], M['тип_сети'])):
+        x = by_id.get(case)
+        if x is not None: v[i], w[i] = verdict_of(x, 'мобильн' in str(net), str(ip) in ppl)
+    if v == v0 and w == M['основание'].tolist(): return   # ничего не изменилось: таблица как есть, порядок не трогаем
+    M = M.assign(приговор=v, основание=w)
+    Pf['меры_ip'] = M.sort_values(['приговор', 'запросов'], key=lambda s_: s_.map(VERDICT_ORDER) if s_.name == 'приговор' else -s_, kind='stable').reset_index(drop=True)
 
 
 def measures_by_ip(c, res, cases, P, F):
@@ -411,17 +440,10 @@ def measures_by_ip(c, res, cases, P, F):
     seen = set()
     ppl = common.people_ips(c)   # за IP покупатели — не блокировать и не ограничивать (STIX и CSV — из этой же таблицы)
     for x in cases:
-        main = x['обвинения'][0]['статья']
-        people = x['сигнатура']['ложных']
         for ip in x['ips']:
             if ip in seen: continue
             seen.add(ip)
-            mobile = 'мобильн' in str(P['сеть'].get(ip, ''))
-            if ip in ppl: v, why = 'не трогать', f'{main}; есть человеческие визиты — в деле только как улика'
-            elif x['важность'] == 'К сведению': v, why = 'наблюдать', f'{main}; дело к сведению'
-            elif mobile: v, why = 'ограничить частоту', f'{main}; мобильный оператор — за одним IP много абонентов'
-            elif people: v, why = 'ограничить частоту', f'{main}; из этой сети ходят люди ({nf(people)} визитов)'
-            else: v, why = 'заблокировать', f'{main}; людей из этой сети нет'
+            v, why = verdict_of(x, 'мобильн' in str(P['сеть'].get(ip, '')), ip in ppl)
             row(ip, x['дело'], x['кличка'], v, why)
     for ips, why in ((c.m.get('staff_ips', []), 'сотрудник'), (c.m.get('server_ips', []), 'сервер сайта'),
                      ([m_['ip'] for m_ in c.m.get('monitors', []) if isinstance(m_, dict)], 'система мониторинга')):

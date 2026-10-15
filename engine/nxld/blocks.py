@@ -31,6 +31,8 @@ class Ctx:
         gc = pd.Categorical(V['group'].values)
         sc = pd.Categorical(V['subgroup'].values)
         vid = R['vid'].values
+        if not (len(V) and V.index.is_monotonic_increasing and V.index[0] == 0 and V.index[-1] == len(V) - 1):   # срез визитов (только сайт): номера визитов не подряд
+            vid = V.index.get_indexer(vid)
         self.rg = pd.Categorical.from_codes(gc.codes[vid], categories=gc.categories)
         self.rsub = pd.Categorical.from_codes(sc.codes[vid], categories=sc.categories)
         self.human = np.asarray(self.rg == 'Люди')

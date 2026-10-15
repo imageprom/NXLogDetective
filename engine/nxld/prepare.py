@@ -71,9 +71,16 @@ def run(paths, workdir, log=print, map_override=None):
     log('2/5 Сборка таблицы запросов')
     R, dup_report = load.load_requests(workdir, state)
     E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
+    from . import hosts as hosts_
     hosts = site_hosts_from(state, R)
-    if map_override and map_override.get('site_hosts'): hosts = map_override['site_hosts']
+    if map_override and map_override.get('site_hosts'): hosts = list(map_override['site_hosts']) + hosts   # поправка добавляет домены сайта (первый — основной)
+    not_site = [hosts_.normalize(h) for h in (map_override or {}).get('not_site_hosts') or []]   # поправка убирает домены: это не сайт
+    hosts = [h for h in hosts_.names_only(hosts) if h not in not_site]   # только имена: IP сервера — не домен сайта
     R = load.add_features(R, hosts)
+    R['host_site'], host_table = hosts_.classify(R, hosts, not_site)   # тип хоста — один раз, по запросам к нему; дальше его берут блоки
+    off_ = hosts_.summary(host_table)
+    if off_['хостов']:
+        log(f"   хостов вне сайта: {off_['хостов']}, запросов к ним {off_['запросов']:,} ({off_['запросов'] / max(1, len(R)):.1%}): " + ', '.join(f"{r['хост']} ({r['запросов']:,})" for r in off_['хосты'][:8]))
     T = load.ip_table(R)
     R = load.attach_ip(R, T)
     log(f'   запросов {len(R):,}, IP {len(T):,}, {time.time()-t0:.0f} с')
@@ -133,7 +140,7 @@ def run(paths, workdir, log=print, map_override=None):
                     form_success_rules=rules, ad_params=ad_known, other_entry_params=ad_other,
                     catalog_templates=catalog, top_sections=sections.to_dict(),
                     service_files=services.head(40).to_dict('records') if len(services) else [],
-                    get_pd_requests=int(len(G)))
+                    get_pd_requests=int(len(G)), hosts=host_table, off_site=off_)
     if map_override:
         for k, v in map_override.items():
             if k not in ('staff_ips', 'site_hosts'): site_map[k] = v

@@ -15,10 +15,11 @@ def build(R, embedded_tpl_codes=None, tpl=None):
     ipc = R['ip'].cat.codes.values.astype(np.int64)
     uac = R['ua'].cat.codes.values.astype(np.int64)
     ts = R['ts'].values
-    order = np.lexsort((ts, uac, ipc))
-    i_, u_, t_ = ipc[order], uac[order], ts[order]
+    hs = R['host_site'].values.astype(np.int64) if 'host_site' in R else np.zeros(len(R), np.int64)   # визит не смешивает запросы к сайту и к чужим хостам
+    order = np.lexsort((ts, hs, uac, ipc))
+    i_, u_, t_, h_ = ipc[order], uac[order], ts[order], hs[order]
     new = np.ones(len(order), dtype=bool)
-    new[1:] = (i_[1:] != i_[:-1]) | (u_[1:] != u_[:-1]) | (t_[1:] - t_[:-1] > GAP)
+    new[1:] = (i_[1:] != i_[:-1]) | (u_[1:] != u_[:-1]) | (h_[1:] != h_[:-1]) | (t_[1:] - t_[:-1] > GAP)
     vid_sorted = np.cumsum(new) - 1
     vid = np.empty(len(order), dtype=np.int64)
     vid[order] = vid_sorted
@@ -117,6 +118,7 @@ def aggregate(R, staff_ips=(), monitor_keys=()):
         'n_static': g['is_static'].sum(),
         'bytes': g['bytes'].sum(),
     })
+    V['host_site'] = first['host_site'].astype(bool) if 'host_site' in first else True   # False — визит к хосту вне сайта (копия, IP, подобранное имя)
     V['n_post'] = R.assign(_p=(R['method'].values == 'POST')).groupby('vid')['_p'].sum()
     V['n_head'] = R.assign(_h=(R['method'].values == 'HEAD')).groupby('vid')['_h'].sum()
     V['n_err4'] = R.assign(_e=(R['status'].values >= 400) & (R['status'].values < 500)).groupby('vid')['_e'].sum()
@@ -250,6 +252,18 @@ def freeze(V):
     V = V.copy()
     for c in V.columns:
         if c not in NOT_CATEGORY and _is_text(V[c]) and V[c].nunique() < 0.5 * len(V): V[c] = V[c].astype('category')
+    return V
+
+
+def mark_not_site(V):
+    """Визиты к хостам вне сайта (копия на чужом домене, IP вместо имени, подобранные имена; тип хоста — prepare, hosts.py) — не «Люди»:
+    сканеры копий (/.env, /.git/config) не должны попадать в людей. Идут в «Боты» (04); остальные группы (роботы, свои) не меняются."""
+    if 'host_site' not in V: return V
+    m = ~V['host_site'].astype(bool) & (V['group'] == 'Люди')
+    if m.any():
+        V = V.copy()
+        V.loc[m, 'group'] = 'Боты'
+        V.loc[m, 'subgroup'] = 'вне сайта: запросы к чужому хосту'
     return V
 
 

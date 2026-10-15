@@ -91,6 +91,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
+    V = visits.mark_not_site(V)   # визиты к хостам вне сайта (копия, IP, подобранные имена) — не «Люди»
     V = visits.mark_app_agents(V)   # встроенный браузер приложения (Битрикс24) — «Люди», дальше обычные правила (system_agents.json)
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V, backups_ = visits.mark_backups(V, R, m.get('staff_ips') or [], m.get('admin_regex'))   # бэкапы и дампы с ответом 200 — раньше всех правил
@@ -108,6 +109,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе скачивания
     # того же бэкапа чужими не считались бы утечкой и не шли бы в дела
     c.addr = classify.build(R, c.human, np.asarray((c.rg == 'Свои') & (np.asarray(c.rsub) != 'скачал бэкап')), engines_)
+    # тип хоста посчитан в prepare (R.host_site): блоки «сайт» — 01, 02, 05, 06 — берут запросы только к сайту (cs); «всё» — 03, 04 — все запросы (c)
+    site_ = R['host_site'].values.astype(bool) if 'host_site' in R else np.ones(len(R), bool)
+    if site_.all(): cs = c
+    else:
+        Rs, Vs = R[site_], V[V['host_site'].astype(bool)] if 'host_site' in V else V
+        cs = blocks.Ctx(Rs, Vs, E, T, m, inv, G)
+        cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
+    Rs = cs.R
     F = Findings()
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
@@ -116,10 +125,10 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
            'backups': backups_,   # скачанные бэкапы: кто, что, вывод и улики за обе версии (profiles дописывает снятые обвинения)
            'suspects': V.loc[V['group'] == 'Подозрительные лица', ['ip', 'ua', 'start', 'subgroup', 'evidence_people', 'evidence_bot']].reset_index(drop=True)
            if 'evidence_people' in V else pd.DataFrame()}   # «Подозрительные лица»: улики за людей и за бота   # страна основной аудитории и доля людей из неё — на сводку 01
-    fn = {'Общий анализ': lambda: blocks.overview(c, F), 'Ошибки': lambda: blocks.errors(c, F),
+    fn = {'Общий анализ': lambda: blocks.overview(cs, F), 'Ошибки': lambda: blocks.errors(cs, F),
           'Нагрузка и безопасность': lambda: blocks.load_security(c, F), 'Боты': lambda: blocks.bots(c, F, check_ips),
-          'Маркетинг': lambda: blocks.marketing(c, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)
-    c.selected = tuple(selected)   # карточки блока, которого нет в отчёте, — в соседний выбранный (серверный фильтр)
+          'Маркетинг': lambda: blocks.marketing(cs, F), 'SEO': lambda: ({}, {})}   # SEO считается после срезов 03–05 (seo.build)
+    c.selected = cs.selected = tuple(selected)   # карточки блока, которого нет в отчёте, — в соседний выбранный (серверный фильтр)
     for b in BLOCKS:
         if b in selected or b == 'Боты':   # боты считаем всегда: нужны для листа IP и спама форм
             log(f'Блок: {b}')
@@ -128,7 +137,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
     from . import actors
-    res['actors'] = actors.build(c)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
+    res['actors'] = actors.build(cs)   # реестр обращающихся: срезы для сводки «Активность» и полных листов
     # незнакомые системы мониторинга (имя не из справочника) — Детективу: найти сервис и записать (edits.json → «мониторинги»)
     mv_ = V[V['group'] == 'Системы мониторинга']
     res['unknown_monitors'] = [dict(имя=str(sg), user_agent=str(g['ua'].iloc[0])[:200], IP=int(g['ip'].nunique()), визитов=len(g))
@@ -141,7 +150,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
                   f"проверяет {r_['проверяет']} примерно раз в {int(r_['интервал'] or 0) // 60} мин; {int(r_['запросов'])} запросов; коды: {r_['коды']}",
                   'хостинг, мониторинги компании', 'Выяснить, чья это система: если своя — отметить как норму; если чужая — решить, нужна ли она', int(r_['запросов']), '')
     from . import errors as errors_
-    res['errors'] = errors_.build(c, res['sheets'].get('Ошибки', {}).get('Сбои'))   # «адрес × код», журнал и сводка ошибок — для файла 02
+    res['errors'] = errors_.build(cs, res['sheets'].get('Ошибки', {}).get('Сбои'))   # «адрес × код», журнал и сводка ошибок — для файла 02
     lk = getattr(c, 'leaks', None)   # служебные файлы, отданные посторонним (03): подсветка в «Файлах» и «Анатомии»
     res['leaks'] = [] if lk is None else [dict(файл=str(r['base']), ответов=int(r['ответов_200']), IP=int(r['IP']), размер=float(r['размер'])) for _, r in lk.iterrows()]
     # GET-отправки — в «Нагрузку и безопасность» (03), рядом с карточкой о персональных данных
@@ -191,7 +200,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         res['prev_period'] = prev.get('period')
         res['prev_format'] = prev.get('format')   # /1 или /2: от формата зависит, что можно сравнить
     try:
-        res['site_profile'] = profile.detect(c, res.get('site_map') or {})
+        res['site_profile'] = profile.detect(cs, res.get('site_map') or {})
     except Exception as e:
         res['site_profile'] = {'назначение': 'не определено', 'ошибка': str(e)}
         block_failed(res, log, 'Профиль сайта', e)
@@ -205,11 +214,11 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         if isinstance(x, dict) and 'сигнал' in x: x['сигнал'] = findings_text.tidy(x['сигнал'])
     sp = res.get('site_profile') or {}
     if isinstance(sp.get('признаки'), list): sp['признаки'] = [findings_text.tidy(t) for t in sp['признаки']]
-    res['query_params'] = getattr(c, 'query_params', None)
+    res['query_params'] = getattr(cs, 'query_params', None)
     from .thresholds import Sizes
     T_ = Sizes(визиты=int((V['group'] == 'Люди').sum()), запросы=len(R), ip=int(R['ip'].nunique()))   # пороги — доли от размера лога
     try:
-        res['files'] = recon.files_inventory(R, T=T_, addr=c.addr, people=c.human | np.asarray(c.rg == 'Свои')).to_dict('records')
+        res['files'] = recon.files_inventory(Rs, T=T_, addr=cs.addr, people=cs.human | np.asarray(cs.rg == 'Свои')).to_dict('records')
         T_c = res['errors']['коды']
         if len(T_c):   # «Файлы с ошибками» — тот же расчёт, что «Файлы», на файлах, которым хоть раз ответили 4xx/5xx
             # поломка — файл, на который ссылаются: страницы сайта, реклама, другие сайты. Просят только напрямую — перебор или
@@ -218,14 +227,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             fb = set(T_c.loc[(T_c['форма'] == 'файл') & (T_c['код'] != 499), 'b'])
             linked = set(Sr_.loc[Sr_['вид'].isin(['страницы сайта', 'реклама', 'сайты', 'поиск']), 'b']) if Sr_ is not None and len(Sr_) else set()
             OPT_ = classify.optional_files()[0]   # необязательные стандартные файлы — справочник extensions.json, «optional_files»
-            A_c = c.addr
+            A_c = cs.addr
             from_site = set(Sr_.loc[Sr_['вид'] == 'страницы сайта', 'b']) if Sr_ is not None and len(Sr_) else set()
             opt = {b for b in fb - from_site if re.search(OPT_, str(A_c['адрес'].values[b]))}   # нужны не сайту, а роботам и нейросетям
             eb = (fb & linked) - opt
             res['files_optional'] = sorted(str(A_c['адрес'].values[b]) for b in opt)
-            Rm = np.isin(R['base'].cat.codes.values, list(eb))
-            res['files_errors'] = recon.files_inventory(R[Rm], min_req=1, T=T_, addr=c.addr, people=(c.human | np.asarray(c.rg == 'Свои'))[Rm]).to_dict('records')
-        res['unknown_extensions'] = classify.unknown_extensions(c.addr, R, T_('незнакомый_ключ'))
+            Rm = np.isin(Rs['base'].cat.codes.values, list(eb))
+            res['files_errors'] = recon.files_inventory(Rs[Rm], min_req=1, T=T_, addr=cs.addr, people=(cs.human | np.asarray(cs.rg == 'Свои'))[Rm]).to_dict('records')
+        res['unknown_extensions'] = classify.unknown_extensions(cs.addr, Rs, T_('незнакомый_ключ'))
     except Exception as e:
         res['files'] = None
         block_failed(res, log, 'Файлы', e)
@@ -234,7 +243,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             if x['key'].split(':')[1] in ('missing_static', 'no_service', 'service_err', 'hotlink', 'ai_index', 'heavy_images'):
                 x['ещё_листы'] = ['Файлы']
     try:
-        res['anatomy'] = anatomy.build(c, res)
+        res['anatomy'] = anatomy.build(cs, res)
         sp_, np_ = res.get('site_profile') or {}, res['anatomy'].get('всего_страниц')
         if np_ and sp_.get('страниц'):   # одно число страниц везде: после склейки фильтров и без мусорных адресов
             sp_['страниц'] = np_; sp_['размер'] = 'маленький' if np_ <= 50 else 'средний' if np_ <= 5000 else 'большой'
@@ -263,7 +272,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         allref = reference.Reference([n_ for n_ in reference.all_engine_names()], (), site_)
         ref.other = allref
         ref.foreign_paths = reference.foreign_paths(allref, ref)
-        Pr = recon.query_params_inventory(R, c.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(c.rg == 'Свои'), zone_prefixes=zones_, T=T_)
+        Pr = recon.query_params_inventory(Rs, cs.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(cs.rg == 'Свои'), zone_prefixes=zones_, T=T_)
         res['params'] = Pr.to_dict('records')
         # незнакомые: нет в справочнике (или запись из поиска устарела) и заметное число запросов — Детектив ищет их в сети
         unk = Pr[(Pr['источник'] == 'дедукция') & ~Pr['группа'].isin(['Атаки и зонды', 'Логика сайта']) & (Pr['запросов'] >= T_('незнакомый_ключ'))
@@ -278,14 +287,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             if h_ and h_.get('файл', '').startswith('engines/'): u['есть_у_другого_движка'] = f"{h_['название_файла']}: {h_['группа']} — {h_.get('что', '')}"
         res['reference_files'] = [f['файл'] for f in ref.files]
         adm_ = [p_ for p_ in ref.folders(('админка',)) if p_.startswith('/')]
-        res['embedded'] = recon.embedded_inventory(R, c.human, m.get('embedded_templates'), adm_, zones_, T=T_).to_dict('records')
+        res['embedded'] = recon.embedded_inventory(Rs, cs.human, m.get('embedded_templates'), adm_, zones_, T=T_).to_dict('records')
         ref.save()
         if 'параметры' in A_: A_['параметры'] = param_groups(m, res)
     except Exception as e:
         res['params'] = None
         block_failed(res, log, 'Параметры запросов', e)
     from . import intake
-    res['intake'] = intake.build(c, res)   # реестр точек приёма данных — один для 01, 03 и (позже) 05
+    res['intake'] = intake.build(cs, res)   # реестр точек приёма данных — один для 01, 03 и (позже) 05
     intake.findings(res, F.items)
     if 'Нагрузка и безопасность' in selected:   # срезы 03 на общих расчётах (common): после реестров, ошибок и параметров
         from . import security
@@ -310,14 +319,14 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         block_failed(res, log, 'User-Agent по IP (04)', e)
     if 'Маркетинг' in selected:   # 05: журнал, карты по времени, качество каналов, боты в рекламе
         from . import marketing
-        try: res['marketing'] = marketing.build(c, res)
+        try: res['marketing'] = marketing.build(cs, res)
         except Exception as e:
             res['marketing'] = None
             block_failed(res, log, 'Маркетинг (05)', e)
     if 'SEO' in selected:   # 06: обход поисковиками, файлы для роботов, страницы без обхода; карточки о поиске переезжают сюда (ключи прежние)
         from . import seo
         try:
-            res['seo'] = seo.build(c, res)
+            res['seo'] = seo.build(cs, res)
             seo.findings(res, F.items)
             if prev: restatus_late(prev, F.items)   # карточки SEO появились после сравнения с прошлым снимком
         except Exception as e:
@@ -330,7 +339,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
     derive.build(res)   # признаки и сводки для оформления, выжимки и снимка
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
-    brief.save(brief.build(res, c, prev), workdir)
+    brief.save(brief.build(res, cs, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')
     return res
 

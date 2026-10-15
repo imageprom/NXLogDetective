@@ -1,8 +1,8 @@
 """NXLD: тип хоста — сайт или не сайт (#23). Считается один раз в prepare по запросам к хосту и хранится в данных:
 колонка R['host_site'] (True — сайт), таблица хостов site_map['hosts'], V['host_site'] — у визитов (визит не смешивает хосты разных типов).
 
-Сайт — основной домен, www., поддомены основного домена, которые отдают страницы людям (региональные, вход для B2B).
-Не сайт — IP вместо имени, другие домены (копии, dev-версии), поддомены без страниц людям (имена, которые подбирают сканеры).
+Сайт — основной домен, www., поддомены основного домена, которые отдают страницы (региональные, вход для B2B; страницы с ответом 2xx считаются от всех, а не только от людей).
+Не сайт — IP вместо имени, другие домены (копии, dev-версии), поддомены почти без страниц (имена, которые подбирают сканеры).
 Запросы к «не сайту» не входят в «Люди», заявки и заказы, ошибки (02), маркетинг (05), SEO (06), страницы, разделы и файлы (01);
 входят в нагрузку и безопасность (03) и ботов (04): нагрузка и атаки на сервер настоящие."""
 import re
@@ -45,19 +45,19 @@ def classify(R, site_hosts, not_site=(), pages_min=None):
     codes = R['vhost'].cat.codes.values
     if not any(normalize(c) for c in cats): return np.ones(n, bool), []   # формат лога без имени хоста
     ncat = len(cats)
-    ok_page = (R['method'].values == 'GET') & R['ua_browser'].values & ~R['is_static'].values & (R['status'].values < 400)
+    ok_page = (R['method'].values == 'GET') & ~R['is_static'].values & (R['status'].values >= 200) & (R['status'].values < 300)   # страницы с ответом 2xx — от всех: региональные поддомены обходят и одни поисковики
     sel = codes >= 0
     req = np.bincount(codes[sel], minlength=ncat)
     pages = np.bincount(codes[sel & ok_page], minlength=ncat)
     by_name = {}
     for i, c in enumerate(cats):
-        d = by_name.setdefault(normalize(c), dict(запросов=0, страниц_людям=0, cats=[]))
-        d['запросов'] += int(req[i]); d['страниц_людям'] += int(pages[i]); d['cats'].append(i)
+        d = by_name.setdefault(normalize(c), dict(запросов=0, страниц=0, cats=[]))
+        d['запросов'] += int(req[i]); d['страниц'] += int(pages[i]); d['cats'].append(i)
     sites = set(names_only(site_hosts))
     off = {normalize(h) for h in not_site or []}
     if not sites:   # имён сайта нет (лог без имени файла и рефереров): сайт — хост, который чаще всех отдаёт страницы людям
         named = {k: v for k, v in by_name.items() if k and not is_ip(k) and k not in off}
-        if named: sites = {max(named, key=lambda k: (named[k]['страниц_людям'], named[k]['запросов']))}
+        if named: sites = {max(named, key=lambda k: (named[k]['страниц'], named[k]['запросов']))}
     kind = {}
     for name, d in by_name.items():
         if name == '': t, why = 'сайт', 'имя хоста не записано'
@@ -65,15 +65,15 @@ def classify(R, site_hosts, not_site=(), pages_min=None):
         elif is_ip(name): t, why = 'не сайт', 'IP вместо имени'
         elif name in sites: t, why = 'сайт', 'основной домен'
         elif any(name.endswith('.' + s) for s in sites):
-            if d['страниц_людям'] >= pages_min: t, why = 'сайт', 'поддомен отдаёт страницы людям'
-            else: t, why = 'не сайт', 'поддомен без страниц людям (имя подобрано сканером)'
+            if d['страниц'] >= pages_min: t, why = 'сайт', 'поддомен отдаёт страницы'
+            else: t, why = 'не сайт', 'поддомен без страниц (имя подобрано сканером)'
         else: t, why = 'не сайт', 'другой домен'
         kind[name] = (t, why)
     is_site_cat = np.ones(ncat, bool)
     for name, d in by_name.items():
         for i in d['cats']: is_site_cat[i] = kind[name][0] == 'сайт'
     mask = np.where(sel, is_site_cat[np.where(sel, codes, 0)], True)
-    table = sorted([dict(хост=name or '(не записан)', тип=kind[name][0], причина=kind[name][1], запросов=d['запросов'], страниц_людям=d['страниц_людям']) for name, d in by_name.items()],
+    table = sorted([dict(хост=name or '(не записан)', тип=kind[name][0], причина=kind[name][1], запросов=d['запросов'], страниц=d['страниц']) for name, d in by_name.items()],
                    key=lambda r: (r['тип'] != 'сайт', -r['запросов']))
     return mask, table
 

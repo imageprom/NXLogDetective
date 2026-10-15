@@ -121,3 +121,20 @@ def test_map_override_site_hosts_add_and_not_site_remove(monkeypatch):
         m = json.load(open(os.path.join(work, 'site_map.json'), encoding='utf-8'))
         kind = {r['хост']: r['тип'] for r in m['hosts']}
         assert kind[SPB] == 'не сайт' and kind[COPY] == 'сайт' and kind[MSK] == 'сайт'
+
+
+# ---------- A1, A2 ----------
+def test_subdomain_crawled_only_by_robots_is_site(monkeypatch):
+    """Поддомен, который обходят только роботы (≥ 10 страниц с 200), — сайт; имя с одними 403/404 — не сайт."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    log, _ = _log(with_extra=False)
+    ROBOT = 'nsk.example.com'
+    for d in range(3):
+        for k in range(6):   # 18 страниц с 200 для Googlebot и robots.txt
+            log.line('66.249.66.10', synth.T0 + timedelta(days=d, hours=6, minutes=k), synth.PAGES[k % len(synth.PAGES)], 200, ua='Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', host=ROBOT)
+        log.line('66.249.66.10', synth.T0 + timedelta(days=d, hours=6, minutes=30), '/robots.txt', 200, ua='Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', host=ROBOT)
+        for j in range(4): log.line('203.0.113.52', synth.T0 + timedelta(days=d, hours=5, seconds=j), '/', 403 if j % 2 else 404, ua=SCAN_UA, host='auth0.example.com')
+    with tempfile.TemporaryDirectory() as d:
+        res, lines, work, c = _run(d, log)
+        kind = {r['хост']: r['тип'] for r in json.load(open(os.path.join(work, 'site_map.json'), encoding='utf-8'))['hosts']}
+        assert kind[ROBOT] == 'сайт' and kind['auth0.example.com'] == 'не сайт', kind

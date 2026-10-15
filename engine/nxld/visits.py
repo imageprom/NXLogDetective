@@ -181,6 +181,15 @@ def monitor_name(ua):
     return None
 
 
+def monitor_names(ua):
+    """monitor_name для колонки: регулярки считаются по разным User-Agent, не по визитам. Серия с индексом колонки."""
+    codes, uniq = pd.factorize(ua.astype(str))
+    nm = pd.Series([monitor_name(u) for u in uniq])   # тип — как у списка по визитам
+    out = nm.take(codes)
+    out.index = ua.index
+    return out
+
+
 def learn_monitors(items, site=''):
     """Запись Детектива: [{сервис, шаблон, ссылка}] → learned/monitors.json (без ссылки не принимается)."""
     import json, os
@@ -283,7 +292,7 @@ def regroup(V, R=None):
         n_addr = V.groupby(key)['entry'].nunique()
     addr = key.map(n_addr).fillna(1).values
     MX = monitors_ref()['max_addr']
-    named = pd.Series([monitor_name(u) for u in V['ua'].astype(str)], index=V.index)
+    named = monitor_names(V['ua'])
     by_name = ((V['fam'] != '') & (V['fam_cat'] == 'Мониторинг')) | named.notna()
     by_name &= V['group'].isin(['Роботы', 'Люди', 'Боты', 'Системы мониторинга']) & (V['subgroup'] != 'сотрудники')
     rhythm = V['subgroup'].isin(['мониторинги', 'неопознанный мониторинг'])

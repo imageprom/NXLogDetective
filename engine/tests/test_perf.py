@@ -169,3 +169,20 @@ def test_measures_by_ip_dates_in_bulk(monkeypatch):
     assert r.at['198.51.0.1', 'первый'] == common.dmy(F.at['198.51.0.1', 't0']) and r.at['198.51.0.1', 'последний'] == common.dmy(F.at['198.51.0.1', 't1'])
     assert r.at['198.51.0.6', 'первый'] == '' and r.at['198.51.0.6', 'последний'] != ''
     assert r.at['203.0.113.9', 'первый'] == '' and r.at['203.0.113.9', 'приговор'] == 'не трогать'
+
+
+# ---------- 3. повторные расчёты по одинаковым значениям ----------
+from nxld import classify, visits  # noqa: E402
+
+
+def test_monitor_names_per_unique_ua(monkeypatch):
+    uas = ['Mozilla/5.0 (compatible; Example/1.0)', 'Mozilla/5.0 Chrome/120', 'Pingdom.com_bot_version_1.4', 'curl/8.4.0', '']
+    ua = pd.Series([uas[i % 5] for i in range(2000)], index=range(100, 2100))
+    expect = pd.Series([visits.monitor_name(u) for u in ua.astype(str)], index=ua.index)
+    calls = []
+    orig = visits.monitor_name
+    monkeypatch.setattr(visits, 'monitor_name', lambda u: (calls.append(u), orig(u))[1])
+    got = visits.monitor_names(ua)
+    pd.testing.assert_series_equal(got, expect)
+    assert len(calls) == 5, len(calls)   # по разным User-Agent, не по визитам
+

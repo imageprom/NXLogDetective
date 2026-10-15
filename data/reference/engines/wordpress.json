@@ -308,5 +308,7 @@
       "источник": "сообщество",
       "ссылка": "https://cashruflow.ru/blog/clean-param"
     }
-  ]
+  ],
+  "order_success": [{"path": "^/checkout/order-received/(\\d+)/"}],
+  "to_verify": "заказы WooCommerce: страница успеха /checkout/order-received/<номер>/"
 }

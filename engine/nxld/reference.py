@@ -217,6 +217,23 @@ def engine_pages(engines, roles=('вход',)):
     return out
 
 
+def engine_orders(engines):
+    """Заказы магазина по справочнику найденных движков (data/reference/engines/*.json, ключи латиницей, to_verify):
+    order_success — страница успеха оформления: {"path": регулярное выражение адреса, "param": параметр с номером заказа}
+    или номер — первая группа регулярного выражения; order_steps — шаги и пересчёты оформления (не цели, но ошибки на них — возможная потеря заказа);
+    not_goals — адреса, POST на которые не цели (шаги оформления, проверка подписки, кабинет, админка). Нет ключей у движка — пустой справочник, цели как раньше."""
+    names = {str(e).lower() for e in engines if e}
+    out = dict(order_success=[], order_steps=[], not_goals=[], to_verify=[], движки=[])
+    for path in sorted(glob.glob(os.path.join(REF_DIR, 'engines', '*.json'))):
+        d = _read(path) or {}
+        if not ({str(d.get('название', '')).lower(), str(d.get('id', '')).lower()} & names): continue
+        if not any(d.get(k) for k in ('order_success', 'order_steps', 'not_goals')): continue
+        out['движки'].append(d.get('название') or d.get('id'))
+        for k in ('order_success', 'order_steps', 'not_goals'): out[k] += d.get(k, [])
+        if d.get('to_verify'): out['to_verify'].append(d['to_verify'])
+    return out
+
+
 def engine_backup_paths():
     """Шаблоны адресов бэкапов всех движков справочника («backup_paths»): Битрикс /bitrix/backup/, WordPress updraft и ai1wm, Joomla Akeeba."""
     out = []

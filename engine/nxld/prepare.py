@@ -151,14 +151,25 @@ def run(paths, workdir, log=print, map_override=None):
     qc = R['query'].cat.categories.to_series().str.extract(r'(?:^|&)(?:form|form_id|WEB_FORM_ID|formid|form_name)=([^&]+)', flags=re.I)[0].fillna('').values
     fq = qc[R['query'].cat.codes.values]
     fkey = pd.Series(R['tpl'].astype(str).values + np.where(fq != '', '?form=' + fq, ''), index=R.index)
-    is_goal = post & fkey.isin(list(rules.keys())).values
+    from . import orders as orders_, reference
+    spec = reference.engine_orders([e.get('движок') for e in engines.to_dict('records')])   # заказы магазина — по справочнику найденных движков (#22)
+    is_goal = post & fkey.isin(list(rules.keys())).values & ~orders_.not_goals(R, spec)   # шаги оформления, проверка подписки, кабинет и админка — не цели
     succ = np.zeros(len(R), dtype=bool)
     for k, rule in rules.items():
         m = is_goal & (fkey.values == k)
         if '3xx' in rule: succ |= m & np.isin(R['status'].values, [302, 303])
         else: succ |= m & (R['status'].values == 200)
-    R['goal'] = pd.Categorical(np.where(is_goal, fkey.values, ''))
+    goal = np.where(is_goal, fkey.values, '').astype(object)
+    is_order = np.zeros(len(R), dtype=bool)
+    pos, ids = orders_.first_orders(R, spec)   # заказ — один раз: в визите, где номер встретился впервые (V.n_conv — число таких номеров)
+    if len(pos):
+        goal[pos] = R['tpl'].astype(str).values[pos]; is_goal[pos] = True; succ[pos] = True; is_order[pos] = True
+    site_map['orders'] = dict(движки=spec['движки'], заказов=len(pos), to_verify=spec['to_verify'])
+    if len(pos): log(f"   заказов по номеру: {len(pos):,} ({', '.join(spec['движки'])})")
+    R['goal'] = pd.Categorical(goal)
     R['goal_success'] = succ
+    R['is_order'] = is_order
+    R['order_step'] = orders_.steps(R, spec)   # шаги оформления: ошибка на них — возможная потеря заказа (карточка «Заявки», #24)
     V['n_goal'] = pd.Series(is_goal, index=R.index).groupby(R['vid']).sum()
     V['n_conv'] = pd.Series(succ, index=R.index).groupby(R['vid']).sum()
     log('5/5 Сохранение')

@@ -131,3 +131,31 @@ def test_lost_leads_forms_without_number_as_before(monkeypatch):
         log.line(ip, t + timedelta(seconds=60), '/contacts/send/', 500, ref='https://site.ru/contacts/', method='POST')
     card = _card(log, monkeypatch)
     assert len(card) == 1 and card[0]['главная_цифра'] == 2 and 'Ошибок всего' not in card[0]['факты']
+
+
+def test_order_with_error_on_success_page_counted_and_flagged(monkeypatch):
+    """B1: номер заказа на странице успеха с ответом 403 — заказ засчитан, есть карточка с кодом."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    log = _log()
+    ip = '95.167.0.9'
+    t = synth.T0 + timedelta(days=2, hours=15)
+    log.visit(ip, t)
+    log.line(ip, t + timedelta(seconds=400), '/personal/order/make/?ORDER_ID=1999', 403, ref='https://site.ru/personal/order/make/')
+    with tempfile.TemporaryDirectory() as d:
+        path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
+        log.write(path)
+        prepare.run([path], work, log=lambda *a: None)
+        assert int(pd.read_pickle(os.path.join(work, 'R.pkl'))['is_order'].sum()) == 6
+        res = analyze.run(work, log=lambda *a: None)
+    card = [x for x in res['findings'] if x['key'].split(':')[1] == 'order_page_error']
+    assert len(card) == 1 and '403 (1)' in card[0]['факты'] and 'из 6' in card[0]['факты'], card
+
+
+def test_no_error_card_when_success_page_ok(monkeypatch):
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    with tempfile.TemporaryDirectory() as d:
+        path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
+        _log().write(path)
+        prepare.run([path], work, log=lambda *a: None)
+        res = analyze.run(work, log=lambda *a: None)
+    assert not [x for x in res['findings'] if x['key'].split(':')[1] == 'order_page_error']

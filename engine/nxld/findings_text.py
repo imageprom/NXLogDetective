@@ -7,7 +7,7 @@ import re
 import pandas as pd
 
 THEME = {
-    'bot_leads': 'Заявки', 'operator': 'Заявки', 'lost_leads': 'Заявки',
+    'bot_leads': 'Заявки', 'operator': 'Заявки', 'lost_leads': 'Заявки', 'order_page_error': 'Заявки',
     'ad_landing_errors': 'Реклама', 'campaign_zero': 'Реклама', 'placements_off': 'Реклама', 'placement_type_low': 'Реклама', 'placement_type_zero': 'Реклама',
     '5xx': 'Сайт', '5xx_section': 'Сайт', 'soft_errors': 'Сайт', 'broken_links': 'Сайт', 'missing_static': 'Сайт',
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',

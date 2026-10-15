@@ -237,6 +237,14 @@ def overview(c, F):
             facts = f"Ошибок всего {len(lost) + steps_err}, из них закончились заказом {ended}, без заказа {n_lost}. " + facts
         F.add('Общий анализ', 'Срочно' if sev5 else 'Важно', 'lost_leads', 'all', f'{n_lost} отправок людей получили ошибку сервера',
               facts, 'код сайта', 'Проверить обработчики форм', n_lost, 'Конверсии', also=('Ошибки',))
+    if 'is_order' in R and R['is_order'].any():   # заказ создан, а страница успеха ответила ошибкой (B1, #22)
+        bad = R[R['is_order'].values & (R['status'].values >= 400)]
+        if len(bad):
+            from . import texts
+            codes = ', '.join(f'{k} ({v})' for k, v in bad['status'].astype(int).value_counts().sort_index().items())
+            kw = dict(n=len(bad), total=int(R['is_order'].sum()), codes=codes, first=bad['ts'].min(), last=bad['ts'].max())
+            F.add('Общий анализ', 'Срочно', 'order_page_error', 'all', texts.fmt('order_page_error', 'title', **kw), texts.fmt('order_page_error', 'facts', **kw),
+                  texts.fmt('order_page_error', 'where'), texts.fmt('order_page_error', 'action'), len(bad), 'Конверсии')
     if c.inv.get('hour_gaps'):
         F.add('Общий анализ', 'Важно', 'gaps', 'log', f"В логе пропущено {len(c.inv['hour_gaps'])} часов",
               ', '.join(c.inv['hour_gaps'][:10]), 'сервер / ротация логов', 'Проверить, были ли сбои или потеря логов', len(c.inv['hour_gaps']), 'О данных')

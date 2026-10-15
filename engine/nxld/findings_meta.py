@@ -9,6 +9,7 @@ import pandas as pd
 from . import texts
 
 META = {
+    'order_page_error': (texts.card('order_page_error').get('found', ''), texts.card('order_page_error').get('check', '')),
     'ip_host_redirect': (texts.card('ip_host_redirect').get('found', ''), texts.card('ip_host_redirect').get('check', '')),   # тексты — data/locale/<язык>/cards.json
     'bot_leads': ('Отправка формы принята сервером, а визит по поведению — бот (битый вход → главная → форма за секунды, отправка без просмотра страниц, смена IP посреди визита и т. п.)',
                   'В новом логе нет принятых отправок от визитов, которые Детектив относит к ботам'),

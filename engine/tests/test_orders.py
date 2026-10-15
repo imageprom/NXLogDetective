@@ -149,6 +149,10 @@ def test_order_with_error_on_success_page_counted_and_flagged(monkeypatch):
         res = analyze.run(work, log=lambda *a: None)
     card = [x for x in res['findings'] if x['key'].split(':')[1] == 'order_page_error']
     assert len(card) == 1 and '403 (1)' in card[0]['факты'] and 'из 6' in card[0]['факты'], card
+    import re
+    assert re.search(r'Первый — \d\d\.\d\d\.\d{4} \d\d:\d\d', card[0]['факты']), card[0]['факты']   # время — дата, а не секунды эпохи
+    # заказ создан — это не потерянная заявка: в «потерянных» его нет
+    assert not [x for x in res['findings'] if x['key'].split(':')[1] == 'lost_leads'], [x['факты'] for x in res['findings'] if 'lost_leads' in x['key']]
 
 
 def test_no_error_card_when_success_page_ok(monkeypatch):
@@ -216,5 +220,5 @@ def test_order_funnel_on_funnels_sheet(tmp_path):
     row = {v: r for r, v in cells if v in ('Корзина', 'Оформление', 'Заказ')}
     vals = {k: [c.value for c in ws[row[k]] if c.value is not None] for k in row}
     assert vals['Корзина'][1:3] == [8, vals['Корзина'][2]] and vals['Оформление'][1] == 8 and vals['Заказ'][1] == 5 and vals['Заказ'][2] == round(5 / 8 * 100, 1), vals
-    assert any('Из визитов с заказом (5) были в корзине' in t and t.rstrip('.').endswith('5)') for t in texts_)
+    assert any('Через корзину прошли 5 из 5 визитов с заказом.' in t for t in texts_), [t for t in texts_ if 'корзин' in t]
     assert not any('/personal/order/make/?ORDER_ID' in t for t in texts_)   # строка цели «Заказ» среди форм заменена воронкой

@@ -5,7 +5,7 @@ import numpy as np, pandas as pd
 from . import recon, ipdb
 from .recon import mask_pd
 from . import operators
-from .common import top_values
+from .common import top_values, dmy
 
 KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 VULN = r'(^/\.env|/\.git/|/\.aws|/\.ssh|/\.svn|/\.DS_Store|phpinfo|/wp-login\.php|/wp-admin|/xmlrpc\.php|/wp-content/plugins|/phpmyadmin|/pma/|/adminer|/vendor/phpunit|/actuator|/cgi-bin/|/server-status|/config\.(json|yml|yaml|php)|/backup|\.(sql|bak|old|swp|tar|tar\.gz|tgz|zip|rar)$|/shell|/eval-stdin|/boaform|/HNAP1|/owa/|/autodiscover|/\.well-known/(?!acme)|/restore\.php|/bitrixsetup\.php|/install\.php|/setup\.php|/telescope|/_profiler|/debug|/console)'
@@ -213,7 +213,8 @@ def overview(c, F):
         F.add('Общий анализ', 'Срочно', 'bot_leads', 'all', f'Среди принятых заявок {len(bot_ok)} от ботов',
               f"{len(bot_ok)} принятых отправок с {bot_ok['ip'].nunique()} IP; последняя {bot_ok['время'].max()}. Примеры IP: {', '.join(bot_ok['ip'].astype(str).unique()[:8])}",
               'защита форм (код сайта), CRM', 'Отсеять эти заявки у менеджеров; поставить защиту форм', len(bot_ok), 'Конверсии', also=('Боты',))
-    lost = P[(P['группа'] == 'Люди') & (P['status'] >= 400) & (P['status'] != 499)]
+    is_ord = R['is_order'].values[gp] if 'is_order' in R else np.zeros(len(P), bool)   # заказ с ошибкой на странице успеха — не потеря: заказ создан (карточка order_page_error)
+    lost = P[(P['группа'] == 'Люди') & (P['status'] >= 400) & (P['status'] != 499) & ~is_ord]
     ended, steps_err = 0, 0
     if 'order_step' in R and R['order_step'].any():   # ошибка на шаге оформления — не потеря, если с того же IP номер заказа появился в окне после ошибки (#24)
         from .thresholds import value
@@ -242,7 +243,7 @@ def overview(c, F):
         if len(bad):
             from . import texts
             codes = ', '.join(f'{k} ({v})' for k, v in bad['status'].astype(int).value_counts().sort_index().items())
-            kw = dict(n=len(bad), total=int(R['is_order'].sum()), codes=codes, first=bad['ts'].min(), last=bad['ts'].max())
+            kw = dict(n=len(bad), total=int(R['is_order'].sum()), codes=codes, first=dmy(bad['ts'].min()), last=dmy(bad['ts'].max()))
             F.add('Общий анализ', 'Срочно', 'order_page_error', 'all', texts.fmt('order_page_error', 'title', **kw), texts.fmt('order_page_error', 'facts', **kw),
                   texts.fmt('order_page_error', 'where'), texts.fmt('order_page_error', 'action'), len(bad), 'Конверсии')
     if c.inv.get('hour_gaps'):

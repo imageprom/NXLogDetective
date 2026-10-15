@@ -318,3 +318,39 @@ def test_run_keeps_visits_compact():
         res, out, text = synth.run(log, d)
         V = pd.read_pickle(os.path.join(d, 'work', 'V.pkl'))
         for c in ('ua', 'nettype', 'channel', 'group', 'subgroup'): assert str(V[c].dtype) == 'category', c
+
+
+# ---------- 2. дела: итоги по визитам без прохода по V на каждое дело ----------
+def _totals_data(n=3000, seed=8):
+    r = random.Random(seed)
+    ips = [f'198.51.{i // 250}.{i % 250 + 1}' for i in range(600)]
+    V = pd.DataFrame({'ip': [r.choice(ips) for _ in range(n)], 'group': [r.choice(['Люди', 'Боты', 'Роботы']) for _ in range(n)],
+                      'fam': [r.choice(['', 'Googlebot', 'YandexBot']) for _ in range(n)], 'fam_verified': [r.choice(['да', 'нет', '']) for _ in range(n)]})
+    org = {ip: r.choice(['Example Net', 'Example Hosting', '', None]) for ip in ips}
+    return ips, V, V['ip'].map(org), (V['group'] == 'Люди').values
+
+
+def test_visit_totals_same_as_per_case_passes():
+    ips, V, orgV, hum = _totals_data()
+    VT = profiles.VisitTotals(V, V['ip'], orgV, hum)
+    r = random.Random(1)
+    for _ in range(40):
+        g = r.sample(ips, r.randint(1, 60))
+        assert VT.visits_of(g) == int(V['ip'].isin(set(g)).sum())
+        orgs = {r.choice(['Example Net', 'Example Hosting', '', None, 'Other Net']) for _ in range(3)}
+        old = int((orgV.isin({o for o in orgs if o is not None} | ({np.nan} if None in orgs else set())).values & hum).sum())
+        assert VT.humans_in({np.nan if o is None else o for o in orgs}) == old
+        name = r.choice(['Googlebot', 'YandexBot', 'Bingbot'])
+        mm = V['fam'].astype(str) == name
+        assert VT.fam(name, 'нет') == int((mm & (V['fam_verified'].astype(str) == 'нет')).sum())
+        assert VT.fam(name, 'да') == int((mm & (V['fam_verified'].astype(str) == 'да')).sum())
+
+
+def test_visit_totals_no_pass_over_visits_per_case(monkeypatch):
+    ips, V, orgV, hum = _totals_data()
+    VT = profiles.VisitTotals(V, V['ip'], orgV, hum)
+    calls = []
+    orig = pd.Series.isin
+    monkeypatch.setattr(pd.Series, 'isin', lambda self, v: (calls.append(1), orig(self, v))[1])
+    for k in range(300): VT.visits_of(ips[k:k + 20]); VT.humans_in({'Example Net'}); VT.fam('Googlebot', 'нет')
+    assert not calls

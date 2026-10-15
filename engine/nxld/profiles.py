@@ -164,6 +164,28 @@ def window_share(c, ipset_codes, t0, t1):
     return (inside.sum() / max(1, b - a)), int(inside.sum()), int(before)
 
 
+class VisitTotals:
+    """Итоги по визитам для дел: считаются один раз на всю таблицу визитов, дальше — выборка по ключу."""
+
+    def __init__(self, V, Vip, orgV, Vhuman):
+        self.by_ip = Vip.value_counts()   # IP → визитов
+        self.hum_org = orgV[Vhuman].value_counts()   # сеть → визитов людей
+        self.hum_no_org = int(orgV[Vhuman].isna().sum())
+        self.famc = V.assign(_f=V['fam'].astype(str), _v=V['fam_verified'].astype(str)).groupby(['_f', '_v']).size().to_dict()
+
+    def visits_of(self, ips):
+        """Визитов с этих IP."""
+        return int(self.by_ip.reindex(pd.Index(ips).unique()).fillna(0).sum())
+
+    def humans_in(self, orgs):
+        """Визитов людей из этих сетей."""
+        return int(sum(self.hum_no_org if pd.isna(o) else self.hum_org.get(o, 0) for o in orgs))
+
+    def fam(self, name, verified):
+        """Визитов с этим именем робота и этой отметкой подлинности («да» / «нет»)."""
+        return int(self.famc.get((name, verified), 0))
+
+
 def build(c, res):
     R = c.R
     P = common.ip_profile(c)
@@ -227,6 +249,9 @@ def build(c, res):
     Vip_ = V['ip'].astype(str)   # один раз на все дела: на 2,5 млн визитов это минуты на каждое дело
     orgV_ = Vip_.map(P['организация'])
     Vhuman_ = (V['group'] == 'Люди').values
+    VT = VisitTotals(V, Vip_, orgV_, Vhuman_)   # итоги по визитам — один проход на все дела, а не проход по V на каждое дело
+    from . import alarms
+    open_leaks = set(alarms.leaks_open(res))
     for key, g in C.groupby('key'):
         agg = {f: (g[f].max() if f == 'maxpm' else g[f].sum()) for f in FEATURES if f in g}
         orgs = P['организация'].reindex(g.index).replace('', np.nan).fillna(P['сеть'].reindex(g.index))
@@ -285,8 +310,7 @@ def build(c, res):
         ch.sort(key=lambda x: -x[0]['вес'])
         top = ch[0][0]
         sev = 'Срочно' if top['вес'] >= 85 else ('Важно' if top['вес'] >= 45 else 'К сведению')
-        from . import alarms
-        op_ = set(alarms.leaks_open(res))
+        op_ = open_leaks
         sev0 = sev
         leak_hit = [f_ for f_ in (op_ if agg.get('leaks') else ()) if f_ in str(ctx.get('top_leaks', ''))]
         out_hit = any('продолжается' in str(o_) for o_ in outages_hit)
@@ -301,8 +325,7 @@ def build(c, res):
         if fam:
             rule = {'вид': 'подделка', 'user_agent': fam, 'сеть_не': sorted(ipdb.VERIFIED.get(fam, []))}
             tag, sig_text = 'FAKECRAWL', f"User-Agent содержит «{fam}» И сеть не из {', '.join('AS' + str(a) for a in rule['сеть_не']) or 'сетей робота'}"
-            mm = (V['fam'].astype(str) == fam)
-            hits = int((mm & (V['fam_verified'].astype(str) == 'нет')).sum()); spared = int((mm & (V['fam_verified'].astype(str) == 'да')).sum())
+            hits, spared = VT.fam(fam, 'нет'), VT.fam(fam, 'да')
             false_ = 0; check = f'{nf(hits)} визитов; настоящий {fam} не задет ({nf(spared)} визитов)'
         else:
             asns = pd.Series(P.loc[g.index, 'организация']).value_counts().index[:3].tolist()
@@ -315,9 +338,9 @@ def build(c, res):
                 tag = {'bot:Зонды и перебор': 'SCAN', 'bot:Маскировка': 'MASK', 'bot:Явный бот': 'BOT', 'bot:без User-Agent': 'NOUA', 'bot:Спам форм': 'SPAM'}.get(key.split('|')[0], key.split(':')[0].upper())
                 from .actors import sig_label
                 sig_text = f"{'; '.join(sig_label(x_).lower() for x_ in subs[:2] if x_)} — из сети {', '.join(a_ for a_ in asns if a_) or 'без названия'}"
-            hits = int(Vip_.isin(set(g.index)).sum())
+            hits = VT.visits_of(g.index)
             own_asn = set(P.loc[g.index, 'организация'])
-            false_ = int((orgV_.isin(own_asn).values & Vhuman_).sum())
+            false_ = VT.humans_in(own_asn)
             check = f'{nf(hits)} визитов этой группы; в тех же сетях визитов людей — {nf(false_)}' + (' (сеть целиком не закрывать)' if false_ else '')
         sig_id = f"SIG-{tag}-{h6(json.dumps(rule, sort_keys=True, ensure_ascii=False))}"
         case_id = h6(site, key)

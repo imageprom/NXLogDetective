@@ -25,9 +25,10 @@ def topn(s, n=3):
 class Ctx:
     """Общие данные для блоков."""
 
-    def __init__(self, R, V, E, T, site_map, inv, G=None):
+    def __init__(self, R, V, E, T, site_map, inv, G=None, E_srv=None):
         R['day'] = R['day'].cat.reorder_categories(sorted(R['day'].cat.categories)).cat.as_ordered()
         self.R, self.V, self.E, self.T, self.m, self.inv, self.G = R, V, E, T, site_map, inv, G
+        self.E_srv = E if E_srv is None else E_srv   # error-лог всего сервера (без копий): сбои и признаки торможения; E — для 02 только хосты сайта
         gc = pd.Categorical(V['group'].values)
         sc = pd.Categorical(V['subgroup'].values)
         vid = R['vid'].values
@@ -522,7 +523,7 @@ def errors(c, F):
     K['кто'] = WHO[K['w']]
     S['Коды ответа'] = K.pivot_table(index='код', columns='кто', values='n', fill_value=0).reset_index()
     # сбои: пик (страницы массово отдают 5xx) и деградация вокруг него (доля 5xx+499 в разы выше обычной для этого часа или провал трафика)
-    S['Сбои'], outages = outage_windows(R, st, c.E)
+    S['Сбои'], outages = outage_windows(R, st, c.E_srv)
     for w in outages:
         if w['пик_минут'] >= 2 and w['страниц_с_5xx'] >= 10:
             deg = f"деградация {str(w['деградация_с'])[:16]}–{str(w['деградация_по'])[11:16]}, " if w['деградация_с'] != w['начало'] or w['деградация_по'] != w['конец'] else ''

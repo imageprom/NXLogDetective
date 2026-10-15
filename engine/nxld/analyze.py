@@ -123,9 +123,13 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     hide_r = unrec_v.reindex(R['vid'].values).values
     m['off_site'] = dict(m.get('off_site') or {}, не_распознано_визитов=int(unrec_v.sum()))
     if m['off_site'].get('запросов'): log(f"Хосты вне сайта: запросов {m['off_site']['запросов']:,}, из них не распознано {int(unrec_v.sum()):,} визитов (в отчёт не входят)")
+    from . import hosts as hosts_
+    E_02, E_srv, n_e02, n_ecopy = hosts_.split_error_log(E, m.get('hosts') or [])   # 02 — error-лог только хостов сайта; сбои и торможение — весь сервер без копий
+    m['off_site'].update(error_log_не_вошло_в_02=n_e02, error_log_копии=n_ecopy)
+    if n_e02 or n_ecopy: log(f'Error-лог: в 02 не вошло {n_e02:,} строк с хостов вне сайта, из них копии на других доменах — {n_ecopy:,}')
     Rc, Vc = _cut(R, V, ~hide_r, ~unrec_v)
     R, V = Rc, visits.freeze(Vc)   # правила закончились: повторяющиеся строки — категории
-    c = blocks.Ctx(R, V, E, T, m, inv, G)
+    c = blocks.Ctx(R, V, E_02, T, m, inv, G, E_srv=E_srv)
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
     # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе он считался бы утечкой и шёл бы в дела
     c.addr = classify.build(R, c.human, np.asarray((c.rg == 'Свои') & (np.asarray(c.rsub) != 'скачал бэкап')), engines_)
@@ -133,7 +137,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     if s_r.all(): cs = c
     else:
         Rs, Vs = _cut(R, V, s_r, V['host_site'].astype(bool))
-        cs = blocks.Ctx(Rs, Vs, E, T, m, inv, G)
+        cs = blocks.Ctx(Rs, Vs, E_02, T, m, inv, G, E_srv=E_srv)
         cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
     Rs = cs.R
     F = Findings()

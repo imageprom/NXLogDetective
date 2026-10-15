@@ -102,9 +102,9 @@ def proofs(c, items, sheets):
                 if len(b):
                     r = b.iloc[0]
                     p = f"{r['ip']}, {str(r['время'])[:16]}: вход на {r['вход']}, через {int(r['сек_от_входа'])} с отправка {r['цель']} — сервер принял"
-            elif t in ('outage', 'degradation') and c.E is not None and len(c.E):
+            elif t in ('outage', 'degradation') and c.E_srv is not None and len(c.E_srv):
                 a = pd.Timestamp(obj).timestamp()
-                e = c.E[(c.E['ts'] >= a) & (c.E['ts'] <= a + 3600)]
+                e = c.E_srv[(c.E_srv['ts'] >= a) & (c.E_srv['ts'] <= a + 3600)]
                 e = e[e['msg'].astype(str).str.contains('timed out|failed|refused', regex=True)]
                 if len(e):
                     r = e.iloc[0]

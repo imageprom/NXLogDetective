@@ -222,3 +222,35 @@ def test_copies_on_other_domains_are_out_of_every_block(monkeypatch):
         assert any('копии на других доменах' in x for x in lines), lines   # и в журнале
         brief = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))
         assert brief['проверка']['хосты_вне_сайта']['копии_запросов'] == rows[COPY]['запросов']
+
+
+# ---------- A6 ----------
+def _err(path, lines):
+    with open(path, 'w') as f: f.write('\n'.join(lines) + '\n')
+
+
+def test_error_log_02_only_site_hosts_03_all_but_copies(monkeypatch):
+    """Error-лог: в 02 — строки только с хостов сайта; сбои и признаки торможения — весь сервер без копий; нет host — все строки."""
+    monkeypatch.setenv('NXLD_STRICT_CATALOG', '1')
+    log, _ = _log()
+    with tempfile.TemporaryDirectory() as d:
+        path, work, errp = os.path.join(d, 'access.log'), os.path.join(d, 'work'), os.path.join(d, 'error.log')
+        log.write(path)
+        L = []
+        for host, n in ((MAIN, 4), (MSK, 3), (COPY, 7), (IPHOST, 5), ('auth0.example.com', 2)):
+            for k in range(n):
+                L.append(f'2026/09/0{1 + k % 3} 10:{k:02d}:00 [error] 101#101: *{k + 1} upstream timed out (110: Connection timed out) while reading response header from upstream, client: 203.0.113.9, server: {host}, request: "GET /x{k}/ HTTP/1.1", upstream: "fastcgi://unix:/run/php.sock:", host: "{host}"')
+        _err(errp, L)
+        lines = []
+        prepare.run([path, errp], work, log=lines.append)
+        res = analyze.run(work, log=lines.append)
+        m = res['site_map']
+        assert m['off_site']['error_log_копии'] == 7 and m['off_site']['error_log_не_вошло_в_02'] == 7 + 5 + 2   # копии, IP-хост и подобранное имя — не в 02
+        assert any('Error-лог: в 02 не вошло 14' in x for x in lines), lines
+        brief = json.load(open(os.path.join(work, 'brief.json'), encoding='utf-8'))
+        assert brief['проверка']['хосты_вне_сайта']['error_log_не_вошло_в_02'] == 14
+        err02 = res['sheets']['Ошибки'].get('Error-лог')
+        assert err02 is not None and int(err02['сообщений'].sum()) == 4 + 3   # лист «Error-лог» (02): только хосты сайта
+        t = res['errors'].get('торможение') or {}
+        tm = t.get('таймауты')
+        assert tm is not None and int(tm.values.sum()) == 4 + 3 + 5 + 2   # торможение: весь сервер без копий (7 строк копии не в счёте)

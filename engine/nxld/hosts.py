@@ -89,3 +89,16 @@ def summary(table):
     """Сколько запросов и к каким хостам исключено из сайта: для журнала запуска и выжимки."""
     off = [r for r in table if r['тип'] != 'сайт']
     return dict(хостов=len(off), запросов=int(sum(r['запросов'] for r in off)), хосты=[dict(хост=r['хост'], запросов=r['запросов'], причина=r['причина']) for r in off[:20]])
+
+
+def split_error_log(E, table):
+    """Error-лог по таблице хостов (prepare): (для 02 — только хосты сайта, для сбоев и торможения — весь сервер без копий, сколько строк не вошло в 02, сколько — копии).
+    Нет колонки host или она пустая, хост неизвестен таблице — строка остаётся везде: хост не определён."""
+    if E is None or not len(E) or 'host' not in E: return E, E, 0, 0
+    kind = {normalize(r['хост']): (r['тип'], r['причина']) for r in table if r['хост'] != '(не записан)'}
+    if not kind: return E, E, 0, 0
+    h = E['host'].astype(str).str.lower().str.replace(r':\d+$', '', regex=True).map(normalize)
+    k = h.map(kind)   # хост без записи в таблице — NaN
+    not_site = k.map(lambda x: isinstance(x, tuple) and x[0] != 'сайт').astype(bool).values
+    copy = k.map(lambda x: isinstance(x, tuple) and x[1] == 'другой домен').astype(bool).values
+    return E[~not_site], E[~copy], int(not_site.sum()), int(copy.sum())

@@ -220,7 +220,7 @@ def detect_forms(R, tpl):
         rules[key] = rule
         rows.append(dict(адрес=key, отправок=n, IP=g['ip'].nunique(), коды=', '.join(f'{k}:{v}' for k, v in vc.items()),
                          вывод=rule, первый=pd.to_datetime(g.ts.min(), unit='s'), последний=pd.to_datetime(g.ts.max(), unit='s')))
-    D = pd.DataFrame(rows).sort_values(['вывод', 'отправок'], ascending=[True, False])
+    D = pd.DataFrame(rows, columns=['адрес', 'отправок', 'IP', 'коды', 'вывод', 'первый', 'последний']).sort_values(['вывод', 'отправок'], ascending=[True, False])   # форм нет — пустая таблица тех же колонок (#26)
     goals = {k: v for k, v in rules.items() if v.startswith('цель')}
     return D, goals
 

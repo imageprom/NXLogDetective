@@ -166,17 +166,21 @@ def test_no_error_card_when_success_page_ok(monkeypatch):
 
 
 def _funnel_log():
+    """Магазин: 5 заказов, 8 корзин (5 с заказом и 3 без), оформление в тех же 8 визитах; 25 визитов с действием «в корзину» (17 просто смотрят каталог + 8 дошли до корзины), ещё 60 визитов без корзины."""
     log = _log()
-    for k in range(25):   # 25 людей добавляют товар: POST на один обработчик со страниц каталога
-        ip = f'95.165.0.{k + 1}'
-        log.line(ip, synth.T0 + timedelta(hours=8, minutes=9 * k, seconds=30), '/catalog/add/', 200, ref=f'https://site.ru/catalog/p{k}/', method='POST')
+    for k in range(60):
+        log.visit(f'95.170.{k // 200}.{k + 1}', synth.T0 + timedelta(days=1, hours=11, minutes=7 * k), ref='https://yandex.ru/')
+    def act(ip, t, k): log.line(ip, t, '/catalog/add/', 200, ref=f'https://site.ru/catalog/p{k}/', method='POST')
+    for k in range(17): act(f'95.165.0.{k + 1}', synth.T0 + timedelta(hours=8, minutes=9 * k, seconds=30), k)
     for n in range(1, 6):   # все 5 заказов прошли корзину (с 3 ниже — 8 корзин) и оформление
         ip, t = f'95.167.0.{n}', synth.T0 + timedelta(days=2, hours=10, minutes=20 * n)
+        act(ip, t + timedelta(seconds=10), 16 + n)
         log.line(ip, t + timedelta(seconds=20), '/personal/cart/', 200, ref='https://site.ru/catalog/')
         log.line(ip, t + timedelta(seconds=30), '/personal/order/make/', 200, ref='https://site.ru/personal/cart/')
     for k in range(3):   # корзина и оформление без заказа
         ip, t = f'95.168.0.{k + 1}', synth.T0 + timedelta(days=3, hours=10, minutes=20 * k)
         log.visit(ip, t)
+        act(ip, t + timedelta(seconds=10), 22 + k)
         log.line(ip, t + timedelta(seconds=20), '/personal/cart/', 200, ref='https://site.ru/catalog/')
         log.line(ip, t + timedelta(seconds=30), '/personal/order/make/', 200, ref='https://site.ru/personal/cart/')
     return log
@@ -193,7 +197,7 @@ def test_order_funnel_steps(monkeypatch):
     of = res['sheets']['Маркетинг']['Воронка заказа']
     st = dict(of['шаги'])
     assert st['order'] == 5 and st['cart'] == 8 and st['checkout'] == 8 and st['action'] == 25, st
-    assert st['people'] >= 41 and of['заказ_через_корзину'] == 5 and of['действия_определены']
+    assert st['people'] >= 100 and of['заказ_через_корзину'] == 5 and of['действия_определены']
 
 
 def test_order_funnel_absent_without_shop(monkeypatch):

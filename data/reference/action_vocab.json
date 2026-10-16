@@ -1,0 +1,265 @@
+{
+ "_about": "Словарь признаков действий с товаром по названию адреса и параметрам запроса (shop.py). Ключи латиницей; у непроверенного — to_verify. Корзину, избранное и сравнение различают группы subjects.",
+ "verbs": [
+  "add",
+  "put",
+  "buy",
+  "delete",
+  "del",
+  "remove",
+  "update",
+  "change",
+  "set",
+  "edit",
+  "clear",
+  "recalc",
+  "recalculate",
+  "plus",
+  "minus",
+  "up",
+  "down",
+  "increase",
+  "decrease",
+  "dobavit",
+  "udalit",
+  "kupit",
+  "v_korzinu"
+ ],
+ "subjects": {
+  "cart": [
+   "cart",
+   "basket",
+   "bag",
+   "korzin",
+   "add2basket",
+   "buy",
+   "kupit",
+   "v_korzinu"
+  ],
+  "compare": [
+   "compare",
+   "sravn"
+  ],
+  "favorite": [
+   "favorite",
+   "favourite",
+   "favorites",
+   "wishlist",
+   "wish",
+   "izbrann",
+   "like",
+   "delay"
+  ],
+  "generic": [
+   "order",
+   "zakaz",
+   "checkout",
+   "oformlen",
+   "item",
+   "product",
+   "offer"
+  ]
+ },
+ "quantity_params": [
+  "quantity",
+  "qty",
+  "count",
+  "cnt",
+  "amount",
+  "kol",
+  "kolvo",
+  "num"
+ ],
+ "product_params": [
+  "id",
+  "product_id",
+  "productId",
+  "id_product",
+  "item_id",
+  "offer_id",
+  "element_id",
+  "ELEMENT_ID",
+  "sku",
+  "variant"
+ ],
+ "action_params": [
+  "action",
+  "act",
+  "do",
+  "op",
+  "task",
+  "mode",
+  "cmd",
+  "command",
+  "wc-ajax",
+  "ajax_action"
+ ],
+ "action_values": {
+  "cart": [
+   "ADD2BASKET",
+   "BUY",
+   "ADD",
+   "DELETE",
+   "add_to_cart",
+   "remove_from_cart"
+  ],
+  "compare": [
+   "ADD_TO_COMPARE_LIST",
+   "DELETE_FROM_COMPARE_LIST",
+   "COMPARE"
+  ],
+  "favorite": [
+   "ADD2DELAY",
+   "DELAY"
+  ]
+ },
+ "flag_params": {
+  "cart": [
+   "ajax_basket"
+  ]
+ },
+ "weak_action_values": [
+  "ADD",
+  "DELETE"
+ ],
+ "to_verify": "значения действий Битрикса сверены с документацией не полностью: ADD2DELAY — по описанию отложенных; параметр действия настраивается в компоненте; ADD и DELETE считаются признаком только вместе с параметром товара",
+ "page_words": {
+  "cart": [
+   "cart",
+   "basket",
+   "korzin",
+   "korzina"
+  ],
+  "checkout": [
+   "order",
+   "checkout",
+   "oformlen",
+   "make"
+  ]
+ },
+ "engines": [
+  {
+   "engine": "bitrix",
+   "kind": "cart",
+   "path": "sale\\.basket\\.basket|sale\\.basket\\.basket\\.line",
+   "method": "POST",
+   "role": "cart_handler",
+   "to_verify": "обработчики корзины Битрикса: это обработчики страницы корзины, не действия с товаром"
+  },
+  {
+   "engine": "woocommerce",
+   "kind": "cart",
+   "query": "(?:^|&)add-to-cart=\\d+|(?:^|&)wc-ajax=add_to_cart(?:&|$)|(?:^|&)action=woocommerce_add_to_cart",
+   "method": "any",
+   "role": "action"
+  },
+  {
+   "engine": "woocommerce",
+   "kind": "cart_service",
+   "query": "(?:^|&)wc-ajax=(?:remove_from_cart|get_refreshed_fragments|get_cart_totals|apply_coupon|remove_coupon|update_shipping_method|update_order_review|checkout)(?:&|$)|(?:^|&)action=woocommerce_",
+   "method": "any",
+   "role": "cart_handler",
+   "to_verify": "служебные вызовы WooCommerce: обновление корзины и оформления, не действия с товаром"
+  },
+  {
+   "engine": "opencart",
+   "kind": "cart",
+   "query": "(?:^|&)route=checkout/cart/add",
+   "method": "POST",
+   "role": "action",
+   "to_verify": "OpenCart: добавление в корзину"
+  },
+  {
+   "engine": "opencart",
+   "kind": "cart_service",
+   "query": "(?:^|&)route=checkout/cart/(?:edit|remove)",
+   "method": "POST",
+   "role": "cart_handler",
+   "to_verify": "OpenCart: изменение и удаление в корзине"
+  },
+  {
+   "engine": "prestashop",
+   "kind": "cart",
+   "query": "(?:^|&)add=1(?:&|$)",
+   "path": "(?:^|/)(?:cart|panier)",
+   "method": "POST",
+   "role": "action",
+   "to_verify": "PrestaShop: controller=cart с add; update, delete, op=up|down — обработчики корзины"
+  },
+  {
+   "engine": "shopify",
+   "kind": "cart",
+   "path": "^/cart/add(?:\\.js)?$",
+   "method": "POST",
+   "role": "action",
+   "to_verify": "Shopify: добавление в корзину"
+  },
+  {
+   "engine": "shopify",
+   "kind": "cart_service",
+   "path": "^/cart/(?:change|update|clear)(?:\\.js)?$|^/cart\\.js$",
+   "method": "any",
+   "role": "cart_handler",
+   "to_verify": "Shopify: изменение корзины"
+  },
+  {
+   "engine": "magento",
+   "kind": "cart",
+   "path": "^/checkout/cart/add(?:/|$)",
+   "method": "POST",
+   "role": "action",
+   "to_verify": "Magento: добавление в корзину"
+  },
+  {
+   "engine": "magento",
+   "kind": "cart_service",
+   "path": "^/checkout/cart/(?:updatePost|delete)(?:/|$)",
+   "method": "POST",
+   "role": "cart_handler",
+   "to_verify": "Magento: изменение корзины"
+  },
+  {
+   "engine": "joomla",
+   "kind": "cart",
+   "query": "(?:^|&)(?:view|controller)=cart(?:&|$).*(?:^|&)task=add(?:&|$)|(?:^|&)task=add(?:&|$).*(?:^|&)(?:view|controller)=cart(?:&|$)",
+   "method": "POST",
+   "role": "action",
+   "to_verify": "Joomla (VirtueMart, JoomShopping): task=add; delete, update — обработчики корзины"
+  },
+  {
+   "engine": "umi",
+   "kind": "cart",
+   "path": "^/emarket/basket/put/element/\\d+",
+   "method": "any",
+   "role": "action",
+   "to_verify": "UMI.CMS: добавление в корзину"
+  },
+  {
+   "engine": "insales",
+   "kind": "cart",
+   "path": "^/cart_items(?:\\.json)?$",
+   "method": "POST",
+   "role": "action",
+   "to_verify": "InSales: добавление в корзину"
+  }
+ ],
+ "engine_pages": [
+  {
+   "engine": "opencart",
+   "cart": "route=checkout/cart",
+   "checkout": "route=checkout/checkout",
+   "success": "route=checkout/success",
+   "to_verify": "OpenCart: страницы по параметру route"
+  },
+  {
+   "engine": "prestashop",
+   "success": "order-confirmation",
+   "to_verify": "PrestaShop: страница подтверждения заказа"
+  },
+  {
+   "engine": "magento",
+   "success": "/checkout/onepage/success",
+   "to_verify": "Magento: страница успеха"
+  }
+ ]
+}

@@ -295,3 +295,15 @@ def test_experiments_in_brief_with_edits(tmp_path):
     assert e['n'] == 1 and e['level'] == 'log_confirmed' and e['trace']['found'] and e['label'] == 'Э-1', e
     snap = json.load(open([os.path.join(out, f) for f in os.listdir(out) if f.endswith('.snapshot.json')][0], encoding='utf-8'))
     assert snap['правки']['experiments'][0]['n'] == 1   # хранится в снимке, повторно не просим
+
+
+def test_background_share_counts_only_visits_with_script():
+    """Фон определяется по страницам визитов, где скрипт вызывался: визиты без JS, быстрые уходы и предзагрузки его не вызывают.
+    На реальном логе магазина доля по всем страницам людей — 0,56, по визитам со скриптом — 0,65; без этого почерк не узнаётся и каждый вызов считается действием."""
+    log = _signature()
+    s = Shop(); s.log = log; s.n = 10000
+    for k in range(400): s.visit([f'/catalog/{100 + k % 40}/', f'/about/{k % 6}/'])   # без фонового вызова
+    sm, of, _ = _run(s.log)
+    f = {x['kind']: x for x in _found(sm)}
+    assert 'cart' in f and f['cart']['pattern'] == 'ACT-X-7F3A' and f['cart']['visits'] == 20, _found(sm)
+    assert _steps(of)['cart_add'] == 20 and 'action' not in _steps(of), of

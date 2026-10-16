@@ -103,9 +103,11 @@ def profile(ctx, idx):
         b = np.zeros(len(ei), bool); b[1:] |= close; b[:-1] |= close
         burst[ei] = b
     card = ctx.card_ref_mask()[idx]
-    pages = len(ctx.pk)
+    # доля — среди страниц тех визитов, где скрипт вызывался хоть раз: без JS, при быстром уходе и у предзагрузок фонового вызова нет,
+    # и на реальном логе доля по всем страницам людей ниже порога (0,56), а по визитам со скриптом — 0,65
+    pages = int(np.isin(ctx.pvid, np.unique(vid)).sum()) if len(ctx.pk) else 0
     return dict(idx=idx, vid=vid, extra=extra, burst=burst, card=card, pages_with_call=int(first.sum()), pages=pages,
-                per_page=bool(pages and first.sum() / pages >= float(thresholds.value('action_background_share', 0.7))))
+                per_page=bool(pages and first.sum() / pages >= float(thresholds.value('action_background_share', 0.5))))
 
 
 def _select(select, p, R):

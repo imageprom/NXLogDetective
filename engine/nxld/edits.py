@@ -74,6 +74,7 @@ def apply(res, edits):
         for h_, why in edits['встраивание'].items(): Em_.loc[Em_['сайт'] == h_, 'вывод'] = why
     if edits.get('проверка_сайта'):   # скил открыл адреса сайта из сети: robots.txt, карта сайта, главная (SKILL.md, раздел 4)
         res['проверка_сайта'] = dict(edits['проверка_сайта'])
+    if edits.get('experiments'): res['experiments'] = list(edits['experiments'])   # следственные эксперименты: след в логе ищется при сборке выжимки (shop.trace_experiments)
     if edits.get('site_profile'):   # Детектив поправил «Что за сайт»
         res['site_profile'] = dict(res.get('site_profile') or {}, **edits['site_profile'])
     return res

@@ -311,6 +311,16 @@ def build(res, c, prev=None):
                                    документация='https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html')
     except Exception:
         pass
+    sh_ = m.get('shop') or {}
+    if m.get('site_actions_found') or (m.get('orders') or {}).get('cart') or (m.get('orders') or {}).get('checkout'):   # что опознано в магазине (site_map.json) — Детективу проверить глазами
+        from . import shop as shop_
+        B['shop'] = dict(orders={k: (m.get('orders') or {}).get(k) for k in ('cart', 'checkout', 'success')}, actions=m.get('site_actions_found') or [], cart_separable=sh_.get('cart_separable'), note=sh_.get('note', ''))
+        cands = [a for a in m.get('site_actions_found') or [] if a.get('background') == 'per_page' and a.get('how') == 'behavior']
+        if cands:   # почерк не совпал ни с одной сигнатурой: Детектив предлагает новую (без имени сайта), в справочник вносим мы
+            B['signature_candidates'] = [dict(kind=a['kind'], background=a['background'], info=a.get('background_info'), how='candidate_for_action_patterns') for a in cands]
+    if res.get('experiments'):
+        from . import shop as shop_
+        B['experiments'] = shop_.trace_experiments(R, res['experiments'], inv.get('period'))
     B['что_за_сайт'] = res.get('site_profile')   # Детектив может поправить через edits.json → «site_profile»
     an = res.get('anatomy') or {}
     B['тематика_подсказки'] = an.get('подсказки')   # по ним Детектив называет тематику и уровни каталогов (edits.json → «anatomy_names», «site_profile.тематика»)

@@ -161,7 +161,8 @@ def run(paths, workdir, log=print, map_override=None):
     fq = qc[R['query'].cat.codes.values]
     fkey = pd.Series(R['tpl'].astype(str).values + np.where(fq != '', '?form=' + fq, ''), index=R.index)
     from . import orders as orders_, reference
-    spec = reference.site_orders(reference.engine_orders([e.get('движок') for e in engines.to_dict('records')]), map_override)   # заказы магазина — по справочнику найденных движков (#22) и поправкам карты (своя корзина)
+    eng_spec = reference.engine_orders([e.get('движок') for e in engines.to_dict('records')])
+    spec = reference.site_orders(eng_spec, map_override)   # заказы магазина — по справочнику найденных движков (#22) и поправкам карты (своя корзина)
     is_goal = post & fkey.isin(list(rules.keys())).values & ~orders_.not_goals(R, spec) & R['host_site'].values   # к хостам вне сайта цели не считаются (#23); шаги оформления, проверка подписки, кабинет и админка — не цели
     succ = np.zeros(len(R), dtype=bool)
     for k, rule in rules.items():
@@ -179,6 +180,15 @@ def run(paths, workdir, log=print, map_override=None):
     R['goal_success'] = succ
     R['is_order'] = is_order
     R['order_step'] = orders_.steps(R, spec)   # шаги оформления: ошибка на них — возможная потеря заказа (карточка «Заявки», #24)
+    from . import shop
+    sh = shop.detect(R, V, spec, eng_spec, map_override or {}, site_map['catalog_templates'])   # магазин опознаётся сам: корзина, оформление, действия с товаром (поправки карты важнее)
+    site_map['orders'].update(cart=shop.with_text(sh['pages']['cart']), checkout=shop.with_text(sh['pages']['checkout']), success=shop.with_text(sh['pages']['success']))
+    site_map['site_actions_found'] = shop.with_text(sh['found'])
+    site_map['shop'] = dict(spec_add=sh['spec_add'], rules=sh['rules'], cart_separable=sh['cart_separable'], step=sh['step'])
+    if sh['step'] == 'action':
+        from . import texts
+        site_map['shop']['note'] = texts.file('shop').get('cart_not_separable', '')
+    if sh['found']: log('   действия на сайте: ' + ', '.join(f"{f['kind']} {f['path']} ({f['how']}, визитов {f['visits']})" for f in sh['found'][:6]))
     V['n_goal'] = pd.Series(is_goal, index=R.index).groupby(R['vid']).sum()
     V['n_conv'] = pd.Series(succ, index=R.index).groupby(R['vid']).sum()
     log('5/5 Сохранение')

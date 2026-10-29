@@ -13,7 +13,7 @@ THEME = {
     'outage': 'Сервер', 'degradation': 'Сервер', 'errlog': 'Сервер', 'gaps': 'Сервер',
     'exposed': 'Безопасность', 'open_section': 'Безопасность', 'login_indexed': 'Поиск', 'pd_in_get': 'Безопасность', 'login_bruteforce': 'Безопасность', 'open_section_unknown': 'Безопасность', 'attack_500': 'Безопасность', 'webshell': 'Безопасность',
     'admin_foreign': 'Безопасность', 'ip_host_redirect': 'Безопасность', 'open_redirect': 'Безопасность', 'fake_crawlers': 'Безопасность', 'blocked_people': 'Безопасность', 'search_blocked': 'Поиск', 'ad_checker_blocked': 'Реклама', 'monitor_denied': 'Сервер',
-    'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
+    'heavy_images': 'Нагрузка', 'heavy_robot': 'Нагрузка', 'web_archive_refused': 'Нагрузка', 'web_archive_outage': 'Нагрузка', 'trap': 'Нагрузка', 'unknown_robot': 'Нагрузка',
     'search_errors': 'Поиск', 'no_service': 'Поиск', 'ai_index': 'Поиск', 'hotlink': 'Нагрузка', 'broken_labels': 'Реклама',
 }
 GRADE = {'Тревога': 'Тревога', 'Срочно': 'Приоритетные', 'Важно': 'Важные', 'К сведению': 'Остальные', 'Замечание': 'Замечания'}

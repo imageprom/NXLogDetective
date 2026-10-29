@@ -918,6 +918,33 @@ def mark_service_checks(V, R):
     return V
 
 
+def mark_web_archive(V, R):
+    """Сохранение страницы веб-архивом (Save Page Now): визит из сети Internet Archive (AS7941) без подписи архива, пачкой — одна страница и её ресурсы
+    за короткое время — «Роботы · веб-архив», вид «сохранение страницы», уровень «по сети и почерку». Подпись этого способа не подтверждена
+    (подпись в выжимке: signature_candidates, to_verify). Строки запросов получают то же семейство, чтобы попасть в таблицы роботов 04."""
+    from . import ipdb, texts
+    from .thresholds import value
+    tx = texts.file('robots')
+    fam, cat = tx.get('families', {}).get('web_archive_save'), tx.get('types', {}).get('web_archive')
+    nets = ipdb.VERIFIED.get(tx.get('families', {}).get('web_archive', 'Internet Archive'), set())
+    if not fam or not nets or 'asn' not in V: return R, V
+    nmin, tmax = int(value('web_archive_save_min_requests', 5)), float(value('web_archive_save_seconds', 120))
+    m = (pd.to_numeric(V['asn'], errors='coerce').fillna(0).astype(int).isin(nets).values & (V['fam'].astype(str) == '').values & (V['n_pages'] == 1).values
+         & (V['n_req'] >= nmin).values & (V['dur'] <= tmax).values & (V['group'] != 'Свои').values)
+    if not m.any(): return R, V
+    V = V.copy()
+    V.loc[m, 'group'] = 'Роботы'; V.loc[m, 'subgroup'] = 'известные'
+    V.loc[m, 'fam'] = fam; V.loc[m, 'fam_cat'] = cat; V.loc[m, 'fam_verified'] = 'да'
+    hit = np.isin(R['vid'].values, V.index[m])
+    R = R.copy()
+    for col, val in (('fam', fam), ('fam_cat', cat), ('fam_verified', 'да')):
+        c = R[col]
+        if val not in c.cat.categories: c = c.cat.add_categories([val])
+        c = c.copy(); c[hit] = val
+        R[col] = c
+    return R, V
+
+
 def audience(V):
     """Страна основной аудитории — самая частая среди визитов людей — и доля людей из неё; предупреждение, если доля ниже порога."""
     from .thresholds import value

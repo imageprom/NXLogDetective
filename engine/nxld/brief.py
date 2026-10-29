@@ -318,6 +318,12 @@ def build(res, c, prev=None):
         cands = [a for a in m.get('site_actions_found') or [] if a.get('background') == 'per_page' and a.get('how') == 'behavior']
         if cands:   # почерк не совпал ни с одной сигнатурой: Детектив предлагает новую (без имени сайта), в справочник вносим мы
             B['signature_candidates'] = [dict(kind=a['kind'], background=a['background'], info=a.get('background_info'), how='candidate_for_action_patterns') for a in cands]
+    wa_ = res.get('web_archive')   # робот веб-архива — всегда: приходил ли, когда, что получил, пик, совпадения со сбоями, robots.txt; сравнение с прошлой проверкой
+    if wa_ is not None:
+        B['web_archive'] = wa_
+        cand_ = (wa_.get('save_page') or {}).get('candidates')
+        if cand_:   # подпись сохранения страницы не подтверждена: кандидат в справочник, вносим мы
+            B['signature_candidates'] = list(B.get('signature_candidates') or []) + [dict(kind='web_archive_save', how='candidate_for_robots_reference', **x_) for x_ in cand_]
     if res.get('experiments'):
         from . import shop as shop_
         B['experiments'] = shop_.trace_experiments(R, res['experiments'], inv.get('period'))

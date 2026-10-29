@@ -12,6 +12,8 @@ OFFICIAL = {'googlebot': 'https://developers.google.com/search/apis/ipranges/goo
             'openai': 'https://openai.com/gptbot.json, https://openai.com/searchbot.json, https://openai.com/chatgpt-user.json',
             'perplexity': 'https://www.perplexity.com/perplexitybot.json', 'duckduckbot': 'https://duckduckgo.com/duckduckbot.json'}
 
+STATIC = {'Internet Archive': ['207.241.224.0/20', '208.70.24.0/21']}   # сети без публичного списка: AS7941 (ipinfo.io, 2026-10-29); обновлять вручную
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -30,6 +32,8 @@ def main():
         if not os.path.exists(p): continue
         nets = [x.strip() for x in open(p) if x.strip() and not x.startswith('#')]
         for f in fams: out['семейства'][f] = nets
+    out['семейства'].update(STATIC)
+    out['источник'] += '; Internet Archive: AS7941, ipinfo.io (2026-10-29)'
     json.dump(out, open(REF, 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     print('семейств:', len(out['семейства']), 'от', when)
 

@@ -103,6 +103,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
+    R, V = visits.mark_web_archive(V, R)   # сеть Internet Archive без подписи, пачкой — сохранение страницы веб-архивом («Роботы · веб-архив»)
     V = visits.mark_app_agents(V)   # встроенный браузер приложения (Битрикс24) — «Люди», дальше обычные правила (system_agents.json)
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V, backups_ = visits.mark_backups(V, R, m.get('staff_ips') or [], m.get('admin_regex'))   # бэкапы и дампы с ответом 200 — раньше всех правил
@@ -164,6 +165,11 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['sheets'][b] = S
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
+    try:   # робот веб-архива: всегда в выжимку и снимок (приходил ли, что получил, нагрузка, сбои); карточки — отказы и обход в минуты сбоя
+        from . import webarchive
+        res['web_archive'] = webarchive.build(c, F, (prev or {}).get('web_archive'))
+    except Exception as e:
+        block_failed(res, log, 'Веб-архив', e)
     from . import actors
     res['actors'] = actors.build(c)   # реестр обращающихся: все запросы — для листов 04 (роботы, утилиты, мониторинг, виды ботов)
     res['actors_site'] = actors.build(cs) if cs is not c else None   # и только запросы к сайту — для сводки «Активность» (01)

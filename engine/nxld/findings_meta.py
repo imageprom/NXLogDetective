@@ -9,6 +9,8 @@ import pandas as pd
 from . import texts
 
 META = {
+    'web_archive_refused': (texts.card('web_archive_refused').get('found', ''), texts.card('web_archive_refused').get('check', '')),
+    'web_archive_outage': (texts.card('web_archive_outage').get('found', ''), texts.card('web_archive_outage').get('check', '')),
     'order_page_error': (texts.card('order_page_error').get('found', ''), texts.card('order_page_error').get('check', '')),
     'ip_host_redirect': (texts.card('ip_host_redirect').get('found', ''), texts.card('ip_host_redirect').get('check', '')),   # тексты — data/locale/<язык>/cards.json
     'bot_leads': ('Отправка формы принята сервером, а визит по поведению — бот (битый вход → главная → форма за секунды, отправка без просмотра страниц, смена IP посреди визита и т. п.)',

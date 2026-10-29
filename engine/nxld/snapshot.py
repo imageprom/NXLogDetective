@@ -114,6 +114,7 @@ def build(res, site, edits=None):
                 'без_обхода': len(D.get('без_обхода')) if D.get('без_обхода') is not None else None}
     s['свои'] = {'сотрудники': m.get('staff_ips') or [], 'сервер': m.get('server_ips') or [],
                  'мониторинги': [{k: x.get(k) for k in ('ip', 'адрес', 'интервал_с')} for x in m.get('monitors') or []]}
+    s['web_archive'] = res.get('web_archive')   # робот веб-архива: следующая проверка сравнивает с этим («Было → стало»)
     s['правки'] = edits or {}
     return s
 

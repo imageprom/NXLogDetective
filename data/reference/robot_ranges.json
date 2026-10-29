@@ -1,6 +1,6 @@
 {
 "_о_файле": "Официальные сети роботов: подлинный робот приходит только из них. Для семейств без списка подлинность — по ASN (engine/nxld/ipdb.py, VERIFIED).",
-"источник": "github.com/lord-alfred/ipranges (CC0), официальные списки: googlebot: https://developers.google.com/search/apis/ipranges/googlebot.json; bing: https://www.bing.com/toolbox/bingbot.json; openai: https://openai.com/gptbot.json, https://openai.com/searchbot.json, https://openai.com/chatgpt-user.json; perplexity: https://www.perplexity.com/perplexitybot.json; duckduckbot: https://duckduckgo.com/duckduckbot.json",
+"источник": "github.com/lord-alfred/ipranges (CC0), официальные списки: googlebot: https://developers.google.com/search/apis/ipranges/googlebot.json; bing: https://www.bing.com/toolbox/bingbot.json; openai: https://openai.com/gptbot.json, https://openai.com/searchbot.json, https://openai.com/chatgpt-user.json; perplexity: https://www.perplexity.com/perplexitybot.json; duckduckbot: https://duckduckgo.com/duckduckbot.json; Internet Archive: AS7941, ipinfo.io (2026-10-29)",
 "получено": "2026-10-06",
 "семейства": {
 "Googlebot": [
@@ -1407,6 +1407,10 @@
 "191.235.201.214/32",
 "191.235.202.38/32",
 "191.235.202.48/32"
+],
+"Internet Archive": [
+"207.241.224.0/20",
+"208.70.24.0/21"
 ]
 }
 }

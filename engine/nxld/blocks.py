@@ -556,13 +556,14 @@ def errors(c, F):
     page = R['is_page'].values | (R['method'].values == 'POST')
     m5 = (st >= 500) & page
     Q = R.loc[m5, ['tpl', 'base', 'day', 'vid', 'ts']].assign(чел=c.human[m5])
+    Q['tpl'] = Q['tpl'].astype(str)   # ключи — строки: группы по подмножеству строк дают категориальные индексы с разными кодами (int8/int16) и не сопоставляются (#27)
     if len(Q):
         g = Q.groupby('tpl', observed=True)
         T5 = pd.DataFrame({'ошибок': g.size(), 'у_людей': g['чел'].sum(), 'людей_задето': Q[Q['чел']].groupby('tpl', observed=True)['vid'].nunique(),
                            'адресов': g['base'].nunique(), 'пример': g['base'].first().astype(str), 'первый_день': g['day'].min().astype(str), 'последний_день': g['day'].max().astype(str),
                            'дней_с_ошибкой': g['day'].nunique()}).fillna(0).sort_values('у_людей', ascending=False)
-        ok_tpl = R.loc[page & (st < 400), 'tpl'].value_counts()
-        T5['успешных_ответов'] = ok_tpl.reindex(T5.index).fillna(0).astype(int).values
+        ok_tpl = R.loc[page & (st < 400), 'tpl'].astype(str).value_counts()   # по строкам: категориальные индексы с разными кодами (int8/int16) reindex не сопоставляет (#27)
+        T5['успешных_ответов'] = ok_tpl.reindex(T5.index.astype(str)).fillna(0).astype(int).values
         S['5xx по шаблонам'] = T5.reset_index().rename(columns={'tpl': 'шаблон'})
         T5['раздел'] = [re.match(r'^(/[^/]*/?)', str(t)).group(1) for t in T5.index]
         big = T5[T5['у_людей'] >= 5]

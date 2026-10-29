@@ -1,5 +1,8 @@
 """NXLD: семейство объявленного робота по User-Agent (справочник, пополняется)."""
 import re
+from . import texts
+_T = texts.file('robots')   # тип и подписи строк роботов — data/locale/<язык>/robots.json
+WEB_ARCHIVE = _T.get('types', {}).get('web_archive', 'веб-архив')
 FAM = [
  (r'YandexBot|YandexMobileBot', 'YandexBot', 'Поисковик'),
  (r'YandexRenderResourcesBot', 'YandexRenderResourcesBot', 'Поисковик'),
@@ -37,7 +40,8 @@ FAM = [
  (r'MistralAI-User', 'MistralAI-User', 'ИИ: запрос пользователя'),
  (r'Amazonbot|Amzn-SearchBot', 'Amazonbot', 'ИИ: обучение'),
  (r'Bytespider', 'Bytespider (ByteDance)', 'ИИ: обучение'),
- (r'CCBot', 'CCBot (Common Crawl)', 'ИИ: обучение'),
+ (r'archive\.org_bot|special_archiver', _T.get('families', {}).get('web_archive', 'Internet Archive'), WEB_ARCHIVE),   # Wayback Machine; archive.today себя не называет — не опознаётся (robots.json → notes)
+ (r'CCBot', _T.get('families', {}).get('common_crawl', 'CCBot (Common Crawl)'), 'ИИ: обучение'),
  (r'ExaSearchBot', 'ExaSearchBot', 'ИИ: поисковый индекс'),
  (r'KeenableBot|Reflectionbot|Qwenbot', 'ИИ: прочие индексаторы', 'ИИ: поисковый индекс'),
  (r'meta-externalagent|meta-webindexer|meta-externalfetcher', 'Meta AI', 'ИИ: обучение'),

@@ -87,4 +87,5 @@ VERIFIED = {
     'Google: прочие роботы': {15169, 396982}, 'Bingbot': {8075}, 'Applebot': {714, 6185},
     'GPTBot (OpenAI)': {8075}, 'OAI-SearchBot (OpenAI)': {8075}, 'ChatGPT-User (OpenAI)': {8075},   # OpenAI публикует сети в Microsoft Azure
     'TelegramBot': {62041, 59930, 44907, 211157},   # сети Telegram Messenger
+    'Internet Archive': {7941},   # AS7941 Internet Archive
 }

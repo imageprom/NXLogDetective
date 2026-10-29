@@ -1,0 +1,16 @@
+{
+  "_о_файле": "Роботы: тип по нашей схеме и подписи строк. Тип «веб-архив» — Internet Archive (Wayback Machine). Сохранение страницы (Save Page Now) подпись не подтверждена.",
+  "types": {
+    "web_archive": "веб-архив"
+  },
+  "families": {
+    "web_archive": "Internet Archive",
+    "web_archive_save": "Internet Archive: сохранение страницы (по сети и почерку)",
+    "common_crawl": "CCBot (Common Crawl, открытый архив)"
+  },
+  "notes": {
+    "web_archive": "Internet Archive (Wayback Machine): подписи archive.org_bot и special_archiver, сеть AS7941. Подпись Save Page Now не подтверждена (to_verify).",
+    "archive_today": "archive.today (archive.is, archive.ph) себя роботом не называет и по подписи не опознаётся; только пометка в справочнике: такой архив существует.",
+    "common_crawl": "CCBot — открытый архив Common Crawl; в ИИ: обучение попадает потому, что на нём обучают модели."
+  }
+}

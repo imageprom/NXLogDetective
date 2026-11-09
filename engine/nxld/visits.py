@@ -918,6 +918,56 @@ def mark_service_checks(V, R):
     return V
 
 
+SERVICE_RX = r'^/$|^/(favicon\.ico|robots\.txt|sitemap\.xml|security\.txt|apple-touch-icon[^/]*\.png|\.well-known/.*)$'   # главная и служебные файлы: отпечаток сайта, а не чтение
+
+
+def mark_gov_robots(V, R):
+    """Ведомственные роботы (data/reference/gov_robots.json): визиты из сетей ГРЧЦ и СайберОК. Правила раньше общих правил сканеров и маскировки.
+    Подписанный CyberOKInspect — «Роботы · сканер защищённости». Под браузером только главная, favicon и служебные файлы (без статики страницы) или сотни страниц
+    подряд без заявок — «Боты · сканер под браузер». Сеть — не приговор: визит с обычным поведением остаётся на общих правилах (Люди), с пометкой gov_kind = visitor
+    (finish_gov_robots). Колонки V: gov_op (оператор сети), gov_kind (тип), подгруппа — подпись из data/locale/<язык>/gov_robots.json."""
+    from . import gov
+    from .thresholds import value
+    t = gov.tx()
+    sub, fam_c = t.get('subgroup', 'ведомственные роботы'), t.get('families', {}).get('cyberok', '')
+    V = V.copy()
+    asn = pd.to_numeric(V['asn'], errors='coerce').fillna(0).astype(int).values if 'asn' in V else np.zeros(len(V), int)
+    V['gov_op'] = gov.operators(V['ip'].astype(str).values, asn)
+    V['gov_kind'] = ''
+    cand = (V['gov_op'] != '').values & (V['group'] != 'Свои').values
+    if not cand.any(): return V
+    unsigned = cand & (V['fam'].astype(str) == '').values
+    cats = R['base'].cat.categories.to_series().astype(str)
+    svc = cats.str.contains(SERVICE_RX, regex=True).values[R['base'].cat.codes.values]
+    only_svc = pd.Series(svc).groupby(R['vid'].values).all().reindex(V.index).fillna(False).values
+    nogoal = (V['n_goal'] == 0).values
+    robot = unsigned & nogoal & (only_svc | (V['n_pages'] >= int(value('gov_bot_pages_min', 100))).values)
+    signed = cand & (V['fam'].astype(str) == fam_c).values
+    V.loc[signed, 'group'] = 'Роботы'; V.loc[signed, 'subgroup'] = sub; V.loc[signed, 'gov_kind'] = 'scanner_security'
+    V.loc[robot, 'group'] = 'Боты'; V.loc[robot, 'subgroup'] = sub; V.loc[robot, 'gov_kind'] = 'scanner_browser'
+    return V
+
+
+def finish_gov_robots(V):
+    """После всех правил: визиты из сетей справочника, оставшиеся «Людьми», — «посетитель из госсети» (примечание: человека от системы под видом человека не отличить);
+    «Боты» из этих сетей по общим правилам (зонды, маскировка, явные) — подгруппа «ведомственные роботы», прежняя подгруппа — в gov_was; остальное — «по общим правилам»."""
+    from . import gov
+    if 'gov_op' not in V: return V
+    sub = gov.tx().get('subgroup', 'ведомственные роботы')
+    V = V.copy()
+    todo = (V['gov_op'] != '').values & (V['gov_kind'] == '').values & (V['group'] != 'Свои').values
+    people = todo & (V['group'] == 'Люди').values
+    s = V['subgroup'].astype(str)
+    ordinary = todo & (V['group'] == 'Боты').values & (s.str.startswith('сканер под браузер') | s.str.startswith('маскирующиеся') | s.str.startswith('явные')).values
+    V['gov_was'] = ''
+    V.loc[ordinary, 'gov_was'] = s[ordinary]
+    V.loc[ordinary, 'subgroup'] = sub
+    V.loc[people, 'gov_kind'] = 'visitor'
+    V.loc[ordinary, 'gov_kind'] = 'scanner_browser'
+    V.loc[todo & ~people & ~ordinary, 'gov_kind'] = 'other'
+    return V
+
+
 def mark_web_archive(V, R):
     """Сохранение страницы веб-архивом (Save Page Now): визит из сети Internet Archive (AS7941) без подписи архива, пачкой — одна страница и её ресурсы
     за короткое время — «Роботы · веб-архив», вид «сохранение страницы», уровень «по сети и почерку». Подпись этого способа не подтверждена

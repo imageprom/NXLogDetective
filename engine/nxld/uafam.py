@@ -3,6 +3,8 @@ import re
 from . import texts
 _T = texts.file('robots')   # тип и подписи строк роботов — data/locale/<язык>/robots.json
 WEB_ARCHIVE = _T.get('types', {}).get('web_archive', 'веб-архив')
+_G = texts.file('gov_robots')   # СайберОК (СКИПА): подписанный сканер защищённости
+CYBEROK = (_G.get('families', {}).get('cyberok', 'СайберОК (СКИПА)'), _G.get('kinds', {}).get('scanner_security', 'сканер защищённости'))
 FAM = [
  (r'YandexBot|YandexMobileBot', 'YandexBot', 'Поисковик'),
  (r'YandexRenderResourcesBot', 'YandexRenderResourcesBot', 'Поисковик'),
@@ -40,6 +42,7 @@ FAM = [
  (r'MistralAI-User', 'MistralAI-User', 'ИИ: запрос пользователя'),
  (r'Amazonbot|Amzn-SearchBot', 'Amazonbot', 'ИИ: обучение'),
  (r'Bytespider', 'Bytespider (ByteDance)', 'ИИ: обучение'),
+ (r'CyberOKInspect', CYBEROK[0], CYBEROK[1]),
  (r'archive\.org_bot|special_archiver', _T.get('families', {}).get('web_archive', 'Internet Archive'), WEB_ARCHIVE),   # Wayback Machine; archive.today себя не называет — не опознаётся (robots.json → notes)
  (r'CCBot', _T.get('families', {}).get('common_crawl', 'CCBot (Common Crawl)'), 'ИИ: обучение'),
  (r'ExaSearchBot', 'ExaSearchBot', 'ИИ: поисковый индекс'),

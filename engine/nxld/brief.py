@@ -324,6 +324,8 @@ def build(res, c, prev=None):
         cand_ = (wa_.get('save_page') or {}).get('candidates')
         if cand_:   # подпись сохранения страницы не подтверждена: кандидат в справочник, вносим мы
             B['signature_candidates'] = list(B.get('signature_candidates') or []) + [dict(kind='web_archive_save', how='candidate_for_robots_reference', **x_) for x_ in cand_]
+    if res.get('gov_robots') is not None:   # ведомственные роботы — всегда: были ли, сколько, кто, что получили, отказы; сравнение с прошлой проверкой
+        B['gov_robots'] = res['gov_robots']
     if res.get('experiments'):
         from . import shop as shop_
         B['experiments'] = shop_.trace_experiments(R, res['experiments'], inv.get('period'))

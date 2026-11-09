@@ -104,6 +104,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
     R, V = visits.mark_web_archive(V, R)   # сеть Internet Archive без подписи, пачкой — сохранение страницы веб-архивом («Роботы · веб-архив»)
+    V = visits.mark_gov_robots(V, R)   # ведомственные роботы (ГРЧЦ, СайберОК): подписанный сканер и сканер под браузер — раньше общих правил; остальные из этих сетей — по общим
     V = visits.mark_app_agents(V)   # встроенный браузер приложения (Битрикс24) — «Люди», дальше обычные правила (system_agents.json)
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
     V, backups_ = visits.mark_backups(V, R, m.get('staff_ips') or [], m.get('admin_regex'))   # бэкапы и дампы с ответом 200 — раньше всех правил
@@ -115,6 +116,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
     R, V, form_ev = visits.confirm_form_success(R, V)
+    V = visits.finish_gov_robots(V)   # из сетей ведомственных роботов: люди — «посетитель из госорганов», боты по общим правилам — подгруппа «ведомственные роботы»
     # тип хоста посчитан в prepare (R.host_site). Визиты к хостам вне сайта прошли все обычные правила, как визиты к сайту (сканеры, боты, роботы, утилиты, мониторинг…).
     # Кто остался «Людьми» на хосте вне сайта — не выводится нигде в отчёте (только счёт в журнале и выжимке); распознанные идут в 03 и 04.
     # «Сайт» (cs): 01, 02, 05, 06 — запросы только к сайту; «всё» (c): 03, 04 — сайт и распознанные запросы к хостам вне сайта.
@@ -145,7 +147,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     F = Findings()
     if ip_stats and 'Нагрузка и безопасность' in selected:   # сервер отвечает на обращения по IP переадресацией или страницей (тексты — data/locale/<язык>/cards.json)
         from . import texts
-        F.add('Нагрузка и безопасность', 'Важно', 'ip_host_redirect', 'all', texts.fmt('ip_host_redirect', 'title', **ip_stats), texts.fmt('ip_host_redirect', 'facts', **ip_stats),
+        F.add('Нагрузка и безопасность', 'Важно', 'ip_host_redirect', 'all', texts.fmt('ip_host_redirect', 'title', **ip_stats), texts.fmt('ip_host_redirect', 'facts', **ip_stats) + (' ' + texts.fmt('ip_host_redirect', 'gov_note') if ip_stats.get('gov') else ''),
               texts.fmt('ip_host_redirect', 'where'), texts.fmt('ip_host_redirect', 'action'), ip_stats['n'], '')
     res = {'sheets': {}, 'summary': {}, 'selected': selected, 'site_map': m, 'inventory': inv, 'cleaning': cleaning_stats(R, V), 'form_evidence': form_ev,
            'hosting': recon.detect_hosting(E), 'check_ips': list(check_ips or []),
@@ -165,6 +167,12 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
             res['sheets'][b] = S
             res['summary'][b] = s
     res['ips'] = important_ips(c, res['sheets'].get('Боты', {}))
+    try:   # ведомственные роботы (ГРЧЦ, СайберОК): таблица блока на листе «Роботы», выжимка и снимок — всегда; карточки — «К сведению» (визиты) и «Важно» (отказы)
+        from . import govrobots
+        res['gov_robots'], res['gov_table'] = govrobots.build(c, F, (prev or {}).get('gov_robots'))
+    except Exception as e:
+        res['gov_robots'], res['gov_table'] = None, None
+        block_failed(res, log, 'Ведомственные роботы', e)
     try:   # робот веб-архива: всегда в выжимку и снимок (приходил ли, что получил, нагрузка, сбои); карточки — отказы и обход в минуты сбоя
         from . import webarchive
         res['web_archive'] = webarchive.build(c, F, (prev or {}).get('web_archive'))

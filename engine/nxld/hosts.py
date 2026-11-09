@@ -149,5 +149,9 @@ def ip_host_stats(R, V, table):
         ref_ip = int((rows & np.where(rcodes >= 0, rm[np.where(rcodes >= 0, rcodes, 0)], False)).sum())
     nf = lambda x: f'{int(x):,}'.replace(',', ' ')
     cnt = per_ip['rank'].value_counts()
-    return dict(requests=nf(rows.sum()), ips=nf(len(per_ip)), codes=codes_text(st[rows]), scanners=nf(cnt.get(0, 0)), bots=nf(cnt.get(1, 0)), robots=nf(cnt.get(2, 0)),
+    gov_ips = 0   # ведомственные роботы (сети ГРЧЦ, СайберОК) тоже обращаются по IP сервера: отдельная фраза в карточке
+    if 'gov_op' in V:
+        gv = V['gov_op'].astype(str).reindex(vid).values
+        gov_ips = int(pd.Series(ips[gv != '']).nunique())
+    return dict(gov=gov_ips, requests=nf(rows.sum()), ips=nf(len(per_ip)), codes=codes_text(st[rows]), scanners=nf(cnt.get(0, 0)), bots=nf(cnt.get(1, 0)), robots=nf(cnt.get(2, 0)),
                 people=nf(cnt.get(3, 0)), reached=nf(reached), guess_total=nf(len(guess)), guess_open=nf(guess_open), ref_ip=nf(ref_ip), n=int(rows.sum()))

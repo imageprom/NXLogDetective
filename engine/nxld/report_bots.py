@@ -239,6 +239,24 @@ def build_sheets(wb, res, S):
         if RN is not None and len(RN):
             extra_table(wb[nm], pd.DataFrame({'Робот': RN['семейство'], 'Сеть': RN['сеть'].fillna('').astype(str), 'ASN': RN['asn'], 'Запросов': RN['запросов'].astype(int)}).head(200),
                         'robot_networks', wrap=('Сеть',))
+    # Ведомственные роботы — блок листа «Роботы» (04): проверяющие системы Роскомнадзора (ГРЧЦ) и сканер СайберОК; нет таких визитов — блока нет
+    GT = res.get('gov_table')
+    if GT is not None and len(GT):
+        from .gov import tx as gov_tx
+        gt = gov_tx()
+        cn = gt.get('columns', {})
+        d = pd.DataFrame({cn['when']: GT['first'].str[:16] + ' — ' + GT['last'].str[:16], cn['ip']: GT['ip'], cn['network']: GT['network'], cn['kind']: GT['kind'], cn['origin']: GT['origin'],
+                          cn['viewed']: GT['viewed'], cn['got']: GT['got'], cn['requests']: GT['requests'].astype(int), cn['errorlog']: GT['errorlog']})
+        nm = 'Роботы'
+        if nm not in wb.sheetnames:
+            wb.create_sheet(nm)
+            data_sheet(wb, nm, d.head(300), {cn['when']: 26, cn['network']: 26, cn['viewed']: 44, cn['got']: 22, cn['errorlog']: 30}, wrap=(cn['viewed'], cn['got'], cn['errorlog']),
+                       kpi=[('Ведомственных роботов', int((GT['kind_code'] != 'visitor').sum())), ('Запросов', int(d[cn['requests']].sum()))], kpi_col=cn['requests'], red=())
+            shown = True
+        else:
+            shown = extra_table(wb[nm], d.head(300), 'gov_robots', wrap=(cn['viewed'], cn['got'], cn['errorlog'], cn['network'])) is not False
+        if shown and 'visitor' in set(GT['kind_code']): notes_of(wb[nm], 'gov_robots', visitor_note=gt.get('visitor_note'))
+        elif shown: notes_of(wb[nm], 'gov_robots')
     # Системы мониторинга и утилиты
     M = A.get('мониторинг')
     if M is not None and len(M):

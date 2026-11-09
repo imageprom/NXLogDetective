@@ -43,6 +43,9 @@ def lookup(ips):
                        'cc': np.where(okc, cc[np.clip(j, 0, None)], ''),
                        'net_first': np.where(ok, s[ii], -1), 'net_last': np.where(ok, e[ii], -1)})
     df['nettype'] = [nettype(a_, o_, c_) for a_, o_, c_ in zip(df.asn, df.org, df.cc)]
+    from . import gov   # сети ведомственных роботов (ГРЧЦ, СайберОК) — «госсеть», а не «провайдер доступа»
+    op = gov.operators(df['ip'], df['asn'])
+    if (op != '').any(): df.loc[op != '', 'nettype'] = gov.tx().get('nettype', 'госсеть')
     return df
 
 

@@ -15,6 +15,12 @@ REFUSED = (403, 429, 444)
 ROBOT_KINDS = ('scanner_security', 'scanner_browser')
 
 
+def _dmy(x, hm=False):
+    """Дата для текста карточки: 01.09.2026 (с hm — 01.09.2026 11:12)."""
+    t = pd.Timestamp(x)
+    return t.strftime('%d.%m.%Y %H:%M' if hm else '%d.%m.%Y')
+
+
 def _empty():
     return dict(came=False, visits=0, ips=0, first=None, last=None, robots=dict(visits=0, ips=0), visitors=dict(visits=0, ips=0, ad_clicks=0), by_operator={}, by_kind={},
                 statuses={}, refused=dict(requests=0, ips=0, codes={}, addresses=[], first=None, last=None), error_log=dict(lines=0, ips=0, by_kind={}), compare=None)
@@ -128,7 +134,7 @@ def cards(F, d):
     ops = t.get('operators', {})
     if d['robots']['visits']:
         who = ', '.join(o for o in ops.values() if o in d['by_operator']) or ', '.join(d['by_operator'])
-        kw = dict(visits=_n(d['robots']['visits']), ips=_n(d['robots']['ips']), who=who, first=d['first'][:10], last=d['last'][:10], viewed=', '.join(d['_robot_pages']) or '—',
+        kw = dict(visits=_n(d['robots']['visits']), ips=_n(d['robots']['ips']), who=who, first=_dmy(d['first']), last=_dmy(d['last']), viewed=', '.join(d['_robot_pages']) or '—',
                   visitors=_n(d['visitors']['visits']), ads=_n(d['visitors']['ad_clicks']))
         kw['visits'] = f"{kw['visits']} {_pl(d['robots']['visits'], 'визит', 'визита', 'визитов')}"
         kw['ips'] = f"{kw['ips']} {_pl(d['robots']['ips'], 'IP', 'IP', 'IP')}"
@@ -136,7 +142,7 @@ def cards(F, d):
               texts.fmt('gov_robots_visit', 'where'), texts.fmt('gov_robots_visit', 'action'), d['robots']['visits'], '')
     r = d['refused']
     if r['requests'] >= int(thresholds.value('gov_refused_min', 1)):
-        kw = dict(n=_n(r['requests']), codes=', '.join(f'{k} — {v}' for k, v in r['codes'].items()), urls=', '.join(r['addresses']), first=r['first'][:16], last=r['last'][:16],
+        kw = dict(n=_n(r['requests']), codes=', '.join(f'{k} — {v}' for k, v in r['codes'].items()), urls=', '.join(r['addresses']), first=_dmy(r['first'], True), last=_dmy(r['last'], True),
                   who=', '.join(r.get('operators') or []))
         F.add('Общий анализ', 'Важно', 'gov_robots_refused', 'all', texts.fmt('gov_robots_refused', 'title', **kw), texts.fmt('gov_robots_refused', 'facts', **kw),
               texts.fmt('gov_robots_refused', 'where'), texts.fmt('gov_robots_refused', 'action'), r['requests'], '')

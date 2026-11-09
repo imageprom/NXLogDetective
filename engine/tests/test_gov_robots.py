@@ -97,7 +97,7 @@ def test_browser_from_grchc_with_full_behavior_is_people_marked_visitor_with_ad_
     v = _v(c, VIS_IP)
     assert len(v) and set(v['group'].astype(str)) == {'Люди'} and set(v['gov_kind'].astype(str)) == {'visitor'}, v[['group', 'subgroup', 'gov_kind']]
     row = res['gov_table'].iloc[0]
-    assert row['kind'] == 'посетитель из госсети' and row['origin'] == 'клик по рекламе' and 'ГРЧЦ' in row['network'] and 'AS196641' in row['network']
+    assert row['kind'] == 'посетитель из госорганов' and row['origin'] == 'клик по рекламе' and 'ГРЧЦ' in row['network'] and 'AS196641' in row['network']
     assert brief['gov_robots']['visitors'] == {'visits': 1, 'ips': 1, 'ad_clicks': 1} and brief['gov_robots']['robots']['visits'] == 0
 
 
@@ -112,7 +112,7 @@ def test_visitor_from_grchc_who_placed_an_order_is_people_and_order_counted():
     v = _v(c, ip)
     assert set(v['group'].astype(str)) == {'Люди'} and set(v['gov_kind'].astype(str)) == {'visitor'} and int(v['n_conv'].sum()) == 1, v[['group', 'gov_kind', 'n_conv']]
     assert int(c.R['is_order'].sum()) == 6   # 5 заказов обычных людей и один — из госсети
-    assert res['gov_table'][res['gov_table']['ip'] == ip]['kind'].iloc[0] == 'посетитель из госсети'
+    assert res['gov_table'][res['gov_table']['ip'] == ip]['kind'].iloc[0] == 'посетитель из госорганов'
 
 
 def test_refused_card_on_403_at_site_domain_and_not_on_301_by_ip_host():
@@ -155,7 +155,7 @@ def test_block_on_robots_sheet_with_note_and_columns(tmp_path):
     assert 'ВЕДОМСТВЕННЫЕ РОБОТЫ' in cells
     for col in ('Когда', 'IP', 'Сеть и оператор', 'Тип', 'Откуда пришли', 'Что смотрели', 'Что получили', 'Запросов', 'Error-лог'): assert col in cells, col
     assert any(t.startswith('Ведомственные роботы — проверяющие системы. ГРЧЦ — предприятие Роскомнадзора') and 'сами системы себя не называют, кроме сканера СайберОК' in t for t in cells)
-    assert any('по логу не различить' in t for t in cells) and 'сканер защищённости' in cells and 'сканер под браузер' in cells and 'посетитель из госсети' in cells
+    assert any('по логу не различить' in t for t in cells) and 'сканер защищённости' in cells and 'сканер под браузер' in cells and 'посетитель из госорганов' in cells
     assert 'госсеть, ГРЧЦ (AS61280)' in ' '.join(cells)
 
 
@@ -202,3 +202,18 @@ def test_snapshot_and_comparison_with_previous_check(tmp_path):
     synth.run(log, b, '--prev', snap)
     g = json.load(open(os.path.join(b, 'work', 'brief.json'), encoding='utf-8'))['gov_robots']
     assert g['robots']['visits'] == 2 and g['compare']['robot_visits'] == {'was': 1, 'became': 2}, g['compare']
+
+
+def test_template_favicon_is_service_file_scanner_not_visitor():
+    """Отпечаток на реальном логе: переадресация с IP сервера на домен, затем главная и favicon шаблона (/local/templates/<шаблон>/icons/favicon.ico)
+    с внутренним реферером. Это сканер под браузер, а не «посетитель из госорганов»; в карточке даты — по-русски."""
+    log = _base()
+    t = T0 + timedelta(days=1, hours=5)
+    log.line(BOT_IP, t, '/', 301, ua=FF135, host=IPHOST)
+    log.line(BOT_IP, t + timedelta(seconds=1), '/', 200, ua=FF135, host=MAIN, ref=f'http://{IPHOST}/')
+    log.line(BOT_IP, t + timedelta(seconds=2), '/local/templates/main/icons/favicon.ico', 200, ua=FF135, host=MAIN, ref=f'https://{MAIN}/')
+    res, c, _ = _run(log)
+    v = _v(c, BOT_IP)
+    assert set(v['gov_kind'].astype(str)) == {'scanner_browser'} and 'Люди' not in set(v['group'].astype(str)), v[['group', 'subgroup', 'gov_kind']]
+    x = _cards(res)['gov_robots_visit']
+    assert '02.09.2026' in x['факты'] and '2026-09-02' not in x['факты'], x['факты']

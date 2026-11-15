@@ -7,6 +7,7 @@
 import re
 import numpy as np, pandas as pd
 from .common import codes_text
+from . import summaries
 
 BLOCK = 'SEO'
 ROBOT_FILES = re.compile(r'^/(robots\.txt|sitemap[^/]*\.xml(\.gz)?|sitemap[^/]*/.*\.xml|llms(-full)?\.txt|ads\.txt|security\.txt|\.well-known/.*)$', re.I)
@@ -209,20 +210,34 @@ def authenticity(c):
 def journal(c, ok, J0):
     if J0 is None or not len(J0): return None
     R = c.R
-    fam, fcode = _cats(R, 'fam')
-    eng = np.array([ENGINE.get(f, 'Прочие') for f in fam])[fcode[ok]]
-    d = R['day'].cat.categories.astype(str).values[R['day'].cat.codes.values[ok]]
-    st = R['status'].values[ok]
-    X = pd.DataFrame({'d': d, 'e': eng, 'st': st})
-    g = X.groupby('d')
-    D = pd.DataFrame({'Запросы поисковиков|Яндекс': X[X['e'] == 'Яндекс'].groupby('d').size(), 'Запросы поисковиков|Google': X[X['e'] == 'Google'].groupby('d').size(),
-                      'Запросы поисковиков|Прочие': X[~X['e'].isin(['Яндекс', 'Google'])].groupby('d').size(),
-                      'Ответы роботам|Переадресаций': X[(X['st'] >= 300) & (X['st'] < 400)].groupby('d').size(),
-                      'Ответы роботам|Ошибок 4xx': X[(X['st'] >= 400) & (X['st'] < 500)].groupby('d').size(), 'Ответы роботам|Ошибок 5xx': X[X['st'] >= 500].groupby('d').size()})
-    V = c.V
-    H = V[(V['group'] == 'Люди') & (V['channel'].astype(str) == 'Поиск')]
-    D['Люди из поиска|Визитов'] = H.groupby('day').size()
-    D['Люди из поиска|Заявок'] = H.groupby('day')['n_conv'].sum()
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # запросы подлинных поисковых роботов по дням и семействам, визиты людей из поиска — из сводки «Время»
+        T = sm.time(f"{summaries.DAY} AS d, fam, CAST(sum(n_req) AS BIGINT) AS n, CAST(sum(n_3xx) AS BIGINT) AS n3, CAST(sum(n_4xx) AS BIGINT) AS n4, CAST(sum(n_5xx) AS BIGINT) AS n5",
+                    where="fam_cat = 'Поисковик' AND fam_verified = 'да'", having='sum(n_req) > 0')
+        T['e'] = [ENGINE.get(f, 'Прочие') for f in T['fam']]
+        by = lambda X, col: (lambda s: s[s > 0])(X.groupby('d')[col].sum())
+        D = pd.DataFrame({'Запросы поисковиков|Яндекс': by(T[T['e'] == 'Яндекс'], 'n'), 'Запросы поисковиков|Google': by(T[T['e'] == 'Google'], 'n'),
+                          'Запросы поисковиков|Прочие': by(T[~T['e'].isin(['Яндекс', 'Google'])], 'n'),
+                          'Ответы роботам|Переадресаций': by(T, 'n3'), 'Ответы роботам|Ошибок 4xx': by(T, 'n4'), 'Ответы роботам|Ошибок 5xx': by(T, 'n5')})
+        P = sm.time(f"{summaries.DAY} AS d, CAST(sum(n_visits_started) AS BIGINT) AS nv, CAST(sum(n_conv_started) AS BIGINT) AS nc",
+                    where=f"{summaries.HUMAN} AND channel = 'Поиск'", having='sum(n_visits_started) > 0').set_index('d')   # как и раньше: в строках — дни, когда приходили поисковые роботы
+        D['Люди из поиска|Визитов'] = P['nv']
+        D['Люди из поиска|Заявок'] = P['nc']
+    else:
+        fam, fcode = _cats(R, 'fam')
+        eng = np.array([ENGINE.get(f, 'Прочие') for f in fam])[fcode[ok]]
+        d = R['day'].cat.categories.astype(str).values[R['day'].cat.codes.values[ok]]
+        st = R['status'].values[ok]
+        X = pd.DataFrame({'d': d, 'e': eng, 'st': st})
+        g = X.groupby('d')
+        D = pd.DataFrame({'Запросы поисковиков|Яндекс': X[X['e'] == 'Яндекс'].groupby('d').size(), 'Запросы поисковиков|Google': X[X['e'] == 'Google'].groupby('d').size(),
+                          'Запросы поисковиков|Прочие': X[~X['e'].isin(['Яндекс', 'Google'])].groupby('d').size(),
+                          'Ответы роботам|Переадресаций': X[(X['st'] >= 300) & (X['st'] < 400)].groupby('d').size(),
+                          'Ответы роботам|Ошибок 4xx': X[(X['st'] >= 400) & (X['st'] < 500)].groupby('d').size(), 'Ответы роботам|Ошибок 5xx': X[X['st'] >= 500].groupby('d').size()})
+        V = c.V
+        H = V[(V['group'] == 'Люди') & (V['channel'].astype(str) == 'Поиск')]
+        D['Люди из поиска|Визитов'] = H.groupby('day').size()
+        D['Люди из поиска|Заявок'] = H.groupby('day')['n_conv'].sum()
     D = D.fillna(0).astype(int).reset_index().rename(columns={'index': 'день', 'd': 'день'})
     meta = J0[J0['день'] != 'Итого'][['день', '_с', '_по', '_полный']]
     D = meta.merge(D, on='день', how='left').fillna(0)

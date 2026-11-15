@@ -76,6 +76,20 @@ def minute_norm(ts):
     return idx, full, norm
 
 
+def minute_norm_of(c):
+    """minute_norm для контекста: запросы по минутам из сводки «Минута»; без базы — по таблице запросов."""
+    sm = getattr(c, 'sums', None)
+    if sm is None: return minute_norm(c.R['ts'].values)
+    M = sm.minutes()
+    m = M['m'].values.astype(np.int64)
+    idx = np.arange(int(m.min()), int(m.max()) + 1)
+    full = np.zeros(len(idx), dtype=np.int64)
+    full[m - idx[0]] = M['n_req'].values
+    hod = (idx // 60) % 24
+    norm = pd.Series(full).groupby(hod).median().reindex(hod).values
+    return idx, full, norm
+
+
 def day_runs(days, states, days_all, names=None):
     """История по дням одной строкой: days и states — дни (YYYY-MM-DD) и состояние в каждый из них.
     «отдаётся 16.09–25.09 → закрыт с 26.09», «отдаётся весь период». names — подписи состояний."""

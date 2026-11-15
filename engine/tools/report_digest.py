@@ -20,8 +20,13 @@ def sheets(folder):
     return out
 
 
-def digest(folder):
-    return {f: {s: hashlib.sha1(json.dumps(rows, ensure_ascii=False, default=str).encode()).hexdigest()[:16] for s, rows in ss.items()} for f, ss in sheets(folder).items()}
+def digest(folder, mask=None):
+    """Отпечаток каждого листа. mask — регулярное выражение для текста, который от прогона к прогону меняется сам (дата отчёта): заменяется на «…»."""
+    import re
+    def text(rows):
+        t = json.dumps(rows, ensure_ascii=False, default=str)
+        return re.sub(mask, '…', t) if mask else t
+    return {f: {s: hashlib.sha1(text(rows).encode()).hexdigest()[:16] for s, rows in ss.items()} for f, ss in sheets(folder).items()}
 
 
 def diff(a, b, limit=5):

@@ -37,7 +37,7 @@ def golden_log():
 def test_report_matches_golden():
     with tempfile.TemporaryDirectory() as d:
         _, out, _ = synth.run(golden_log(), d)
-        got = {f: {s: h for s, h in ss.items() if not s.startswith('_')} for f, ss in report_digest.digest(out).items()}   # служебный лист со снимком хранит время сборки
+        got = {f: {s: h for s, h in ss.items() if not s.startswith('_')} for f, ss in report_digest.digest(out, mask=r'Отчёт от \d+ \S+ \d{4}').items()}   # служебный лист со снимком хранит время сборки; дата отчёта в шапке «Обзора» — под маской
     if os.environ.get('NXLD_GOLDEN_UPDATE'):
         json.dump(got, open(GOLDEN, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     want = json.load(open(GOLDEN, encoding='utf-8'))

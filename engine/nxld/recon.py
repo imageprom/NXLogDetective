@@ -641,7 +641,8 @@ def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=N
     frag = {k for k in keys if not k.startswith('(') and ref is not None and ref.match(k) is None
             and any(K != k and K.lower().startswith(k.lower()) and tot[K] >= tot[k] for K in keys)}
     P = P[~P['ключ'].isin(frag)]
-    P['семья'] = P['ключ'].map(lambda k: _family(k, ref))
+    fam_of = {k: _family(k, ref) for k in P['ключ'].unique()}   # семейство — по значению ключа, а не по строке таблицы (поиск в справочнике — чистый, от строки не зависит)
+    P['семья'] = P['ключ'].map(fam_of)
     fam_size = P.groupby('семья')['ключ'].nunique()
     P['группа_ключей'] = np.where(P['семья'].map(fam_size).values >= 2, P['семья'].values, P['ключ'].values)
     navk = {str(k).lower() for k in nav_keys}

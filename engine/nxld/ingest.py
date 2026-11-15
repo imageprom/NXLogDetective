@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 import numpy as np, pandas as pd
 
-CHUNK = 1_000_000
+CHUNK = 100_000   # строк в куске разбора: больше — заметно растёт память (строки Python), быстрее не становится
 MON = {m: i for i, m in enumerate(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], 1)}
 
 # combined (nginx / apache); необязательные BOM в начале файла и $host после $remote_user (мультисайты); необязательный хвост ("$host" $request_time и т.п.)
@@ -162,10 +162,19 @@ ERR_FIELDS = re.compile(r', (client|server|request|upstream|host|referrer): "?([
 ERR_COLS = ('n', 'line_hash', 'ts', 'level', 'msg', 'client', 'server', 'request', 'upstream', 'host', 'referrer')
 
 
-def parse_error(path, member, kind):
-    """Строки error-лога: (таблица, прочитано строк, не разобрано)."""
+def parse_error(path, member, kind, sink):
+    """Разбирает error-лог кусками: sink(таблица) на каждый кусок. Возвращает (прочитано строк, не разобрано)."""
     cols = {k: [] for k in ERR_COLS}
     nlines = nbad = 0
+
+    def flush():
+        nonlocal cols
+        if not cols['ts']: return
+        df = pd.DataFrame(cols)
+        df['line_hash'] = df['line_hash'].astype('uint64')
+        sink(df)
+        cols = {k: [] for k in cols}
+
     with _open_member(path, member) as f:
         for line in f:
             nlines += 1
@@ -186,9 +195,10 @@ def parse_error(path, member, kind):
                          ('server', fields.get('server', '')), ('request', fields.get('request', '')[:400]), ('upstream', fields.get('upstream', '')[:200]),
                          ('host', fields.get('host', '')), ('referrer', fields.get('referrer', '')[:300])):
                 cols[k].append(v)
-    df = pd.DataFrame(cols)
-    df['line_hash'] = df['line_hash'].astype('uint64')
-    return df, nlines, nbad
+            if len(cols['ts']) >= CHUNK:
+                flush()
+    flush()
+    return nlines, nbad
 
 
 # ---------- загрузка в базу проверки ----------
@@ -246,15 +256,19 @@ def _load_access(con, sid, path, member):
 
 
 def _load_error(con, sid, path, member, fmt):
-    err_df, nlines, nbad = parse_error(path, member, fmt)
-    if not len(err_df): return dict(lines=nlines, bad=nbad, tz='', ts_first=None, ts_last=None, new_rows=0)
-    con.register('err_df', err_df)
+    con.execute("CREATE OR REPLACE TEMP TABLE stg0 (n INTEGER, line_hash UBIGINT, ts BIGINT, level VARCHAR, msg VARCHAR, client VARCHAR, server VARCHAR, request VARCHAR, "
+                "upstream VARCHAR, host VARCHAR, referrer VARCHAR)")
+
+    def sink(err_df):
+        con.register('err_df', err_df)
+        con.execute(f"INSERT INTO stg0 SELECT {', '.join(ERR_COLS)} FROM err_df")
+        con.unregister('err_df')
+    nlines, nbad = parse_error(path, member, fmt, sink)
     con.execute(r"""CREATE OR REPLACE TEMP TABLE stg AS
         SELECT * EXCLUDE (url), CASE WHEN url IS NULL THEN NULL ELSE left(split_part(url, '?', 1), 500) END base,
                CASE WHEN url IS NULL THEN NULL WHEN contains(url, '?') THEN left(substr(url, strpos(url, '?') + 1), 1000) ELSE '' END query
-        FROM (SELECT * REPLACE (n::INTEGER AS n, ts::BIGINT AS ts), left(nullif(regexp_extract(request, '^(\S+) (\S+)', 1), ''), 12) AS method,
-                     nullif(regexp_extract(request, '^(\S+) (\S+)', 2), '') AS url FROM err_df)""")
-    con.unregister('err_df')
+        FROM (SELECT *, left(nullif(regexp_extract(request, '^(\S+) (\S+)', 1), ''), 12) AS method, nullif(regexp_extract(request, '^(\S+) (\S+)', 2), '') AS url FROM stg0)""")
+    con.execute('DROP TABLE stg0')
     t0, t1 = con.execute('SELECT min(ts), max(ts) FROM stg').fetchone()
     new = _new_rows(con, 'stg', 'error_events')
     for dim, col in (('ip', 'client'), ('host', 'host'), ('path', 'base'), ('query', 'query'), ('ref', 'referrer')):

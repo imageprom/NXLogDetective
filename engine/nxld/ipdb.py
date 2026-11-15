@@ -8,8 +8,8 @@ _db = {}
 
 def _load():
     if _db: return _db
-    a = pd.read_csv(os.path.join(DATA, 'asn-ipv4-num.csv.gz'), header=None, names=['s', 'e', 'asn', 'org'], dtype={'org': str})
-    c = pd.read_csv(os.path.join(DATA, 'country-ipv4-num.csv.gz'), header=None, names=['s', 'e', 'cc'])
+    a = pd.read_csv(os.path.join(DATA, 'asn-ipv4-num.csv.gz'), header=None, names=['s', 'e', 'asn', 'org'], dtype={'org': str}, keep_default_na=False, na_values={'org': ['']})
+    c = pd.read_csv(os.path.join(DATA, 'country-ipv4-num.csv.gz'), header=None, names=['s', 'e', 'cc'], dtype={'cc': str}, keep_default_na=False)   # код страны «NA» (Намибия) — не «пусто»
     _db['a'] = (a.s.values.astype(np.int64), a.e.values.astype(np.int64), a.asn.values, a.org.fillna('').values)
     _db['c'] = (c.s.values.astype(np.int64), c.e.values.astype(np.int64), c.cc.values)
     return _db

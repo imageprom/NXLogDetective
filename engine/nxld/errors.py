@@ -58,7 +58,7 @@ def outages(c, X):
     t0 = pd.to_datetime(D['деградация_с'].fillna(D['начало'])) if 'деградация_с' in D else pd.to_datetime(D['начало'])
     t1 = pd.to_datetime(D['деградация_по'].fillna(D['конец'])) if 'деградация_по' in D else pd.to_datetime(D['конец'])
     D['сбой'] = pd.to_datetime(D['начало']).dt.strftime('%d.%m %H:%M')
-    D['t0'] = t0.values.astype('datetime64[s]').astype('int64'); D['t1'] = t1.values.astype('datetime64[s]').astype('int64') + 59   # секунды эпохи, как R['ts']
+    D['t0'] = t0.values.astype('datetime64[s]').astype('int64'); D['t1'] = t1.values.astype('datetime64[s]').astype('int64')   # секунды эпохи, как R['ts']; конец окна уже последняя секунда минуты (#28)
     D['запросов'] = [int(((ts >= a) & (ts <= b)).sum()) for a, b in zip(D['t0'], D['t1'])]
     D['день'] = pd.to_datetime(D['начало']).dt.strftime('%Y-%m-%d')
     return D

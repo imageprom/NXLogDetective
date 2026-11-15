@@ -151,11 +151,10 @@ def _journal_sums(V, sm):
     T = sm.time(', '.join([f"{summaries.DAY} AS day", f('n_visits_started', hum, 'h'), f('n_visits_started', f'{hum} AND {ad}', 'h_ad'), f('n_visits_started', f'{hum} AND {se}', 'h_se'),
                            f('n_visits_started', f'{bot} AND {ad}', 'b_ad'), f('n_goal_started', hum, 'goal'), f('n_conv_started', hum, 'conv'),
                            f('n_conv_started', f'{hum} AND {ad}', 'conv_ad'), f('n_conv_started', bot, 'conv_b')]), having='sum(n_visits_started) > 0').set_index('day')
-    T = T[T['h'] > 0]   # как и раньше: в строках — дни, когда начинались визиты людей
     A = V[V['channel'].astype(str) == 'Реклама']
     D = pd.DataFrame({'Визиты людей|Все': T['h'], 'Визиты людей|Реклама': T['h_ad'], 'Визиты людей|Поиск': T['h_se'], 'Визиты людей|Прочие': T['h'] - T['h_ad'] - T['h_se']})
     D['Рекламные клики|Ботов'] = T['b_ad']
-    D['Рекламные клики|Впустую'] = A[_wasted(A)].groupby('day').size()
+    D = D.join(A[_wasted(A)].groupby('day').size().rename('Рекламные клики|Впустую'), how='outer')   # день без визитов людей не теряется (#29)
     D['Заявки|Отправлено'] = T['goal']
     D['Заявки|Принято'] = T['conv']
     D['Заявки|Из рекламы'] = T['conv_ad']
@@ -179,15 +178,12 @@ def journal(V, J0, sums=None):
     else:
         Hm = V[V['group'] == 'Люди']; ch = Hm['channel'].astype(str)
         g = Hm.groupby('day')
-        D = pd.DataFrame({'Визиты людей|Все': g.size(), 'Визиты людей|Реклама': Hm[ch == 'Реклама'].groupby('day').size(),
-                          'Визиты людей|Поиск': Hm[ch == 'Поиск'].groupby('day').size(), 'Визиты людей|Прочие': Hm[~ch.isin(['Реклама', 'Поиск'])].groupby('day').size()})
         A = V[V['channel'].astype(str) == 'Реклама']
-        D['Рекламные клики|Ботов'] = A[A['group'] == 'Боты'].groupby('day').size()
-        D['Рекламные клики|Впустую'] = A[_wasted(A)].groupby('day').size()
-        D['Заявки|Отправлено'] = g['n_goal'].sum()
-        D['Заявки|Принято'] = g['n_conv'].sum()
-        D['Заявки|Из рекламы'] = Hm[ch == 'Реклама'].groupby('day')['n_conv'].sum()
-        D['Заявки|От ботов'] = V[V['group'] == 'Боты'].groupby('day')['n_conv'].sum()
+        D = pd.DataFrame({'Визиты людей|Все': g.size(), 'Визиты людей|Реклама': Hm[ch == 'Реклама'].groupby('day').size(),   # все колонки разом: строки — все дни, где есть хоть что-то (#29)
+                          'Визиты людей|Поиск': Hm[ch == 'Поиск'].groupby('day').size(), 'Визиты людей|Прочие': Hm[~ch.isin(['Реклама', 'Поиск'])].groupby('day').size(),
+                          'Рекламные клики|Ботов': A[A['group'] == 'Боты'].groupby('day').size(), 'Рекламные клики|Впустую': A[_wasted(A)].groupby('day').size(),
+                          'Заявки|Отправлено': g['n_goal'].sum(), 'Заявки|Принято': g['n_conv'].sum(), 'Заявки|Из рекламы': Hm[ch == 'Реклама'].groupby('day')['n_conv'].sum(),
+                          'Заявки|От ботов': V[V['group'] == 'Боты'].groupby('day')['n_conv'].sum()})
     D = D.fillna(0).astype(int).reset_index().rename(columns={'index': 'день', 'day': 'день'})
     meta = J0[J0['день'] != 'Итого'][['день', '_с', '_по', '_полный']]
     D = meta.merge(D, on='день', how='left').fillna(0)

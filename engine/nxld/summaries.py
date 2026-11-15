@@ -171,9 +171,9 @@ class Sums:
         """Свёртка sum_path_status (адрес — p.path из dim_path): группировка — по всем колонкам без сумм. Счётчики разных IP и визитов не складываются."""
         return self.q(f"SELECT {select} FROM sum_path_status s JOIN dim_path p USING (path_id) WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL{' HAVING ' + having if having else ''} ORDER BY ALL")
 
-    def path_day(self, select, where=None):
+    def path_day(self, select, where=None, params=None):
         """Свёртка sum_path_day."""
-        return self.q(f"SELECT {select} FROM sum_path_day d JOIN dim_path p USING (path_id) WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL ORDER BY ALL")
+        return self.q(f"SELECT {select} FROM sum_path_day d JOIN dim_path p USING (path_id) WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL ORDER BY ALL", params)
 
     def events(self, select, where=None, extra='', params=None):
         """Запрос по событиям (access_events) в контексте отчёта — для счётчиков, которые по сводке не сложить (разные IP по адресу и коду).
@@ -219,8 +219,8 @@ def base_codes(c, paths):
 
 
 def thousands(col):
-    """SQL-текст числа с пробелом между тысячами: 1 234 567."""
-    return f"replace(format('{{:,}}', {col}), ',', ' ')"
+    """SQL-текст числа с неразрывным пробелом между тысячами (как common.codes_text и common.who_text): 1 234 567."""
+    return f"replace(format('{{:,}}', {col}), ',', '\u00a0')"
 
 
 def who_sql(classes):

@@ -93,6 +93,10 @@ def make_log():
         for k in range(4):   # страницы, которые поисковик не обходил; и сотрудник, который тоже ходит на утёкший файл
             _human(L, f'95.165.{d}.{80 + k}', t + timedelta(hours=14, minutes=3 * k), MAIN, '/people-only/', ref='https://yandex.ru/')
         L.line(STAFF, t + timedelta(hours=1, minutes=5), '/backup.sql', 200, size=5_000_000, host=MAIN)
+        if d == 1:   # больше тысячи запросов за раз: число с неразрывным пробелом в текстах («1 050»)
+            for k in range(1050):
+                L.line('66.249.66.3', t + timedelta(hours=8, seconds=k), '/moved/', 301, ua=UA_GOOGLE, host=MAIN)
+                L.line(f'95.165.{d}.{100 + k % 90}', t + timedelta(hours=18, seconds=k), '/upload/big/video.mp4', 200, ref=f'https://{MAIN}/catalog/', size=900_000, host=MAIN)
         L.line(f'95.165.{d}.5', t + timedelta(hours=11, minutes=40), '/repaired/', 404, ref=f'https://{IPHOST}/', host=IPHOST)   # тот же адрес на хосте вне сайта
     # сбой на третий день: шесть минут страницы отдают 5xx разным посетителям, часть не дождалась
     t = T0 + timedelta(days=2, hours=15)

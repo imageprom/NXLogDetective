@@ -655,9 +655,9 @@ def leaks(c, S, checks=None):
     rows = []
     checks = checks or {}
     sm = getattr(c, 'sums', None)
-    if sm is not None:   # по дням: были ли запросы не от сотрудников и отдавался ли файл; последний ответ — из сводки «адрес × день»
+    if sm is not None:   # по дням: были ли запросы не от сотрудников и отдавался ли файл; последний ответ — из сводки «адрес × день» (только по файлам из списка)
         PD = sm.path_day("p.path AS path, strftime(day, '%Y-%m-%d') AS d, CAST(sum(n_ext) AS BIGINT) AS n_ext, CAST(sum(n_served_ext) AS BIGINT) AS n_served, "
-                         "max(struct_pack(t := ts_last_ext, i := eid_last_ext, s := last_status_ext, b := last_served_ext)) FILTER (WHERE n_ext > 0) AS last", 'n_ext > 0')
+                         "max(struct_pack(t := ts_last_ext, i := eid_last_ext, s := last_status_ext, b := last_served_ext)) FILTER (WHERE n_ext > 0) AS last", 'n_ext > 0 AND p.path IN (SELECT unnest(?))', [[str(f) for f in L['файл']]])
         PD = {k: g for k, g in PD.groupby('path')}
     for _, r in L.iterrows():
         f = str(r['файл'])

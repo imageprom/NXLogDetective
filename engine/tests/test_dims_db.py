@@ -185,3 +185,20 @@ def test_analyze_can_be_rerun_with_same_result():
         assert res2['summary']['Общий анализ'] == res['summary']['Общий анализ']
         con = db.connect(w, read_only=True)
         assert con.execute("SELECT count(*) FROM visits v JOIN prepared_visits p USING (vid) WHERE v.category <> p.category OR v.type IS DISTINCT FROM p.type").fetchone()[0] > 0   # правила действительно что-то изменили
+
+
+def test_rule_that_decided_is_recorded_for_visit():
+    """У визита, который изменило правило analyze, в базе записано: какое правило, уровень доказанности и категория до него; у нетронутых — пусто."""
+    with tempfile.TemporaryDirectory() as d:
+        L = _log()
+        for k in range(60):
+            L.line('203.0.113.60', synth.T0 + timedelta(hours=3, minutes=7 * k), '/upload/iblock/a1/photo.jpg', 200, host='site.ru')
+        synth.run(L, d)
+        con = db.connect(os.path.join(d, 'work'), read_only=True)
+        got = set(con.execute("SELECT v.category, v.rule, v.level, v.category_before FROM visits v JOIN dim_ip i USING (ip_id) WHERE i.ip = '203.0.113.60'").fetchall())
+        assert got == {('Боты', 'files_only', 'log', 'Люди')}
+        # правило записано ровно у тех визитов, у которых итог отличается от состояния после prepare — или правило вернуло прежнее значение
+        assert con.execute("""SELECT count(*) FROM visits v JOIN prepared_visits p USING (vid)
+                              WHERE (v.category <> p.category OR v.type IS DISTINCT FROM p.type) AND v.rule IS NULL""").fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM visits WHERE category = 'Люди' AND rule IS NULL").fetchone()[0] > 50
+        assert con.execute("SELECT count(*) FROM visits WHERE rule IS NOT NULL AND (level IS NULL OR category_before IS NULL)").fetchone()[0] == 0

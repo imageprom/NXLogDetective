@@ -102,21 +102,36 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     form_ = np.array([classify.form_of(p_)[0] for p_ in R['base'].cat.categories.astype(str)])
     R['is_page'] = R['is_page'].values & (form_[R['base'].cat.codes.values] == 'страница')
     R, V = visits.reverify(R, V)   # подлинность роботов — по нынешнему справочнику сетей
+    from . import store
+    trail = store.Trail(V)   # след правил: какое правило изменило категорию или тип визита (в базу: visits.rule, level, category_before)
     V = visits.regroup(V, R)   # «Свои» — только сотрудники; системы мониторинга и утилиты — своими группами
+    trail.step(V, 'regroup')
     R, V = visits.mark_web_archive(V, R)   # сеть Internet Archive без подписи, пачкой — сохранение страницы веб-архивом («Роботы · веб-архив»)
+    trail.step(V, 'web_archive')
     V = visits.mark_gov_robots(V, R)   # ведомственные роботы (ГРЧЦ, СайберОК): подписанный сканер и сканер под браузер — раньше общих правил; остальные из этих сетей — по общим
+    trail.step(V, 'gov_robots')
     V = visits.mark_app_agents(V)   # встроенный браузер приложения (Битрикс24) — «Люди», дальше обычные правила (system_agents.json)
+    trail.step(V, 'app_agents')
     V = visits.mark_scanners(V, R, [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)])   # сканеры под браузер — не люди
+    trail.step(V, 'scanners')
     V, backups_ = visits.mark_backups(V, R, m.get('staff_ips') or [], m.get('admin_regex'))   # бэкапы и дампы с ответом 200 — раньше всех правил
+    trail.step(V, 'backups')
     V = visits.mark_files_only(V, R, m.get('own_hosts') or [], form_ == 'страница')   # визит из одних файлов: кто (категория) и что делает (тип)
+    trail.step(V, 'files_only')
     V = visits.mark_unrendered(V, R)   # «статика» считается, только если её подгрузила страница визита
+    trail.step(V, 'unrendered')
     V = visits.mark_service_checks(V, R)   # /.well-known/ из сетей самих сервисов — «Роботы · проверка сервиса»
+    trail.step(V, 'service_checks')
     V = visits.mark_system_agents(V, R)   # агент автозаполнения паролей Apple только с /.well-known/ — «Люди» (system_agents.json)
+    trail.step(V, 'system_agents')
     V, server_ips = visits.own_server(V, R)   # сервер сайта проверяет сам себя — его IP «Свои — сервер сайта»
+    trail.step(V, 'own_server')
     m['server_ips'] = server_ips
     V = visits.mark_form_spam(V, R)
+    trail.step(V, 'form_spam')
     R, V, form_ev = visits.confirm_form_success(R, V)
     V = visits.finish_gov_robots(V)   # из сетей ведомственных роботов: люди — «посетитель из госорганов», боты по общим правилам — подгруппа «ведомственные роботы»
+    trail.step(V, 'gov_robots_finish')
     # тип хоста посчитан в prepare (R.host_site). Визиты к хостам вне сайта прошли все обычные правила, как визиты к сайту (сканеры, боты, роботы, утилиты, мониторинг…).
     # Кто остался «Людьми» на хосте вне сайта — не выводится нигде в отчёте (только счёт в журнале и выжимке); распознанные идут в 03 и 04.
     # «Сайт» (cs): 01, 02, 05, 06 — запросы только к сайту; «всё» (c): 03, 04 — сайт и распознанные запросы к хостам вне сайта.
@@ -132,7 +147,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     if n_e02 or n_ecopy: log(f'Error-лог: в 02 не вошло {n_e02:,} строк с хостов вне сайта, из них копии на других доменах — {n_ecopy:,}')
     from . import store, db as db_, summaries
     if db_.exists(workdir):
-        store.all_of(workdir, R, V, m)   # правила закончились: итоговые категории визитов и признаки событий — в базу проверки (все визиты, до среза для отчёта)
+        store.all_of(workdir, R, V, m, trail=trail)   # правила закончились: итоговые категории визитов и признаки событий — в базу проверки (все визиты, до среза для отчёта)
         summaries.build(workdir)   # сводки «Время» и «Минута»: расчёты по дням, часам и минутам блоки читают из них
     sums_all, sums_site = summaries.for_contexts(workdir)   # базы нет (таблицы положены руками) — None: блоки считают по таблицам в памяти
     ip_stats = hosts_.ip_host_stats(R, V, m.get('hosts') or [])   # обращения по IP сервера — для карточки в 03 (считаются до среза: нераспознанные тоже обращались)

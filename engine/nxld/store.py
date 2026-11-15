@@ -46,7 +46,7 @@ def visits(con, V, prepared=False):
     for c in ('n_req', 'n_pages', 'n_pages_raw', 'n_dup', 'n_redirect', 'n_embedded', 'n_static', 'n_post', 'n_head', 'n_err4', 'n_err5', 'n_catalog', 'n_goal', 'n_conv'):
         df[c] = V[c].fillna(0).values.astype('int64') if c in V else 0
     for a, b in (('ip', 'ip'), ('ua', 'ua'), ('entry', 'entry'), ('entry_query', 'entry_query'), ('entry_ref', 'entry_ref'), ('channel', 'channel'), ('channel_sub', 'channel_sub'),
-                 ('fam', 'fam'), ('fam_verified', 'fam_verified'), ('category', 'group'), ('type', 'subgroup'), ('category_before', 'gov_was')):
+                 ('fam', 'fam'), ('fam_verified', 'fam_verified'), ('category', 'group'), ('type', 'subgroup')):
         df[a] = V[b].astype(object).values if b in V else None
     df['scope'] = np.where(V['host_site'].values.astype(bool), 'site', 'server') if 'host_site' in V else 'site'
     con.register('v_df', df)
@@ -54,12 +54,47 @@ def visits(con, V, prepared=False):
     con.execute("""INSERT INTO visits (vid, ip_id, ua_id, ts_start, ts_end, n_req, n_pages, n_pages_raw, n_dup, n_redirect, n_embedded, n_static, n_post, n_head, n_err4, n_err5, n_catalog, n_goal, n_conv,
                                        bytes, scope, entry_path_id, entry_query_id, entry_status, entry_ref_id, channel, channel_sub, fam, fam_verified, category, type, category_before)
         SELECT v.vid, i.ip_id, u.ua_id, v.ts_start, v.ts_end, v.n_req, v.n_pages, v.n_pages_raw, v.n_dup, v.n_redirect, v.n_embedded, v.n_static, v.n_post, v.n_head, v.n_err4, v.n_err5, v.n_catalog, v.n_goal, v.n_conv,
-               v.bytes, v.scope, p.path_id, q.query_id, v.entry_status, f.ref_id, v.channel, v.channel_sub, v.fam, v.fam_verified, v.category, v.type, nullif(v.category_before, '')
+               v.bytes, v.scope, p.path_id, q.query_id, v.entry_status, f.ref_id, v.channel, v.channel_sub, v.fam, v.fam_verified, v.category, v.type, NULL
         FROM v_df v LEFT JOIN dim_ip i ON i.ip = v.ip LEFT JOIN dim_ua u ON u.ua = v.ua LEFT JOIN dim_path p ON p.path = v.entry LEFT JOIN dim_query q ON q.query = v.entry_query
         LEFT JOIN dim_ref f ON f.ref = v.entry_ref ORDER BY v.vid""")
     con.unregister('v_df')
     if prepared: con.execute('CREATE OR REPLACE TABLE prepared_visits AS SELECT * FROM visits')
     db.mark_built(con, 'visits')
+
+
+# уровень доказанности по правилу: log — по поведению в логе, pattern — по подписи или справочнику, network — по сети (и почерку)
+RULE_LEVEL = {'regroup': 'pattern', 'web_archive': 'network', 'gov_robots': 'network', 'app_agents': 'pattern', 'scanners': 'log', 'backups': 'log', 'files_only': 'log', 'unrendered': 'log',
+              'service_checks': 'network', 'system_agents': 'pattern', 'own_server': 'log', 'form_spam': 'log', 'gov_robots_finish': 'network'}
+
+
+class Trail:
+    """След правил analyze: какое правило последним изменило категорию или тип визита и какой категория была до него."""
+
+    def __init__(self, V):
+        self.g, self.s = V['group'].astype(str).copy(), V['subgroup'].astype(str).copy()
+        self.index = V.index
+        self.rule = np.full(len(V), '', dtype=object)
+        self.before = np.full(len(V), '', dtype=object)
+
+    def step(self, V, rule):
+        g, s = V['group'].astype(str).reindex(self.g.index), V['subgroup'].astype(str).reindex(self.g.index)
+        ch = ((g != self.g) | (s != self.s)).values
+        if ch.any():
+            self.rule[ch] = rule
+            self.before[ch] = self.g.values[ch]
+            self.g, self.s = g, s
+        return V
+
+    def write(self, con):
+        df = pd.DataFrame({'vid': np.asarray(self.index, dtype='int64'), 'rule': self.rule, 'category_before': self.before})
+        df = df[df['rule'] != '']
+        df['level'] = df['rule'].map(RULE_LEVEL)
+        con.register('tr_df', df)
+        con.execute('CREATE OR REPLACE TEMP TABLE tr_tmp AS SELECT * FROM tr_df')
+        con.unregister('tr_df')
+        for c in ('rule', 'level', 'category_before'):
+            con.execute(f'UPDATE visits v SET {c} = t.{c} FROM tr_tmp t WHERE v.vid = t.vid')
+        con.execute('DROP TABLE tr_tmp')
 
 
 def _rows(con, table, cols, rows):
@@ -128,8 +163,9 @@ def site_map(con, m, override=None):
     for t in SITE_TABLES: db.mark_built(con, t)
 
 
-def all_of(workdir, R, V, m, override=None, con=None, prepared=False):
+def all_of(workdir, R, V, m, override=None, con=None, prepared=False, trail=None):
     own = con is None
     if own: con = db.connect(workdir)
     event_flags(con, R, prepared); visits(con, V, prepared); site_map(con, m, override)
+    if trail is not None: trail.write(con)
     if own: con.close()

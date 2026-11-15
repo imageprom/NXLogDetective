@@ -1,0 +1,3527 @@
+{
+ "name": "nxld_check_db",
+ "title_ru": "База проверки NX Log Detective",
+ "schema_version": "0.3-draft-4",
+ "date": "2026-11-15",
+ "status": "согласовано 15.11; ip_period — черновик",
+ "file": "work/nxld.duckdb",
+ "engine": "DuckDB",
+ "conventions_ru": [
+  "Имена таблиц и колонок — латиницей; русские подписи — в поле ru и в data/locale/ru/.",
+  "Значения-тексты (категория, тип, канал, важность) пока хранятся по-русски, как в 0.2.4.",
+  "Время — целые секунды по часам лога (как сейчас); день и час вычисляются.",
+  "Счётчики разных IP и визитов верны только на зерне своей сводки; при свёртке пересчитываются запросом по событиям.",
+  "depends_on: таблицы и справочники (ref:<имя>), от которых зависит построение; по ним движок решает, что пересчитать.",
+  "part: часть таблицы со своим шагом построения (access_events: flags). rebuild=always: таблица пересобирается целиком при каждом analyze.",
+  "Ключи и ссылки описывают зерно; ограничениями в рабочей базе не создаются, целостность проверяет тест.",
+  "События хранятся по порядку времени. Склейка кусков — по паре (line_hash 64 бита, occ).",
+  "old: откуда колонка берётся в 0.2.4 (таблица.колонка) — для таблиц совместимости на время перехода."
+ ],
+ "enums": {
+  "scope": [
+   "site",
+   "server",
+   "off"
+  ],
+  "source_kind": [
+   "access",
+   "error",
+   "unknown",
+   "empty"
+  ],
+  "how": [
+   "engine",
+   "name",
+   "behavior",
+   "pattern",
+   "override",
+   "experiment",
+   "witness"
+  ],
+  "level": [
+   "log",
+   "pattern",
+   "network",
+   "witness",
+   "experiment"
+  ],
+  "action_kind": [
+   "cart",
+   "compare",
+   "favorite",
+   "action",
+   "background"
+  ],
+  "background": [
+   "per_page",
+   "none"
+  ],
+  "page_role": [
+   "cart",
+   "checkout",
+   "order_success",
+   "order_step",
+   "not_goal",
+   "login"
+  ],
+  "origin": [
+   "internal",
+   "ads",
+   "search",
+   "sites",
+   "direct"
+  ]
+ },
+ "groups": {
+  "service": "служебные",
+  "raw": "источники и события",
+  "dim": "словари",
+  "site": "карта сайта",
+  "entity": "сущности",
+  "evidence": "свидетельства и правки (вход от человека)",
+  "conclusion": "суждения и выводы",
+  "summary": "сводки"
+ },
+ "files_outside_db_ru": {
+  "site_map.json": "распечатка таблиц site_* и dim_host для Детектива",
+  "brief.json": "выжимка — собирается из таблиц",
+  "snapshot.json": "снимок для следующей проверки — собирается из сводок, карточек и дел",
+  "edits.json, --map-override": "вход от человека; загружаются в таблицы evidence и site_overrides",
+  "data/reference/*.json": "справочники движка — в git; при запуске отпечатки в ref_versions",
+  "STIX, Redmine, CSV, xlsx": "выгрузки наружу"
+ },
+ "tables": [
+  {
+   "name": "meta",
+   "group": "service",
+   "grain_ru": "одно сведение о проверке",
+   "pk": [
+    "key"
+   ],
+   "columns": [
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "ключ: site, period_from, period_to, tz, engine_version, schema_version, blocks, prev_snapshot"
+    },
+    {
+     "name": "value",
+     "type": "VARCHAR",
+     "ru": "значение"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "prepare",
+   "replaces": "inventory.json (version, period, tz), brief.проверка",
+   "rows_est": "10–20",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "ref_versions",
+   "group": "service",
+   "grain_ru": "справочник движка, с которым считалась проверка",
+   "pk": [
+    "name"
+   ],
+   "columns": [
+    {
+     "name": "name",
+     "type": "VARCHAR",
+     "ru": "имя справочника: uafam, robot_ranges, gov_robots, action_vocab, action_patterns, thresholds, asn_db…"
+    },
+    {
+     "name": "hash",
+     "type": "VARCHAR",
+     "ru": "отпечаток содержимого"
+    },
+    {
+     "name": "loaded_at",
+     "type": "TIMESTAMP",
+     "ru": "когда загружен"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "prepare",
+   "replaces": "",
+   "rows_est": "15–25",
+   "note_ru": "Отпечаток изменился — пересчитываются таблицы, которые от справочника зависят (depends_on: ref:<имя>).",
+   "status": "agreed"
+  },
+  {
+   "name": "build_state",
+   "group": "service",
+   "grain_ru": "состояние таблицы: когда и из чего построена",
+   "pk": [
+    "table_name"
+   ],
+   "columns": [
+    {
+     "name": "table_name",
+     "type": "VARCHAR",
+     "ru": "имя таблицы"
+    },
+    {
+     "name": "built_at",
+     "type": "TIMESTAMP",
+     "ru": "когда построена"
+    },
+    {
+     "name": "inputs_hash",
+     "type": "VARCHAR",
+     "ru": "отпечаток входов (таблицы из depends_on и справочники)"
+    },
+    {
+     "name": "rows",
+     "type": "BIGINT",
+     "ru": "строк"
+    },
+    {
+     "name": "seconds",
+     "type": "DOUBLE",
+     "ru": "время построения"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "prepare",
+   "replaces": "",
+   "rows_est": "≈ 50",
+   "note_ru": "По этой таблице движок решает, что пересчитывать: входы не менялись — таблица не трогается.",
+   "status": "agreed"
+  },
+  {
+   "name": "sources",
+   "group": "raw",
+   "grain_ru": "файл лога",
+   "pk": [
+    "source_id"
+   ],
+   "columns": [
+    {
+     "name": "source_id",
+     "type": "SMALLINT",
+     "ru": "номер источника"
+    },
+    {
+     "name": "name",
+     "type": "VARCHAR",
+     "ru": "имя источника, как в отчёте: файл или архив:файл"
+    },
+    {
+     "name": "path",
+     "type": "VARCHAR",
+     "ru": "путь к файлу"
+    },
+    {
+     "name": "member",
+     "type": "VARCHAR",
+     "ru": "имя внутри архива"
+    },
+    {
+     "name": "file_hash",
+     "type": "VARCHAR",
+     "ru": "контрольная сумма файла: тот же файл под другим именем не читается"
+    },
+    {
+     "name": "copy_of",
+     "type": "SMALLINT",
+     "ru": "копия уже загруженного источника (тот же file_hash): не разбирается"
+    },
+    {
+     "name": "site_by_name",
+     "type": "VARCHAR",
+     "ru": "сайт по имени файла"
+    },
+    {
+     "name": "kind",
+     "type": "VARCHAR",
+     "ru": "access / error / unknown / empty",
+     "enum": "source_kind"
+    },
+    {
+     "name": "format",
+     "type": "VARCHAR",
+     "ru": "распознанный формат строк"
+    },
+    {
+     "name": "tz",
+     "type": "VARCHAR",
+     "ru": "часовой пояс лога"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "первая отметка времени (секунды)"
+    },
+    {
+     "name": "ts_last",
+     "type": "BIGINT",
+     "ru": "последняя отметка"
+    },
+    {
+     "name": "lines",
+     "type": "BIGINT",
+     "ru": "строк прочитано"
+    },
+    {
+     "name": "bad",
+     "type": "BIGINT",
+     "ru": "из них не разобрано"
+    },
+    {
+     "name": "new_rows",
+     "type": "BIGINT",
+     "ru": "строк добавлено в события (без повторов из других кусков)"
+    },
+    {
+     "name": "loaded_at",
+     "type": "TIMESTAMP",
+     "ru": "когда загружен"
+    },
+    {
+     "name": "seconds",
+     "type": "DOUBLE",
+     "ru": "время разбора"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "prepare",
+   "replaces": "ingest_state.json, inventory.json (files, duplicates), min_*.pkl",
+   "rows_est": "1–30",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "access_events",
+   "group": "raw",
+   "grain_ru": "строка access-лога (после склейки кусков — без повторов)",
+   "pk": [
+    "eid"
+   ],
+   "columns": [
+    {
+     "name": "eid",
+     "type": "BIGINT",
+     "ru": "номер события: источник × 2^32 + номер строки; порядок событий — (ts, eid)"
+    },
+    {
+     "name": "source_id",
+     "type": "SMALLINT",
+     "ru": "источник",
+     "fk": "sources.source_id"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "ru": "номер строки в источнике"
+    },
+    {
+     "name": "line_hash",
+     "type": "UBIGINT",
+     "ru": "контрольная сумма строки до разбора (после снятия BOM и \\r)"
+    },
+    {
+     "name": "occ",
+     "type": "UINTEGER",
+     "ru": "какой по счёту раз эта строка встретилась в своём источнике (1, 2…). Склейка «максимум, а не сумма»: пара (line_hash, occ) в таблице одна"
+    },
+    {
+     "name": "ts",
+     "type": "BIGINT",
+     "ru": "время запроса, секунды",
+     "old": "R.ts"
+    },
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id",
+     "old": "R.ip"
+    },
+    {
+     "name": "host_id",
+     "type": "INTEGER",
+     "ru": "хост из запроса",
+     "fk": "dim_host.host_id",
+     "old": "R.vhost"
+    },
+    {
+     "name": "method",
+     "type": "VARCHAR",
+     "ru": "метод",
+     "old": "R.method"
+    },
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес без параметров",
+     "fk": "dim_path.path_id",
+     "old": "R.base"
+    },
+    {
+     "name": "query_id",
+     "type": "INTEGER",
+     "ru": "строка параметров",
+     "fk": "dim_query.query_id",
+     "old": "R.query"
+    },
+    {
+     "name": "proto",
+     "type": "VARCHAR",
+     "ru": "протокол",
+     "old": "R.proto"
+    },
+    {
+     "name": "status",
+     "type": "SMALLINT",
+     "ru": "код ответа",
+     "old": "R.status"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт ответа",
+     "old": "R.bytes"
+    },
+    {
+     "name": "ref_id",
+     "type": "INTEGER",
+     "ru": "реферер",
+     "fk": "dim_ref.ref_id",
+     "old": "R.ref"
+    },
+    {
+     "name": "ua_id",
+     "type": "INTEGER",
+     "ru": "браузер (User-Agent)",
+     "fk": "dim_ua.ua_id",
+     "old": "R.ua"
+    },
+    {
+     "name": "vid",
+     "type": "INTEGER",
+     "ru": "номер визита",
+     "fk": "visits.vid",
+     "old": "R.vid",
+     "part": "flags"
+    },
+    {
+     "name": "is_dup",
+     "type": "BOOLEAN",
+     "ru": "повтор того же адреса через секунды (двойная загрузка)",
+     "old": "R.is_dup",
+     "part": "flags"
+    },
+    {
+     "name": "is_redirect_hop",
+     "type": "BOOLEAN",
+     "ru": "шаг переадресации: считается вместе с целью",
+     "old": "R.is_redirect_hop",
+     "part": "flags"
+    },
+    {
+     "name": "is_embedded",
+     "type": "BOOLEAN",
+     "ru": "подгружаемый блок страницы, не просмотр",
+     "old": "R.is_embedded",
+     "part": "flags"
+    },
+    {
+     "name": "is_page",
+     "type": "BOOLEAN",
+     "ru": "просмотр страницы (после трёх исключений выше)",
+     "old": "R.is_page",
+     "part": "flags"
+    },
+    {
+     "name": "form_key",
+     "type": "VARCHAR",
+     "ru": "цель: ключ формы, на которую отправка",
+     "fk": "site_forms.form_key",
+     "old": "R.goal",
+     "part": "flags"
+    },
+    {
+     "name": "goal_success",
+     "type": "BOOLEAN",
+     "ru": "отправка принята",
+     "old": "R.goal_success",
+     "part": "flags"
+    },
+    {
+     "name": "order_id",
+     "type": "VARCHAR",
+     "ru": "номер заказа из адреса страницы успеха (параметр — из site_pages)",
+     "part": "flags"
+    },
+    {
+     "name": "is_order",
+     "type": "BOOLEAN",
+     "ru": "заказ: номер заказа встретился впервые",
+     "old": "R.is_order",
+     "part": "flags"
+    },
+    {
+     "name": "order_step",
+     "type": "BOOLEAN",
+     "ru": "шаг оформления заказа",
+     "old": "R.order_step",
+     "part": "flags"
+    },
+    {
+     "name": "action",
+     "type": "VARCHAR",
+     "ru": "действие на сайте: cart / compare / favorite / action (вид не определить) / background (фоновый вызов при загрузке); пусто — не действие",
+     "enum": "action_kind",
+     "part": "flags"
+    }
+   ],
+   "depends_on": [
+    "sources"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl",
+   "rows_est": "500 тыс. / 7 млн",
+   "note_ru": "Сырые поля не меняются никогда. Копии сайта и хосты вне сайта не удаляются — область задаёт dim_host.scope. Уникальность: (line_hash, occ). Колонки с part=flags пересчитываются при изменении карты сайта.",
+   "status": "agreed",
+   "parts": {
+    "flags": {
+     "ru": "признаки, которым нужен порядок во времени и карта сайта; пересчитываются (UPDATE), сырые колонки — никогда",
+     "depends_on": [
+      "dim_path",
+      "path_site",
+      "dim_query",
+      "query_params",
+      "dim_ref",
+      "dim_host",
+      "site_forms"
+     ]
+    }
+   }
+  },
+  {
+   "name": "error_events",
+   "group": "raw",
+   "grain_ru": "строка error-лога (без повторов)",
+   "pk": [
+    "eid"
+   ],
+   "columns": [
+    {
+     "name": "eid",
+     "type": "BIGINT",
+     "ru": "номер события: источник × 2^32 + номер строки"
+    },
+    {
+     "name": "source_id",
+     "type": "SMALLINT",
+     "ru": "источник",
+     "fk": "sources.source_id"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "ru": "номер строки в источнике"
+    },
+    {
+     "name": "line_hash",
+     "type": "UBIGINT",
+     "ru": "контрольная сумма строки"
+    },
+    {
+     "name": "occ",
+     "type": "UINTEGER",
+     "ru": "номер повтора в источнике"
+    },
+    {
+     "name": "ts",
+     "type": "BIGINT",
+     "ru": "время",
+     "old": "E.ts"
+    },
+    {
+     "name": "level",
+     "type": "VARCHAR",
+     "ru": "уровень: error, crit…",
+     "old": "E.level"
+    },
+    {
+     "name": "msg_type",
+     "type": "VARCHAR",
+     "ru": "вид сообщения по справочнику: файл не найден, таймаут upstream, проба TLS…"
+    },
+    {
+     "name": "msg",
+     "type": "VARCHAR",
+     "ru": "текст сообщения",
+     "old": "E.msg"
+    },
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "клиент — тот же словарь IP, что у access",
+     "fk": "dim_ip.ip_id",
+     "old": "E.client"
+    },
+    {
+     "name": "host_id",
+     "type": "INTEGER",
+     "ru": "хост",
+     "fk": "dim_host.host_id",
+     "old": "E.host"
+    },
+    {
+     "name": "request",
+     "type": "VARCHAR",
+     "ru": "request из строки как есть",
+     "old": "E.request"
+    },
+    {
+     "name": "method",
+     "type": "VARCHAR",
+     "ru": "метод из request"
+    },
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес из request",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "query_id",
+     "type": "INTEGER",
+     "ru": "параметры из request",
+     "fk": "dim_query.query_id"
+    },
+    {
+     "name": "upstream",
+     "type": "VARCHAR",
+     "ru": "upstream",
+     "old": "E.upstream"
+    },
+    {
+     "name": "server",
+     "type": "VARCHAR",
+     "ru": "server из строки",
+     "old": "E.server"
+    },
+    {
+     "name": "ref_id",
+     "type": "INTEGER",
+     "ru": "реферер",
+     "fk": "dim_ref.ref_id",
+     "old": "E.referrer"
+    }
+   ],
+   "depends_on": [
+    "sources"
+   ],
+   "built_in": "prepare",
+   "replaces": "errors.pkl",
+   "rows_est": "315 тыс. за месяц магазина",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "dim_ip",
+   "group": "dim",
+   "grain_ru": "IP-адрес (общий для access и error)",
+   "pk": [
+    "ip_id"
+   ],
+   "columns": [
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "ip",
+     "type": "VARCHAR",
+     "ru": "адрес",
+     "old": "T.ip"
+    },
+    {
+     "name": "asn",
+     "type": "BIGINT",
+     "ru": "номер сети",
+     "old": "T.asn"
+    },
+    {
+     "name": "org",
+     "type": "VARCHAR",
+     "ru": "организация",
+     "old": "T.org"
+    },
+    {
+     "name": "cc",
+     "type": "VARCHAR",
+     "ru": "страна",
+     "old": "T.cc"
+    },
+    {
+     "name": "nettype",
+     "type": "VARCHAR",
+     "ru": "тип сети: дата-центр, домашний интернет, мобильный оператор, госсеть…",
+     "old": "T.nettype"
+    },
+    {
+     "name": "net_first",
+     "type": "BIGINT",
+     "ru": "начало диапазона сети",
+     "old": "T.net_first"
+    },
+    {
+     "name": "net_last",
+     "type": "BIGINT",
+     "ru": "конец диапазона",
+     "old": "T.net_last"
+    },
+    {
+     "name": "robot_net",
+     "type": "VARCHAR",
+     "ru": "чья это сеть по справочникам роботов: Googlebot, Yandex, Internet Archive…"
+    },
+    {
+     "name": "operator",
+     "type": "VARCHAR",
+     "ru": "оператор ведомственных роботов: grchc / cyberok",
+     "old": "V.gov_op"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "error_events",
+    "ref:asn_db",
+    "ref:robot_ranges",
+    "ref:gov_robots",
+    "ref:hosting_rules"
+   ],
+   "built_in": "prepare",
+   "replaces": "T.pkl",
+   "rows_est": "46 тыс. / 1,1 млн",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "dim_ua",
+   "group": "dim",
+   "grain_ru": "строка User-Agent",
+   "pk": [
+    "ua_id"
+   ],
+   "columns": [
+    {
+     "name": "ua_id",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "ua",
+     "type": "VARCHAR",
+     "ru": "строка",
+     "old": "R.ua"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство: Chrome, Googlebot, curl…",
+     "old": "R.fam"
+    },
+    {
+     "name": "fam_cat",
+     "type": "VARCHAR",
+     "ru": "категория семейства: браузер, поисковик, ИИ, веб-архив, утилита…",
+     "old": "R.fam_cat"
+    },
+    {
+     "name": "is_browser",
+     "type": "BOOLEAN",
+     "ru": "браузер",
+     "old": "R.ua_browser"
+    },
+    {
+     "name": "is_old",
+     "type": "BOOLEAN",
+     "ru": "невозможно старая версия",
+     "old": "R.ua_old"
+    },
+    {
+     "name": "is_mobile",
+     "type": "BOOLEAN",
+     "ru": "мобильный",
+     "old": "R.ua_mobile"
+    },
+    {
+     "name": "is_webview",
+     "type": "BOOLEAN",
+     "ru": "встроенный браузер приложения",
+     "old": "R.ua_webview"
+    },
+    {
+     "name": "monitor",
+     "type": "VARCHAR",
+     "ru": "система мониторинга по имени"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "ref:uafam",
+    "ref:monitors",
+    "ref:system_agents"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl (fam, fam_cat, ua_*)",
+   "rows_est": "9 тыс. / 30–50 тыс.",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "dim_path",
+   "group": "dim",
+   "grain_ru": "адрес без параметров",
+   "pk": [
+    "path_id"
+   ],
+   "columns": [
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "path",
+     "type": "VARCHAR",
+     "ru": "адрес",
+     "old": "R.base"
+    },
+    {
+     "name": "ext",
+     "type": "VARCHAR",
+     "ru": "расширение",
+     "old": "R.ext"
+    },
+    {
+     "name": "is_static",
+     "type": "BOOLEAN",
+     "ru": "статика",
+     "old": "R.is_static"
+    },
+    {
+     "name": "shape",
+     "type": "VARCHAR",
+     "ru": "форма адреса: страница / файл / конструкт"
+    },
+    {
+     "name": "file_group",
+     "type": "VARCHAR",
+     "ru": "группа файлов"
+    },
+    {
+     "name": "is_probe",
+     "type": "BOOLEAN",
+     "ru": "зонд по справочнику"
+    },
+    {
+     "name": "is_service",
+     "type": "BOOLEAN",
+     "ru": "служебный файл: robots.txt, sitemap, favicon, /.well-known…"
+    },
+    {
+     "name": "tpl",
+     "type": "VARCHAR",
+     "ru": "шаблон адреса: числа и коды свёрнуты (правило общее, от сайта не зависит)",
+     "old": "R.tpl"
+    },
+    {
+     "name": "section",
+     "type": "VARCHAR",
+     "ru": "раздел верхнего уровня"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "error_events",
+    "ref:extensions",
+    "ref:file_groups",
+    "ref:probes"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl (ext, is_static, tpl)",
+   "rows_est": "65 тыс. / 0,5–1 млн",
+   "note_ru": "Только то, что не зависит от сайта: пересчитывается лишь при изменении справочников. Роль адреса на этом сайте — в path_site.",
+   "status": "agreed"
+  },
+  {
+   "name": "dim_query",
+   "group": "dim",
+   "grain_ru": "строка параметров запроса",
+   "pk": [
+    "query_id"
+   ],
+   "columns": [
+    {
+     "name": "query_id",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "query",
+     "type": "VARCHAR",
+     "ru": "строка параметров",
+     "old": "R.query"
+    },
+    {
+     "name": "form_param",
+     "type": "VARCHAR",
+     "ru": "значение параметра формы (form, form_id, WEB_FORM_ID…)"
+    },
+    {
+     "name": "ad_system",
+     "type": "VARCHAR",
+     "ru": "рекламная система по меткам"
+    },
+    {
+     "name": "has_pd",
+     "type": "BOOLEAN",
+     "ru": "есть персональные данные (телефон, почта)"
+    },
+    {
+     "name": "has_attack",
+     "type": "BOOLEAN",
+     "ru": "есть признаки атаки"
+    },
+    {
+     "name": "action_hint",
+     "type": "VARCHAR",
+     "ru": "действие по словарю: cart / compare / favorite",
+     "enum": "action_kind"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "ref:action_vocab",
+    "ref:common"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl (query), G.pkl",
+   "rows_est": "51 тыс. / 0,7 млн",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "query_params",
+   "group": "dim",
+   "grain_ru": "один параметр одной строки параметров",
+   "pk": [
+    "query_id",
+    "pos"
+   ],
+   "columns": [
+    {
+     "name": "query_id",
+     "type": "INTEGER",
+     "ru": "строка параметров",
+     "fk": "dim_query.query_id"
+    },
+    {
+     "name": "pos",
+     "type": "SMALLINT",
+     "ru": "порядковый номер параметра"
+    },
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "имя параметра"
+    },
+    {
+     "name": "value",
+     "type": "VARCHAR",
+     "ru": "значение"
+    }
+   ],
+   "depends_on": [
+    "dim_query"
+   ],
+   "built_in": "prepare",
+   "replaces": "",
+   "rows_est": "≈ 3 × dim_query",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "dim_ref",
+   "group": "dim",
+   "grain_ru": "реферер",
+   "pk": [
+    "ref_id"
+   ],
+   "columns": [
+    {
+     "name": "ref_id",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "реферер целиком",
+     "old": "R.ref"
+    },
+    {
+     "name": "ref_host",
+     "type": "VARCHAR",
+     "ru": "хост",
+     "old": "R.ref_host"
+    },
+    {
+     "name": "ref_path",
+     "type": "VARCHAR",
+     "ru": "путь",
+     "old": "R.ref_path"
+    },
+    {
+     "name": "is_internal",
+     "type": "BOOLEAN",
+     "ru": "с хоста этого же сервера (зависит от сайта)",
+     "old": "R.ref_internal"
+    },
+    {
+     "name": "search_engine",
+     "type": "VARCHAR",
+     "ru": "поисковик"
+    },
+    {
+     "name": "source_kind",
+     "type": "VARCHAR",
+     "ru": "поиск / соцсеть / сайт / реклама"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "error_events",
+    "dim_host",
+    "ref:common"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl (ref_host, ref_internal, ref_path)",
+   "rows_est": "23 тыс. / 0,3 млн",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "dim_host",
+   "group": "dim",
+   "grain_ru": "хост из запроса",
+   "pk": [
+    "host_id"
+   ],
+   "columns": [
+    {
+     "name": "host_id",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "host",
+     "type": "VARCHAR",
+     "ru": "как записан в логе",
+     "old": "R.vhost"
+    },
+    {
+     "name": "name",
+     "type": "VARCHAR",
+     "ru": "нормализованное имя (без www, в нижнем регистре)"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "сайт / IP вместо имени / подобранное имя / другой домен",
+     "old": "site_map.hosts.тип"
+    },
+    {
+     "name": "reason",
+     "type": "VARCHAR",
+     "ru": "почему так решено",
+     "old": "site_map.hosts.причина"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область: site (сайт) / server (тот же сервер, не сайт) / off (копии — вне отчёта)",
+     "enum": "scope",
+     "old": "R.host_site + удаление копий в prepare"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "error_events",
+    "site_overrides"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (hosts, site_hosts, off_site), R.host_site",
+   "rows_est": "170 / до тысяч",
+   "note_ru": "НОВОЕ против проекта 15.10: колонка scope вместо удаления строк копий.",
+   "status": "agreed"
+  },
+  {
+   "name": "site_overrides",
+   "group": "site",
+   "grain_ru": "поправка карты от человека (вход)",
+   "pk": [
+    "key",
+    "pos"
+   ],
+   "columns": [
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "ключ поправки: site_hosts, not_site_hosts, staff_ips, staff_ips_remove, form_success_rules, site_actions, cart_pages, checkout_pages, order_success…"
+    },
+    {
+     "name": "pos",
+     "type": "SMALLINT",
+     "ru": "номер значения в списке"
+    },
+    {
+     "name": "value",
+     "type": "JSON",
+     "ru": "значение"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "prepare",
+   "replaces": "файл --map-override (остаётся входом; сюда загружается копия)",
+   "rows_est": "0–50",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_facts",
+   "group": "site",
+   "grain_ru": "одиночный факт о сайте",
+   "pk": [
+    "key"
+   ],
+   "columns": [
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "engine, engines_all, server, php_fpm, admin_regex, shop_step, cart_separable, main_country…"
+    },
+    {
+     "name": "value",
+     "type": "JSON",
+     "ru": "значение"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "error_events",
+    "dim_path",
+    "dim_ua",
+    "ref:engines",
+    "site_overrides"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (engines, server, admin_regex, shop)",
+   "rows_est": "20–40",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_forms",
+   "group": "site",
+   "grain_ru": "форма сайта (точка отправки)",
+   "pk": [
+    "form_key"
+   ],
+   "columns": [
+    {
+     "name": "form_key",
+     "type": "VARCHAR",
+     "ru": "ключ: шаблон адреса + параметр формы"
+    },
+    {
+     "name": "tpl",
+     "type": "VARCHAR",
+     "ru": "шаблон адреса обработчика"
+    },
+    {
+     "name": "form_param",
+     "type": "VARCHAR",
+     "ru": "параметр формы"
+    },
+    {
+     "name": "verdict",
+     "type": "VARCHAR",
+     "ru": "вывод разведки: цель / не цель и почему",
+     "old": "site_map.forms.вывод"
+    },
+    {
+     "name": "success_rule",
+     "type": "VARCHAR",
+     "ru": "правило успеха: код 200 / 3xx",
+     "old": "site_map.form_success_rules"
+    },
+    {
+     "name": "is_goal",
+     "type": "BOOLEAN",
+     "ru": "считается целью"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_path",
+    "dim_query",
+    "dim_ref",
+    "site_overrides",
+    "site_pages"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (forms, form_success_rules)",
+   "rows_est": "десятки",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_pages",
+   "group": "site",
+   "grain_ru": "адрес с ролью на сайте",
+   "pk": [
+    "role",
+    "pattern"
+   ],
+   "columns": [
+    {
+     "name": "role",
+     "type": "VARCHAR",
+     "ru": "cart (корзина) / checkout (оформление) / order_success (успех заказа) / order_step (шаг оформления) / not_goal (не цель) / login (вход)",
+     "enum": "page_role"
+    },
+    {
+     "name": "pattern",
+     "type": "VARCHAR",
+     "ru": "регулярное выражение адреса"
+    },
+    {
+     "name": "param",
+     "type": "VARCHAR",
+     "ru": "параметр с номером заказа (для order_success)"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_path",
+    "site_facts",
+    "ref:engines",
+    "ref:action_vocab",
+    "site_overrides"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (orders.cart, checkout, success), справочник движка order_steps / not_goals",
+   "rows_est": "5–20",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_actions",
+   "group": "site",
+   "grain_ru": "обработчик действий на сайте",
+   "pk": [
+    "pattern",
+    "kind"
+   ],
+   "columns": [
+    {
+     "name": "pattern",
+     "type": "VARCHAR",
+     "ru": "регулярное выражение адреса обработчика"
+    },
+    {
+     "name": "kind",
+     "type": "VARCHAR",
+     "ru": "cart / compare / favorite / action",
+     "enum": "action_kind"
+    },
+    {
+     "name": "background",
+     "type": "VARCHAR",
+     "ru": "per_page — вызывается при каждой загрузке страницы; none",
+     "enum": "background"
+    },
+    {
+     "name": "rule",
+     "type": "VARCHAR",
+     "ru": "как узнать действие: any / burst (пачка) / single / single_on_card / param:<имя>=<значение>"
+    },
+    {
+     "name": "visits",
+     "type": "INTEGER",
+     "ru": "визитов с действием"
+    },
+    {
+     "name": "lift",
+     "type": "DOUBLE",
+     "ru": "во сколько раз чаще обычного доходят до корзины"
+    },
+    {
+     "name": "level",
+     "type": "VARCHAR",
+     "ru": "уровень доказанности",
+     "enum": "level"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_path",
+    "dim_query",
+    "site_pages",
+    "ref:action_vocab",
+    "ref:action_patterns",
+    "site_overrides",
+    "experiments"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (site_actions_found)",
+   "rows_est": "0–10",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_staff",
+   "group": "site",
+   "grain_ru": "свой IP",
+   "pk": [
+    "ip_id"
+   ],
+   "columns": [
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id"
+    },
+    {
+     "name": "role",
+     "type": "VARCHAR",
+     "ru": "сотрудник / сервер сайта"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_path",
+    "site_overrides"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (staff_ips)",
+   "rows_est": "0–50",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_monitors",
+   "group": "site",
+   "grain_ru": "мониторинг по расписанию",
+   "pk": [
+    "ip_id",
+    "ua_id",
+    "path_id"
+   ],
+   "columns": [
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id"
+    },
+    {
+     "name": "ua_id",
+     "type": "INTEGER",
+     "ru": "браузер",
+     "fk": "dim_ua.ua_id"
+    },
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "interval_s",
+     "type": "INTEGER",
+     "ru": "интервал, секунд"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "name",
+     "type": "VARCHAR",
+     "ru": "чей мониторинг, если известно"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_ip",
+    "dim_ua",
+    "dim_path",
+    "ref:monitors"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (monitors)",
+   "rows_est": "0–10",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_embedded",
+   "group": "site",
+   "grain_ru": "шаблон подгружаемого блока",
+   "pk": [
+    "tpl"
+   ],
+   "columns": [
+    {
+     "name": "tpl",
+     "type": "VARCHAR",
+     "ru": "шаблон адреса"
+    },
+    {
+     "name": "share_after_page",
+     "type": "DOUBLE",
+     "ru": "доля вызовов сразу после страницы"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_path"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (embedded_templates)",
+   "rows_est": "0–50",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "site_ad_params",
+   "group": "site",
+   "grain_ru": "параметр входа (рекламная или иная метка)",
+   "pk": [
+    "param"
+   ],
+   "columns": [
+    {
+     "name": "param",
+     "type": "VARCHAR",
+     "ru": "имя параметра"
+    },
+    {
+     "name": "system",
+     "type": "VARCHAR",
+     "ru": "рекламная система или «прочее»"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов с параметром"
+    },
+    {
+     "name": "how",
+     "type": "VARCHAR",
+     "ru": "как найдено: engine (справочник движка) / name (по названию) / behavior (по поведению) / pattern (экзотическая сигнатура) / override (поправка карты) / experiment / witness (показание)",
+     "enum": "how"
+    },
+    {
+     "name": "ref",
+     "type": "VARCHAR",
+     "ru": "на что опирается: код сигнатуры (ACT-X-7F3A), experiment:<n>, testimony:<n>; пусто для engine/name/behavior"
+    },
+    {
+     "name": "to_verify",
+     "type": "BOOLEAN",
+     "ru": "требует проверки человеком"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_query",
+    "query_params",
+    "ref:common"
+   ],
+   "built_in": "prepare",
+   "replaces": "site_map.json (ad_params, other_entry_params)",
+   "rows_est": "десятки",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "path_site",
+   "group": "site",
+   "grain_ru": "роль адреса на этом сайте (те же строки, что dim_path)",
+   "pk": [
+    "path_id"
+   ],
+   "columns": [
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "is_admin",
+     "type": "BOOLEAN",
+     "ru": "админка движка",
+     "old": "R.is_admin"
+    },
+    {
+     "name": "is_catalog",
+     "type": "BOOLEAN",
+     "ru": "элемент каталога",
+     "old": "R.is_catalog"
+    },
+    {
+     "name": "page_role",
+     "type": "VARCHAR",
+     "ru": "роль по site_pages: cart / checkout / order_success / order_step / not_goal / login",
+     "enum": "page_role"
+    },
+    {
+     "name": "action_kind",
+     "type": "VARCHAR",
+     "ru": "обработчик действий по site_actions",
+     "enum": "action_kind"
+    },
+    {
+     "name": "is_embedded_tpl",
+     "type": "BOOLEAN",
+     "ru": "шаблон подгружаемого блока"
+    }
+   ],
+   "depends_on": [
+    "dim_path",
+    "site_facts",
+    "site_pages",
+    "site_actions",
+    "site_embedded"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl (is_admin, is_catalog), проверки регулярками по каждой строке",
+   "rows_est": "как dim_path",
+   "note_ru": "ИЗ ПРОВЕРКИ СХЕМЫ: вынесено из dim_path, иначе словарь адресов и карта сайта зависели друг от друга по кругу. Регулярки карты применяются один раз к словарю адресов, а не к каждой строке лога.",
+   "status": "agreed"
+  },
+  {
+   "name": "visits",
+   "group": "entity",
+   "grain_ru": "визит (один IP + один браузер, паузы меньше порога)",
+   "pk": [
+    "vid"
+   ],
+   "columns": [
+    {
+     "name": "vid",
+     "type": "INTEGER",
+     "ru": "номер визита"
+    },
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id",
+     "old": "V.ip"
+    },
+    {
+     "name": "ua_id",
+     "type": "INTEGER",
+     "ru": "браузер",
+     "fk": "dim_ua.ua_id",
+     "old": "V.ua"
+    },
+    {
+     "name": "ts_start",
+     "type": "BIGINT",
+     "ru": "начало",
+     "old": "V.start"
+    },
+    {
+     "name": "ts_end",
+     "type": "BIGINT",
+     "ru": "конец",
+     "old": "V.end"
+    },
+    {
+     "name": "n_req",
+     "type": "INTEGER",
+     "ru": "запросов",
+     "old": "V.n_req"
+    },
+    {
+     "name": "n_pages",
+     "type": "INTEGER",
+     "ru": "страниц",
+     "old": "V.n_pages"
+    },
+    {
+     "name": "n_pages_raw",
+     "type": "INTEGER",
+     "ru": "страниц до очистки",
+     "old": "V.n_pages_raw"
+    },
+    {
+     "name": "n_dup",
+     "type": "INTEGER",
+     "ru": "повторов",
+     "old": "V.n_dup"
+    },
+    {
+     "name": "n_redirect",
+     "type": "INTEGER",
+     "ru": "шагов переадресации",
+     "old": "V.n_redirect"
+    },
+    {
+     "name": "n_embedded",
+     "type": "INTEGER",
+     "ru": "подгруженных блоков",
+     "old": "V.n_embedded"
+    },
+    {
+     "name": "n_static",
+     "type": "INTEGER",
+     "ru": "файлов статики",
+     "old": "V.n_static"
+    },
+    {
+     "name": "n_post",
+     "type": "INTEGER",
+     "ru": "POST",
+     "old": "V.n_post"
+    },
+    {
+     "name": "n_head",
+     "type": "INTEGER",
+     "ru": "HEAD",
+     "old": "V.n_head"
+    },
+    {
+     "name": "n_err4",
+     "type": "INTEGER",
+     "ru": "ответов 4xx",
+     "old": "V.n_err4"
+    },
+    {
+     "name": "n_err5",
+     "type": "INTEGER",
+     "ru": "ответов 5xx",
+     "old": "V.n_err5"
+    },
+    {
+     "name": "n_catalog",
+     "type": "INTEGER",
+     "ru": "элементов каталога",
+     "old": "V.n_catalog"
+    },
+    {
+     "name": "n_goal",
+     "type": "INTEGER",
+     "ru": "отправок целей",
+     "old": "V.n_goal"
+    },
+    {
+     "name": "n_conv",
+     "type": "INTEGER",
+     "ru": "принятых (заявки и заказы)",
+     "old": "V.n_conv"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт",
+     "old": "V.bytes"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область визита по хосту",
+     "enum": "scope",
+     "old": "V.host_site"
+    },
+    {
+     "name": "entry_path_id",
+     "type": "INTEGER",
+     "ru": "страница входа",
+     "fk": "dim_path.path_id",
+     "old": "V.entry"
+    },
+    {
+     "name": "entry_query_id",
+     "type": "INTEGER",
+     "ru": "параметры входа",
+     "fk": "dim_query.query_id",
+     "old": "V.entry_query"
+    },
+    {
+     "name": "entry_status",
+     "type": "SMALLINT",
+     "ru": "код ответа на входе",
+     "old": "V.entry_status"
+    },
+    {
+     "name": "entry_ref_id",
+     "type": "INTEGER",
+     "ru": "реферер входа",
+     "fk": "dim_ref.ref_id",
+     "old": "V.entry_ref"
+    },
+    {
+     "name": "channel",
+     "type": "VARCHAR",
+     "ru": "канал: Реклама, Поиск, Прямые…",
+     "old": "V.channel"
+    },
+    {
+     "name": "channel_sub",
+     "type": "VARCHAR",
+     "ru": "подканал: Яндекс Директ…",
+     "old": "V.channel_sub"
+    },
+    {
+     "name": "fam_verified",
+     "type": "VARCHAR",
+     "ru": "подлинность робота: подпись и сеть совпали / подделка / не робот",
+     "old": "V.fam_verified"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория: Люди · Роботы · Боты · Утилиты · Свои · Системы мониторинга",
+     "old": "V.group"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "тип (что делает): сканер под браузер, спам форм, только файлы, веб-архив…",
+     "old": "V.subgroup"
+    },
+    {
+     "name": "rule",
+     "type": "VARCHAR",
+     "ru": "НОВОЕ: код правила, которое так решило (gov_fingerprint, files_only, form_spam_burst…); пусто — первичная категория по словарям"
+    },
+    {
+     "name": "level",
+     "type": "VARCHAR",
+     "ru": "НОВОЕ: уровень доказанности",
+     "enum": "level"
+    },
+    {
+     "name": "category_before",
+     "type": "VARCHAR",
+     "ru": "НОВОЕ: категория до срабатывания правила",
+     "old": "V.gov_was (частный случай)"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "access_events#flags",
+    "dim_ip",
+    "dim_ua",
+    "dim_host",
+    "dim_query",
+    "dim_ref",
+    "site_staff",
+    "site_monitors",
+    "site_ad_params",
+    "ip_overrides",
+    "ref:thresholds"
+   ],
+   "built_in": "prepare (нарезка и счётчики), analyze (category, type, rule, level)",
+   "replaces": "V.pkl",
+   "rows_est": "128 тыс. / 2,5 млн",
+   "note_ru": "day, hour, weekday, dur вычисляются из ts_start и ts_end. Признаки браузера и сети берутся из словарей по ip_id и ua_id, а не копируются в визит.",
+   "status": "agreed"
+  },
+  {
+   "name": "ip_period",
+   "group": "entity",
+   "grain_ru": "IP за период проверки",
+   "pk": [
+    "ip_id"
+   ],
+   "columns": [
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "основная категория (по запросам)"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "основной тип"
+    },
+    {
+     "name": "who",
+     "type": "VARCHAR",
+     "ru": "подпись «кто»"
+    },
+    {
+     "name": "n_categories",
+     "type": "SMALLINT",
+     "ru": "сколько разных категорий у IP"
+    },
+    {
+     "name": "is_live",
+     "type": "BOOLEAN",
+     "ru": "живой посетитель (люди, свои — кроме сервера сайта)"
+    },
+    {
+     "name": "n_visits",
+     "type": "INTEGER",
+     "ru": "визитов"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_pages",
+     "type": "BIGINT",
+     "ru": "страниц"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "первый запрос"
+    },
+    {
+     "name": "ts_last",
+     "type": "BIGINT",
+     "ru": "последний запрос"
+    },
+    {
+     "name": "n_days",
+     "type": "SMALLINT",
+     "ru": "дней с запросами"
+    },
+    {
+     "name": "n_probe",
+     "type": "BIGINT",
+     "ru": "зондов"
+    },
+    {
+     "name": "n_attack",
+     "type": "BIGINT",
+     "ru": "запросов с атакой в параметрах"
+    },
+    {
+     "name": "n_leak_ok",
+     "type": "BIGINT",
+     "ru": "успешных скачиваний утёкших файлов"
+    },
+    {
+     "name": "n_login",
+     "type": "BIGINT",
+     "ru": "обращений к точкам входа"
+    },
+    {
+     "name": "n_submits",
+     "type": "BIGINT",
+     "ru": "отправок форм"
+    },
+    {
+     "name": "n_refused",
+     "type": "BIGINT",
+     "ru": "отказов 403/429/444"
+    },
+    {
+     "name": "n_errlog",
+     "type": "BIGINT",
+     "ru": "строк error-лога с этого IP"
+    }
+   ],
+   "depends_on": [
+    "visits",
+    "access_events",
+    "access_events#flags",
+    "error_events",
+    "dim_path",
+    "dim_query"
+   ],
+   "built_in": "analyze",
+   "replaces": "common.ip_profile, profiles.ip_features (в памяти)",
+   "rows_est": "46 тыс. / 1,1 млн",
+   "note_ru": "Список счётчиков уточняется при переводе дел и мер по IP (круг 4d/5): сейчас их набор задан кодом profiles.ip_features.",
+   "status": "draft"
+  },
+  {
+   "name": "testimony",
+   "group": "evidence",
+   "grain_ru": "показание свидетеля",
+   "pk": [
+    "n"
+   ],
+   "columns": [
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "who",
+     "type": "VARCHAR",
+     "ru": "кто"
+    },
+    {
+     "name": "made_at",
+     "type": "TIMESTAMP",
+     "ru": "когда"
+    },
+    {
+     "name": "question",
+     "type": "VARCHAR",
+     "ru": "вопрос"
+    },
+    {
+     "name": "answer",
+     "type": "VARCHAR",
+     "ru": "ответ"
+    },
+    {
+     "name": "conflict",
+     "type": "VARCHAR",
+     "ru": "расхождение с логом, если есть"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "edits.json (показания)",
+   "rows_est": "0–30",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "experiments",
+   "group": "evidence",
+   "grain_ru": "следственный эксперимент",
+   "pk": [
+    "n"
+   ],
+   "columns": [
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "ru": "номер"
+    },
+    {
+     "name": "who",
+     "type": "VARCHAR",
+     "ru": "кто"
+    },
+    {
+     "name": "made_at",
+     "type": "TIMESTAMP",
+     "ru": "когда"
+    },
+    {
+     "name": "goal",
+     "type": "VARCHAR",
+     "ru": "цель"
+    },
+    {
+     "name": "steps",
+     "type": "JSON",
+     "ru": "шаги"
+    },
+    {
+     "name": "observed",
+     "type": "JSON",
+     "ru": "что увидели: адрес запроса, метод, поля формы, код, размер ответа"
+    },
+    {
+     "name": "ip",
+     "type": "VARCHAR",
+     "ru": "IP, с которого делали"
+    },
+    {
+     "name": "ts",
+     "type": "BIGINT",
+     "ru": "время, если делали до выгрузки лога"
+    },
+    {
+     "name": "conclusion",
+     "type": "VARCHAR",
+     "ru": "вывод"
+    },
+    {
+     "name": "level",
+     "type": "VARCHAR",
+     "ru": "browser / log_confirmed"
+    },
+    {
+     "name": "trace_events",
+     "type": "INTEGER",
+     "ru": "найдено событий в логе (IP + время ± 1 мин)"
+    },
+    {
+     "name": "changes",
+     "type": "JSON",
+     "ru": "что изменил в карте сайта"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "edits.json (experiments)",
+   "rows_est": "0–10",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "net_checks",
+   "group": "evidence",
+   "grain_ru": "проверка из сети",
+   "pk": [
+    "kind",
+    "url"
+   ],
+   "columns": [
+    {
+     "name": "kind",
+     "type": "VARCHAR",
+     "ru": "leak / site_file / embedding / web_archive"
+    },
+    {
+     "name": "url",
+     "type": "VARCHAR",
+     "ru": "адрес"
+    },
+    {
+     "name": "made_at",
+     "type": "TIMESTAMP",
+     "ru": "когда"
+    },
+    {
+     "name": "status",
+     "type": "VARCHAR",
+     "ru": "что получили"
+    },
+    {
+     "name": "result",
+     "type": "VARCHAR",
+     "ru": "итог"
+    },
+    {
+     "name": "details",
+     "type": "JSON",
+     "ru": "подробности"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "edits.json (проверка_утечек, проверка_сайта, встраивание)",
+   "rows_est": "0–50",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "ip_overrides",
+   "group": "evidence",
+   "grain_ru": "решение Детектива об IP",
+   "pk": [
+    "ip"
+   ],
+   "columns": [
+    {
+     "name": "ip",
+     "type": "VARCHAR",
+     "ru": "IP"
+    },
+    {
+     "name": "decision",
+     "type": "VARCHAR",
+     "ru": "people — это люди"
+    },
+    {
+     "name": "note",
+     "type": "VARCHAR",
+     "ru": "почему"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "edits.json (люди_ip)",
+   "rows_est": "0–сотни",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "case_overrides",
+   "group": "evidence",
+   "grain_ru": "решение Детектива о деле",
+   "pk": [
+    "case_id"
+   ],
+   "columns": [
+    {
+     "name": "case_id",
+     "type": "VARCHAR",
+     "ru": "дело"
+    },
+    {
+     "name": "decision",
+     "type": "VARCHAR",
+     "ru": "оправдано / подтверждено"
+    },
+    {
+     "name": "severity",
+     "type": "VARCHAR",
+     "ru": "важность"
+    },
+    {
+     "name": "note",
+     "type": "VARCHAR",
+     "ru": "почему"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "edits.json (дела)",
+   "rows_est": "0–десятки",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "finding_overrides",
+   "group": "evidence",
+   "grain_ru": "правка карточки проблемы",
+   "pk": [
+    "key",
+    "op"
+   ],
+   "columns": [
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "ключ карточки"
+    },
+    {
+     "name": "op",
+     "type": "VARCHAR",
+     "ru": "remove / update / add"
+    },
+    {
+     "name": "patch",
+     "type": "JSON",
+     "ru": "что поменять"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "edits.json (remove, update, add)",
+   "rows_est": "0–десятки",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "learned",
+   "group": "evidence",
+   "grain_ru": "найденное за прогон и не известное справочникам",
+   "pk": [
+    "kind",
+    "key"
+   ],
+   "columns": [
+    {
+     "name": "kind",
+     "type": "VARCHAR",
+     "ru": "param / extension / monitor / signature / action_pattern"
+    },
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "что найдено"
+    },
+    {
+     "name": "value",
+     "type": "JSON",
+     "ru": "описание"
+    },
+    {
+     "name": "source",
+     "type": "VARCHAR",
+     "ru": "engine (нашёл движок) / detective (нашёл Детектив)"
+    }
+   ],
+   "depends_on": [],
+   "built_in": "analyze",
+   "replaces": "data/reference/learned/*.json (запись в папку движка при прогоне)",
+   "rows_est": "0–сотни",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "cases",
+   "group": "conclusion",
+   "grain_ru": "дело (группа IP с общим почерком)",
+   "pk": [
+    "case_id"
+   ],
+   "columns": [
+    {
+     "name": "case_id",
+     "type": "VARCHAR",
+     "ru": "номер дела"
+    },
+    {
+     "name": "alias",
+     "type": "VARCHAR",
+     "ru": "кличка"
+    },
+    {
+     "name": "kind",
+     "type": "VARCHAR",
+     "ru": "вид"
+    },
+    {
+     "name": "severity",
+     "type": "VARCHAR",
+     "ru": "важность"
+    },
+    {
+     "name": "verdict",
+     "type": "VARCHAR",
+     "ru": "приговор"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "первый"
+    },
+    {
+     "name": "ts_last",
+     "type": "BIGINT",
+     "ru": "последний"
+    },
+    {
+     "name": "card",
+     "type": "JSON",
+     "ru": "карточка дела: улики, примеры"
+    }
+   ],
+   "depends_on": [
+    "visits",
+    "ip_period",
+    "case_overrides"
+   ],
+   "built_in": "analyze",
+   "replaces": "results.pkl (profiles.дела)",
+   "rows_est": "60 / 1 тыс.",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "case_members",
+   "group": "conclusion",
+   "grain_ru": "IP в деле",
+   "pk": [
+    "case_id",
+    "ip_id"
+   ],
+   "columns": [
+    {
+     "name": "case_id",
+     "type": "VARCHAR",
+     "ru": "дело",
+     "fk": "cases.case_id"
+    },
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id"
+    },
+    {
+     "name": "role",
+     "type": "VARCHAR",
+     "ru": "роль"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "первый"
+    },
+    {
+     "name": "ts_last",
+     "type": "BIGINT",
+     "ru": "последний"
+    },
+    {
+     "name": "note",
+     "type": "VARCHAR",
+     "ru": "пометка"
+    }
+   ],
+   "depends_on": [
+    "cases"
+   ],
+   "built_in": "analyze",
+   "replaces": "results.pkl (profiles.состав)",
+   "rows_est": "2,7 тыс. / 0,7 млн",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "signatures",
+   "group": "conclusion",
+   "grain_ru": "сигнатура дела",
+   "pk": [
+    "sig_id"
+   ],
+   "columns": [
+    {
+     "name": "sig_id",
+     "type": "VARCHAR",
+     "ru": "номер"
+    },
+    {
+     "name": "case_id",
+     "type": "VARCHAR",
+     "ru": "дело",
+     "fk": "cases.case_id"
+    },
+    {
+     "name": "rule",
+     "type": "VARCHAR",
+     "ru": "правило"
+    },
+    {
+     "name": "kind",
+     "type": "VARCHAR",
+     "ru": "вид"
+    },
+    {
+     "name": "fp_check",
+     "type": "VARCHAR",
+     "ru": "проверка на ложные срабатывания"
+    },
+    {
+     "name": "n_false",
+     "type": "INTEGER",
+     "ru": "ложных"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    }
+   ],
+   "depends_on": [
+    "cases",
+    "visits"
+   ],
+   "built_in": "analyze",
+   "replaces": "results.pkl (profiles.сигнатуры)",
+   "rows_est": "60 / 1 тыс.",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "ip_measures",
+   "group": "conclusion",
+   "grain_ru": "мера по IP",
+   "pk": [
+    "ip_id"
+   ],
+   "columns": [
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id"
+    },
+    {
+     "name": "case_id",
+     "type": "VARCHAR",
+     "ru": "дело",
+     "fk": "cases.case_id"
+    },
+    {
+     "name": "verdict",
+     "type": "VARCHAR",
+     "ru": "приговор: блокировать / наблюдать…"
+    },
+    {
+     "name": "reason",
+     "type": "VARCHAR",
+     "ru": "основание"
+    },
+    {
+     "name": "n_visits",
+     "type": "INTEGER",
+     "ru": "визитов"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_submits",
+     "type": "BIGINT",
+     "ru": "отправок"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "первый"
+    },
+    {
+     "name": "ts_last",
+     "type": "BIGINT",
+     "ru": "последний"
+    },
+    {
+     "name": "has_people",
+     "type": "BOOLEAN",
+     "ru": "у IP есть обычные визиты людей: не блокировать, в STIX не выгружать"
+    }
+   ],
+   "depends_on": [
+    "cases",
+    "case_members",
+    "ip_period",
+    "ip_overrides"
+   ],
+   "built_in": "analyze",
+   "replaces": "results.pkl (profiles.меры_ip, меры_ip_люди)",
+   "rows_est": "2,7 тыс. / 0,7 млн",
+   "note_ru": "",
+   "status": "agreed"
+  },
+  {
+   "name": "findings",
+   "group": "conclusion",
+   "grain_ru": "карточка проблемы",
+   "pk": [
+    "key"
+   ],
+   "columns": [
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "ключ: блок:код:область"
+    },
+    {
+     "name": "block",
+     "type": "VARCHAR",
+     "ru": "блок"
+    },
+    {
+     "name": "code",
+     "type": "VARCHAR",
+     "ru": "код карточки"
+    },
+    {
+     "name": "severity",
+     "type": "VARCHAR",
+     "ru": "важность"
+    },
+    {
+     "name": "title",
+     "type": "VARCHAR",
+     "ru": "заголовок"
+    },
+    {
+     "name": "what",
+     "type": "VARCHAR",
+     "ru": "что происходит"
+    },
+    {
+     "name": "facts",
+     "type": "VARCHAR",
+     "ru": "факты"
+    },
+    {
+     "name": "where_fix",
+     "type": "VARCHAR",
+     "ru": "где править"
+    },
+    {
+     "name": "action",
+     "type": "VARCHAR",
+     "ru": "что сделать"
+    },
+    {
+     "name": "main_number",
+     "type": "VARCHAR",
+     "ru": "главная цифра"
+    },
+    {
+     "name": "sheet",
+     "type": "VARCHAR",
+     "ru": "лист с подробностями"
+    },
+    {
+     "name": "also_in",
+     "type": "JSON",
+     "ru": "где ещё"
+    },
+    {
+     "name": "status",
+     "type": "VARCHAR",
+     "ru": "статус"
+    },
+    {
+     "name": "evidence",
+     "type": "VARCHAR",
+     "ru": "доказательство"
+    },
+    {
+     "name": "topic",
+     "type": "VARCHAR",
+     "ru": "тема"
+    },
+    {
+     "name": "params",
+     "type": "JSON",
+     "ru": "числа карточки отдельно от текста — для сравнения проверок"
+    }
+   ],
+   "depends_on": [
+    "finding_overrides",
+    "visits",
+    "ip_period",
+    "cases"
+   ],
+   "built_in": "analyze",
+   "replaces": "results.pkl (findings)",
+   "rows_est": "20–60",
+   "note_ru": "depends_on сводок не перечисляю: карточки читают почти все сводки и сущности.",
+   "status": "agreed"
+  },
+  {
+   "name": "sum_time",
+   "group": "summary",
+   "grain_ru": "день × час × кто",
+   "pk": [
+    "day",
+    "hour",
+    "scope",
+    "category",
+    "type",
+    "fam"
+   ],
+   "columns": [
+    {
+     "name": "day",
+     "type": "DATE",
+     "ru": "день"
+    },
+    {
+     "name": "hour",
+     "type": "TINYINT",
+     "ru": "час"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "тип"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство (имя робота, утилиты)"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_pages",
+     "type": "BIGINT",
+     "ru": "страниц"
+    },
+    {
+     "name": "n_visits_started",
+     "type": "BIGINT",
+     "ru": "визитов началось"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт"
+    },
+    {
+     "name": "n_2xx",
+     "type": "BIGINT",
+     "ru": "2xx"
+    },
+    {
+     "name": "n_3xx",
+     "type": "BIGINT",
+     "ru": "3xx"
+    },
+    {
+     "name": "n_4xx",
+     "type": "BIGINT",
+     "ru": "4xx"
+    },
+    {
+     "name": "n_5xx",
+     "type": "BIGINT",
+     "ru": "5xx"
+    },
+    {
+     "name": "n_403",
+     "type": "BIGINT",
+     "ru": "403"
+    },
+    {
+     "name": "n_499",
+     "type": "BIGINT",
+     "ru": "499"
+    },
+    {
+     "name": "n_502",
+     "type": "BIGINT",
+     "ru": "502"
+    },
+    {
+     "name": "n_504",
+     "type": "BIGINT",
+     "ru": "504"
+    },
+    {
+     "name": "n_submits",
+     "type": "BIGINT",
+     "ru": "отправок целей"
+    },
+    {
+     "name": "n_accepted",
+     "type": "BIGINT",
+     "ru": "принято"
+    },
+    {
+     "name": "n_orders",
+     "type": "BIGINT",
+     "ru": "заказов"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "access_events#flags",
+    "visits",
+    "dim_host",
+    "dim_ua"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "тысячи",
+   "note_ru": "Листы: Статистика 02–06, Признаки торможения, Нагрузка по часам, Расписание ботов, Журнал активности, Органика по дням.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_minute",
+   "group": "summary",
+   "grain_ru": "минута × кто",
+   "pk": [
+    "minute",
+    "scope",
+    "category"
+   ],
+   "columns": [
+    {
+     "name": "minute",
+     "type": "INTEGER",
+     "ru": "минута (секунды / 60)"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_pages",
+     "type": "BIGINT",
+     "ru": "страниц"
+    },
+    {
+     "name": "n_5xx_pages",
+     "type": "BIGINT",
+     "ru": "страниц с 5xx"
+    },
+    {
+     "name": "n_499",
+     "type": "BIGINT",
+     "ru": "обрывов 499"
+    },
+    {
+     "name": "n_refused",
+     "type": "BIGINT",
+     "ru": "отказов 403/429/444"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "разных IP"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "access_events#flags",
+    "visits",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "≈ минут × 6",
+   "note_ru": "Листы: Сбои, Всплески нагрузки, пик в минуту, окна сбоев для дел и карточек (в т. ч. «обход веб-архива совпал со сбоем»).",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_path_status",
+   "group": "summary",
+   "grain_ru": "адрес × хост × код × кто × откуда",
+   "pk": [
+    "path_id",
+    "host_id",
+    "status",
+    "category",
+    "type",
+    "fam",
+    "origin"
+   ],
+   "columns": [
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "host_id",
+     "type": "INTEGER",
+     "ru": "хост",
+     "fk": "dim_host.host_id"
+    },
+    {
+     "name": "status",
+     "type": "SMALLINT",
+     "ru": "код"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "тип"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство"
+    },
+    {
+     "name": "origin",
+     "type": "VARCHAR",
+     "ru": "откуда запрос: страница сайта / реклама / поиск / внешние сайты / напрямую",
+     "enum": "origin"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "разных IP"
+    },
+    {
+     "name": "n_visits",
+     "type": "INTEGER",
+     "ru": "разных визитов"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт"
+    },
+    {
+     "name": "day_first",
+     "type": "DATE",
+     "ru": "первый день"
+    },
+    {
+     "name": "day_last",
+     "type": "DATE",
+     "ru": "последний день"
+    },
+    {
+     "name": "sample_ref_id",
+     "type": "INTEGER",
+     "ru": "пример реферера",
+     "fk": "dim_ref.ref_id"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "access_events#flags",
+    "visits",
+    "dim_ref"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "сотни тысяч / миллионы",
+   "note_ru": "Самая большая сводка. Листы: 404 / 5xx / 403 / 499, Пострадавшие страницы, Ошибки файлов, Разделы, Типы страниц, Страницы, Файлы, Тяжёлые файлы, Обход поисковиками, Роботы, ИИ-видимость, Поисковые ошибки, Хосты, Утечки, Служебные разделы. Область берётся через host_id → dim_host.scope.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_path_day",
+   "group": "summary",
+   "grain_ru": "адрес × день",
+   "pk": [
+    "path_id",
+    "day",
+    "scope"
+   ],
+   "columns": [
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "day",
+     "type": "DATE",
+     "ru": "день"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_ok",
+     "type": "BIGINT",
+     "ru": "успешных"
+    },
+    {
+     "name": "n_err_people",
+     "type": "BIGINT",
+     "ru": "ошибок людям"
+    },
+    {
+     "name": "last_status",
+     "type": "SMALLINT",
+     "ru": "последний код за день"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "visits",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "сотни тысяч / миллионы",
+   "note_ru": "История адреса: работал / сломался / починился; «актуально»; «открыт сейчас» у утечек.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_links",
+   "group": "summary",
+   "grain_ru": "переход: источник → цель × код",
+   "pk": [
+    "src",
+    "dst_path_id",
+    "status"
+   ],
+   "columns": [
+    {
+     "name": "src",
+     "type": "VARCHAR",
+     "ru": "шаблон страницы-источника или внешний хост"
+    },
+    {
+     "name": "src_kind",
+     "type": "VARCHAR",
+     "ru": "internal / external / script"
+    },
+    {
+     "name": "dst_path_id",
+     "type": "INTEGER",
+     "ru": "цель",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "status",
+     "type": "SMALLINT",
+     "ru": "код"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "переходов"
+    },
+    {
+     "name": "n_visits",
+     "type": "INTEGER",
+     "ru": "визитов"
+    },
+    {
+     "name": "n_people",
+     "type": "INTEGER",
+     "ru": "людей (IP)"
+    },
+    {
+     "name": "n_search",
+     "type": "BIGINT",
+     "ru": "поисковиков"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "visits",
+    "dim_ref",
+    "dim_path",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "десятки тысяч",
+   "note_ru": "Листы: Битые внутренние, Битые внешние, Битые из скриптов, хотлинк.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_params",
+   "group": "summary",
+   "grain_ru": "шаблон адреса × параметр × значение",
+   "pk": [
+    "tpl",
+    "key",
+    "value",
+    "scope"
+   ],
+   "columns": [
+    {
+     "name": "tpl",
+     "type": "VARCHAR",
+     "ru": "шаблон адреса"
+    },
+    {
+     "name": "key",
+     "type": "VARCHAR",
+     "ru": "параметр"
+    },
+    {
+     "name": "value",
+     "type": "VARCHAR",
+     "ru": "значение (длинные и редкие — свёрнуты)"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_ip_people",
+     "type": "INTEGER",
+     "ru": "людей (IP)"
+    },
+    {
+     "name": "n_visits",
+     "type": "INTEGER",
+     "ru": "визитов"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "query_params",
+    "visits",
+    "dim_path",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "сотни тысяч",
+   "note_ru": "Листы: Параметры запросов, Фасеты, Атаки в параметрах, Токены в адресах, Паразитные адреса.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_intake",
+   "group": "summary",
+   "grain_ru": "точка приёма: адрес × метод × ключ формы",
+   "pk": [
+    "path_id",
+    "method",
+    "form_key",
+    "scope"
+   ],
+   "columns": [
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "method",
+     "type": "VARCHAR",
+     "ru": "метод"
+    },
+    {
+     "name": "form_key",
+     "type": "VARCHAR",
+     "ru": "ключ формы"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "n_own",
+     "type": "BIGINT",
+     "ru": "со страниц сайта"
+    },
+    {
+     "name": "n_foreign",
+     "type": "BIGINT",
+     "ru": "без страницы сайта"
+    },
+    {
+     "name": "n_submits",
+     "type": "BIGINT",
+     "ru": "отправок"
+    },
+    {
+     "name": "n_accepted",
+     "type": "BIGINT",
+     "ru": "принято"
+    },
+    {
+     "name": "statuses",
+     "type": "JSON",
+     "ru": "коды"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "access_events#flags",
+    "visits",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "сотни",
+   "note_ru": "Листы: Точки приёма данных, POST, GET, Конверсии, Воронки, Анатомия (формы).",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_methods",
+   "group": "summary",
+   "grain_ru": "вид метода × класс необычного запроса",
+   "pk": [
+    "method",
+    "unusual",
+    "scope"
+   ],
+   "columns": [
+    {
+     "name": "method",
+     "type": "VARCHAR",
+     "ru": "метод"
+    },
+    {
+     "name": "unusual",
+     "type": "VARCHAR",
+     "ru": "класс необычного запроса"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "n_2xx",
+     "type": "BIGINT",
+     "ru": "принято 2xx"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "десятки",
+   "note_ru": "Листы: Методы и протоколы, Необычные запросы.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_errorlog",
+   "group": "summary",
+   "grain_ru": "error-лог: вид сообщения × день × адрес",
+   "pk": [
+    "msg_type",
+    "day",
+    "path_id",
+    "scope"
+   ],
+   "columns": [
+    {
+     "name": "msg_type",
+     "type": "VARCHAR",
+     "ru": "вид сообщения"
+    },
+    {
+     "name": "day",
+     "type": "DATE",
+     "ru": "день"
+    },
+    {
+     "name": "path_id",
+     "type": "INTEGER",
+     "ru": "адрес",
+     "fk": "dim_path.path_id"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "n",
+     "type": "BIGINT",
+     "ru": "сообщений"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "первое"
+    },
+    {
+     "name": "ts_last",
+     "type": "BIGINT",
+     "ru": "последнее"
+    },
+    {
+     "name": "sample",
+     "type": "VARCHAR",
+     "ru": "пример"
+    }
+   ],
+   "depends_on": [
+    "error_events",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "десятки тысяч",
+   "note_ru": "Листы: Error-лог, таймауты в «Признаках торможения», доказательство сбоев, Паспорт системы.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_refused",
+   "group": "summary",
+   "grain_ru": "отказы фильтра: кто × код × сеть × страна × день",
+   "pk": [
+    "day",
+    "status",
+    "category",
+    "fam",
+    "nettype",
+    "cc",
+    "scope"
+   ],
+   "columns": [
+    {
+     "name": "day",
+     "type": "DATE",
+     "ru": "день"
+    },
+    {
+     "name": "status",
+     "type": "SMALLINT",
+     "ru": "код"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство"
+    },
+    {
+     "name": "nettype",
+     "type": "VARCHAR",
+     "ru": "тип сети"
+    },
+    {
+     "name": "cc",
+     "type": "VARCHAR",
+     "ru": "страна"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "отказов"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "sample_path_id",
+     "type": "INTEGER",
+     "ru": "пример адреса",
+     "fk": "dim_path.path_id"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "visits",
+    "dim_ip",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "тысячи",
+   "note_ru": "Листы: Серверный фильтр, отказы роботам (карточки), отказы ведомственным роботам и веб-архиву.",
+   "status": "agreed",
+   "rebuild": "always"
+  },
+  {
+   "name": "sum_load",
+   "group": "summary",
+   "grain_ru": "источники нагрузки: кто × код",
+   "pk": [
+    "scope",
+    "category",
+    "type",
+    "fam",
+    "status"
+   ],
+   "columns": [
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область",
+     "enum": "scope"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "тип"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство (имя робота, утилиты)"
+    },
+    {
+     "name": "status",
+     "type": "SMALLINT",
+     "ru": "код"
+    },
+    {
+     "name": "n_req",
+     "type": "BIGINT",
+     "ru": "запросов"
+    },
+    {
+     "name": "n_pages",
+     "type": "BIGINT",
+     "ru": "страниц"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт"
+    },
+    {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "IP"
+    },
+    {
+     "name": "max_per_minute",
+     "type": "INTEGER",
+     "ru": "максимум запросов в минуту"
+    }
+   ],
+   "depends_on": [
+    "access_events",
+    "access_events#flags",
+    "visits",
+    "dim_host"
+   ],
+   "built_in": "analyze",
+   "replaces": "",
+   "rows_est": "сотни",
+   "note_ru": "Листы: Источники нагрузки, каналы людей.",
+   "status": "agreed",
+   "rebuild": "always"
+  }
+ ]
+}

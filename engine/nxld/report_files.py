@@ -84,9 +84,10 @@ def build_files(wb, res, title='Логи'):
         S.pair(nm, val)
     p0, p1 = inv['period']
     tz = str(inv.get('tz', ''))
-    S.pair('Период', f"{ru_date(p0)} {str(p0)[11:16]} — {ru_date(p1)} {str(p1)[11:16]}" + (f"; часовой пояс {tz[:3]}:{tz[3:]}" if len(tz) == 5 else ''))
-    nd = sum(dup.values())
-    S.pair('Повторы на стыках', f"удалено {ru_num(nd)} {plural(nd, 'строка', 'строки', 'строк')}" if nd else 'нет')
+    def period_(a_, b_):
+        return f"{ru_date(a_)} {str(a_)[11:16]} — {ru_date(b_)} {str(b_)[11:16]}"
+    S.pair('Период access-логов', period_(p0, p1) + (f"; часовой пояс {tz[:3]}:{tz[3:]}" if len(tz) == 5 else ''))
+    if inv.get('period_errors'): S.pair('Период error-логов', period_(*inv['period_errors']))
     if copy_of: S.pair('Копии файлов', '\n'.join(f"{shown(a).splitlines()[0]} = {shown(b).splitlines()[0]}" for a, b in copy_of.items()))
     bad = int(F['нераспознано'].sum())
     S.pair('Нераспознанные строки', ru_num(bad) if bad else 'нет')

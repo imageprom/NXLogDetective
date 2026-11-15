@@ -27,7 +27,7 @@
 
 ## Запуск движка
 
-Нужны Python 3 (проверено на 3.11) и `pip install pandas numpy openpyxl`.
+Нужны Python 3 (проверено на 3.11) и `pip install pandas numpy openpyxl duckdb`.
 
 ```bash
 python3 engine/nxld_run.py --logs ./logs --work ./work --stage prepare

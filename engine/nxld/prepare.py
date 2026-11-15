@@ -1,5 +1,5 @@
-"""NXLD: этап подготовки — один полный разбор, затем всё считается по компактным таблицам.
-Сохраняет в рабочую папку: R.pkl (запросы), V.pkl (визиты), E.pkl (error-лог), site_map.json, inventory.json."""
+"""NXLD: этап подготовки — логи разбираются один раз и складываются в базу проверки (nxld.duckdb), дальше всё считается по ней.
+Пока идёт переход на базу, в рабочую папку сохраняются и прежние таблицы: R.pkl (запросы), V.pkl (визиты), errors.pkl (error-лог), site_map.json, inventory.json."""
 import json, os, re, time
 from collections import Counter
 import numpy as np, pandas as pd
@@ -33,8 +33,7 @@ def inventory(state, R, E, dup_report):
 
 
 def compact_save(R, V, T, G, workdir):
-    """Компактное хранение: без лишних столбцов, узкие типы, справочники вместо строк; куски разбора удаляются."""
-    import glob
+    """Компактное хранение прежних таблиц: без лишних столбцов, узкие типы, справочники вместо строк."""
     R = R.drop(columns=[c for c in ('user', 'tail', '_ord') if c in R.columns])
     for c, t in (('ts', 'uint32'), ('bytes', 'uint32'), ('asn', 'uint32'), ('vid', 'int32')):
         if c in R.columns and R[c].max() < np.iinfo(t).max: R[c] = R[c].astype(t)
@@ -49,28 +48,26 @@ def compact_save(R, V, T, G, workdir):
     for c in G.columns:
         if str(G[c].dtype) == 'category': G[c] = G[c].astype(str)
     G.to_pickle(os.path.join(workdir, 'G.pkl'))
-    for fn in glob.glob(os.path.join(workdir, 'req_*.pkl')):
-        os.remove(fn)
-    st = os.path.join(workdir, 'ingest_state.json')
-    j = json.load(open(st))
-    for r in j['sources'].values():
-        if r.get('kind') == 'access': r['done'] = False   # куски удалены: повторный prepare перечитает логи
-    j['next_chunk'] = 0
-    json.dump(j, open(st, 'w'), ensure_ascii=False, indent=1, default=str)
 
 
 def run(paths, workdir, log=print, map_override=None):
     t0 = time.time()
     log('1/5 Приём файлов')
-    state = ingest.ingest(paths, workdir, log=log)
+    from . import db
+    con = db.connect(workdir)
+    state = ingest.ingest(paths, workdir, log=log, con=con)
     src_ = state.get('sources', {}).values()
     if not any(r.get('kind') == 'access' and (r.get('lines') or 0) > 0 for r in src_):   # формат не распознан — дальше считать нечего
         bad_ = [os.path.basename(str(r.get('member') or r.get('path'))) for r in src_ if r.get('kind') not in ('access', 'error')]
         raise SystemExit('Ни одной строки access-лога не распознано' + (f" (не распознаны: {', '.join(bad_[:10])})" if bad_ else '') +
                          '. Пришлите 3–5 первых строк лога и log_format из конфигурации nginx: формат нужно добавить в engine/nxld/ingest.py (ACCESS_RX).')
     log('2/5 Сборка таблицы запросов')
-    R, dup_report = load.load_requests(workdir, state)
-    E = pd.read_pickle(os.path.join(workdir, 'errors.pkl')) if os.path.exists(os.path.join(workdir, 'errors.pkl')) else pd.DataFrame()
+    R, dup_report = load.load_requests(con)
+    E = ingest.errors_frame(con)
+    if len(E): E.to_pickle(os.path.join(workdir, 'errors.pkl'))   # прежний вид error-лога — для блоков, которые ещё не читают базу
+    elif os.path.exists(os.path.join(workdir, 'errors.pkl')): os.remove(os.path.join(workdir, 'errors.pkl'))
+    db.set_meta(con, 'engine_version', VERSION)
+    con.close()
     from . import hosts as hosts_
     hosts = site_hosts_from(state, R)
     if map_override and map_override.get('site_hosts'): hosts = list(map_override['site_hosts']) + hosts   # поправка добавляет домены сайта (первый — основной)
@@ -196,6 +193,7 @@ def run(paths, workdir, log=print, map_override=None):
     inv = dict(version=VERSION, files=F.astype(str).to_dict('records'), duplicates=dup_report, hour_gaps=[str(g) for g in gaps],
                requests=int(len(R)), ips=int(R['ip'].nunique()), period=[str(pd.to_datetime(R.ts.min(), unit='s')), str(pd.to_datetime(R.ts.max(), unit='s'))],
                tz=Counter(r.get('tz') for r in state['sources'].values() if r.get('tz')).most_common(1)[0][0] if any(r.get('tz') for r in state['sources'].values()) else '',
+               period_errors=[str(pd.to_datetime(E['ts'].min(), unit='s')), str(pd.to_datetime(E['ts'].max(), unit='s'))] if len(E) else None,
                errors_lines=int(len(E)), seconds=round(time.time() - t0))
     compact_save(R, V, T, G, workdir)
     json.dump(site_map, open(os.path.join(workdir, 'site_map.json'), 'w'), ensure_ascii=False, indent=1, default=str)

@@ -10,22 +10,11 @@ DOC_EXT = {'pdf', 'zip', 'rar', '7z', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx
 CAT_COLS = ('ip', 'user', 'method', 'base', 'query', 'proto', 'ref', 'ua', 'tail', 'src')
 
 
-def load_requests(workdir, state):
-    drop, report = ingest.overlaps(workdir, state)
-    parts = []
-    for fn in sorted(glob.glob(os.path.join(workdir, 'req_*.pkl'))):
-        df = pd.read_pickle(fn)
-        sid = df['src'].iat[0]
-        if sid in drop:
-            df = df[~(df.ts // 60).isin(drop[sid])]
-        parts.append(df)
-    cats = {c: union_categoricals([p[c] for p in parts], ignore_order=True).categories for c in CAT_COLS}
-    for p in parts:
-        for c in CAT_COLS:
-            p[c] = p[c].cat.set_categories(cats[c])
-    R = pd.concat(parts, ignore_index=True)
-    R = R.sort_values('ts', kind='stable').reset_index(drop=True)
-    return R, report
+def load_requests(con):
+    """Таблица запросов из базы проверки и сведения о строках, которые уже были в других файлах."""
+    R = ingest.requests_frame(con)
+    rep = con.execute("SELECT name, lines - bad - new_rows FROM sources WHERE kind = 'access' AND copy_of IS NULL AND lines - bad - new_rows > 0 ORDER BY source_id").fetchall()
+    return R, [dict(source=n, lines_duplicate=int(k)) for n, k in rep]
 
 
 def add_features(R, site_hosts):

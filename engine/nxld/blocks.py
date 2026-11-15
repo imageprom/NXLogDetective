@@ -578,7 +578,11 @@ def errors(c, F):
         X['день'] = R['day'].cat.categories[X['d']]
     X['кто'] = WHO[X['w']]; X['класс'] = KL[X['k']]
     S['Ошибки по дням'] = X.pivot_table(index=['день', 'кто'], columns='класс', values='n', fill_value=0).reset_index()
-    K = pd.DataFrame({'код': st, 'w': who}).groupby(['код', 'w']).size().reset_index(name='n')
+    if sm is not None:   # код × кто — из сводки по адресам
+        K = sm.path(f"status AS код, {wq} AS w, CAST(sum(n_req) AS BIGINT) AS n")
+        K = K[K['n'] > 0].sort_values(['код', 'w']).reset_index(drop=True)
+    else:
+        K = pd.DataFrame({'код': st, 'w': who}).groupby(['код', 'w']).size().reset_index(name='n')
     K['кто'] = WHO[K['w']]
     S['Коды ответа'] = K.pivot_table(index='код', columns='кто', values='n', fill_value=0).reset_index()
     # сбои: пик (страницы массово отдают 5xx) и деградация вокруг него (доля 5xx+499 в разы выше обычной для этого часа или провал трафика)
@@ -914,8 +918,14 @@ def load_security(c, F):
               'Роботы обходят комбинации фильтров/сортировок', 'robots.txt / canonical / noindex', 'Закрыть параметры от обхода', int(n), 'Ловушки для роботов')
     ft = pd.DataFrame({'ext': R['ext'].values, 'b': by}).groupby('ext', observed=True).agg(запросов=('b', 'size'), ГБ=('b', lambda s: round(s.sum() / GB, 2))).sort_values('ГБ', ascending=False)
     S['Типы файлов'] = ft.reset_index().rename(columns={'ext': 'расширение'})
-    hv = R.loc[R['is_static'].values & (st == 200), ['base', 'bytes']]
-    heavy = hv.groupby('base', observed=True)['bytes'].agg(['size', 'sum', 'mean']).sort_values('sum', ascending=False).head(200)
+    if sums_ is not None:   # запросы и байт по статике с ответом 200 — из сводки по адресам; порядок строк — по коду адреса, как у группировки (от него зависит порядок равных)
+        H_ = sums_.path('p.path AS path, CAST(sum(n_req) AS BIGINT) AS size, CAST(sum(bytes) AS BIGINT) AS sum', 'p.is_static AND status = 200')
+        H_ = H_.assign(b=summaries.base_codes(c, H_['path'])).sort_values('b')
+        heavy = pd.DataFrame({'size': H_['size'].values, 'sum': H_['sum'].values, 'mean': (H_['sum'] / H_['size']).values}, index=pd.Index(H_['path'].values, name='base'))
+        heavy = heavy.sort_values('sum', ascending=False).head(200)
+    else:
+        hv = R.loc[R['is_static'].values & (st == 200), ['base', 'bytes']]
+        heavy = hv.groupby('base', observed=True)['bytes'].agg(['size', 'sum', 'mean']).sort_values('sum', ascending=False).head(200)
     heavy.columns = ['запросов', 'байт', 'средний']
     heavy['ГБ'] = (heavy['байт'] / GB).round(2); heavy['средний_КБ'] = (heavy['средний'] / KB).round(0)
     S['Тяжёлые файлы'] = heavy[['запросов', 'ГБ', 'средний_КБ']].reset_index().rename(columns={'base': 'файл'})

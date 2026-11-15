@@ -205,6 +205,25 @@ def criticality(T, Sr, human_visits):
     return why
 
 
+KIND_RU = {'internal': 'страницы сайта', 'ads': 'реклама', 'search': 'поиск', 'sites': 'сайты', 'direct': 'напрямую'}   # origin сводки → вид источника
+
+
+def sources_errors(c):
+    """sources для всех ответов 4xx, 5xx и 499 (так её зовёт build): из базы проверки — запрос по событиям с реферером, шаблоном страницы-источника и хостом."""
+    sm = getattr(c, 'sums', None)
+    if sm is None: return sources(c, c.R['status'].values >= 400)
+    tpl = f"(SELECT DISTINCT p.path AS path, ps.tpl AS tpl FROM sum_path_status s JOIN dim_path p USING (path_id) JOIN path_site ps USING (path_id) WHERE {sm.where})"
+    X = sm.q(f"""SELECT path, status AS код, origin, det AS деталь, CAST(count(*) AS BIGINT) AS n FROM (
+            SELECT ev.path AS path, ev.status AS status, ev.origin AS origin, CASE WHEN ev.origin = 'internal' THEN coalesce(t.tpl, ev.rp) WHEN ev.origin IN ('search', 'sites') THEN ev.host1 ELSE '' END AS det
+            FROM (SELECT {summaries.EV_COLS}, p.path AS path, coalesce(r.ref_path, 'nan') AS rp, trim(split_part(coalesce(r.ref_host, 'nan'), ',', 1)) AS host1
+                  FROM {summaries.EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off') ev LEFT JOIN {tpl} t ON t.path = ev.rp
+            WHERE {sm.where.replace('scope', 'ev.scope').replace('category', 'ev.category')} AND ev.status >= 400) GROUP BY ALL""")
+    X['b'] = summaries.base_codes(c, X['path'])
+    X['вид'] = X['origin'].map(KIND_RU)
+    X = X.groupby(['b', 'код', 'вид', 'деталь'], as_index=False)['n'].sum()
+    return X.sort_values(['b', 'код', 'вид', 'деталь']).reset_index(drop=True)
+
+
 def sources(c, m):
     """Откуда пришли запросы с ошибкой — сводкой по видам: страницы сайта (по шаблонам), реклама, поиск, сайты, напрямую.
     Возвращает длинную таблицу b, код, вид, деталь, n — её сворачивает by_family."""
@@ -248,8 +267,33 @@ def sources_texts(Sx):
     return {b: ' · '.join(p[k] for k in SRC_ORDER if k in p) for b, p in parts.items()}
 
 
+def _codes_table_sums(c):
+    """codes_table из базы: запросы, группы, источники и дни — из сводки по адресам; разные IP и самый частый источник — запросами по событиям."""
+    sm = c.sums
+    who = summaries.who_sql(WHO_SQL)
+    f = lambda cond, name: f'CAST(coalesce(sum(n_req) FILTER (WHERE {cond}), 0) AS BIGINT) AS "{name}"'
+    cols = [f"{who} = {i}" for i in range(len(WHO))] + [f"ref_scope = '{k}'" for k in ('site', 'none', 'external')]
+    T = sm.path("p.path AS path, status AS код, CAST(sum(n_req) AS BIGINT) AS запросов, " + ', '.join(f(cd, n) for cd, n in zip(cols, (*WHO, *ORIGIN))) +
+                ", strftime(min(day_first), '%Y-%m-%d') AS первый, strftime(max(day_last), '%Y-%m-%d') AS последний", 'status >= 400')
+    if not len(T): return pd.DataFrame()
+    ip = sm.events('path, status AS код, CAST(count(DISTINCT ip_id) AS BIGINT) AS IP', 'status >= 400')
+    S_ = sm.events("path, status AS код, src, CAST(count(*) AS BIGINT) AS n, min(struct_pack(t := ts, i := eid)) AS f", "status >= 400 AND src <> ''",
+                   extra="CASE WHEN ref_scope = 'site' THEN coalesce(r.ref_path, 'nan') WHEN ref_scope = 'external' THEN coalesce(r.ref_host, 'nan') ELSE '' END AS src")
+    S_ = S_.assign(t=[x['t'] for x in S_['f']], i=[x['i'] for x in S_['f']]).sort_values(['path', 'код', 'n', 't', 'i'], ascending=[True, True, False, True, True])
+    S_ = S_.drop_duplicates(['path', 'код'])[['path', 'код', 'src']].rename(columns={'src': 'источник'})   # самый частый, при равных — встретившийся раньше
+    T = T.merge(ip, on=['path', 'код']).merge(S_, on=['path', 'код'], how='left')
+    T['источник'] = T['источник'].fillna('')
+    T['b'] = summaries.base_codes(c, T['path'])
+    T = T.sort_values(['b', 'код']).reset_index(drop=True)
+    A = c.addr
+    for col in ('адрес', 'форма', 'группа', 'существование', 'зонд', 'раздел'):
+        T[col] = A[col].values[T['b'].values]
+    return T[['b', 'код', 'запросов', 'IP', *WHO, *ORIGIN, 'источник', 'первый', 'последний', 'адрес', 'форма', 'группа', 'существование', 'зонд', 'раздел']]
+
+
 def codes_table(c):
     """«Адрес × код» для всех ответов 4xx, 5xx и 499: запросы по группам и по источнику, IP, первый и последний день, пример источника."""
+    if getattr(c, 'sums', None) is not None: return _codes_table_sums(c)
     R = c.R
     st = R['status'].values
     m = st >= 400
@@ -499,7 +543,7 @@ def build(c, outage_rows=None):
         T['итог'] = T['b'].map(lambda b: H.get(int(b), {}).get('итог', ''))
         T['менялся'] = T['b'].map(lambda b: H.get(int(b), {}).get('менялся', False))
         T['тип'] = T['форма'].map(TYPE_LABEL).fillna(T['форма'])
-    Sr = sources(c, c.R['status'].values >= 400) if len(T) else pd.DataFrame()
+    Sr = sources_errors(c) if len(T) else pd.DataFrame()
     if len(T):
         WHY = criticality(T, Sr, int((c.V['group'] == 'Люди').sum()))
         T['почему'] = T['b'].map(lambda b: WHY.get(int(b), ''))

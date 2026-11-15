@@ -8,16 +8,24 @@
   site — только сайт (файлы 01, 02, 05, 06);
   all  — сайт и сервер, кроме нераспознанных посетителей («Люди») хостов вне сайта (файлы 03, 04).
 
-Счётчики разных IP (sum_minute.n_ip) верны только на зерне сводки: по минутам, областям и категориям их складывать нельзя.
-«Кто» — признаки визита: все запросы визита попадают в одну строку «кто» своего часа."""
+Счётчики разных IP (sum_minute.n_ip, sum_path_status.n_ip) и визитов (sum_path_status.n_visits) верны только на зерне сводки: при свёртке их складывать нельзя.
+Где блоку нужно «разных IP по адресу и коду», — отдельный запрос по событиям (Sums.events), а не сумма по строкам сводки.
+«Кто» — признаки визита: все запросы визита попадают в одну строку «кто» своего часа.
+
+Сводки по адресам:
+  sum_path_status — адрес × хост × код × кто × откуда запрос; первое появление строки — (ts_first, eid_first): по нему при равных счётах
+    воспроизводится порядок «кто встретился раньше», как у value_counts по таблице запросов;
+  sum_path_day — адрес × день × область × категория: сколько запросов, сколько не от сотрудников и что отдано им последним (история «открыт сейчас» у утечек)."""
 import os
 import numpy as np, pandas as pd
 from . import db
 
-TABLES = ('sum_time', 'sum_minute')
+TABLES = ('sum_time', 'sum_minute', 'sum_path_status', 'sum_path_day')
 CONTEXTS = {'site': "scope = 'site'", 'all': "NOT (scope = 'server' AND category = 'Люди')"}
 SEARCH_FAMS = ('YandexBot', 'Googlebot', 'YandexRenderResourcesBot', 'Googlebot-Image', 'Bingbot')   # подлинные поисковые роботы: тот же список, что blocks.Ctx.search_ok
 DAY = "strftime(day, '%Y-%m-%d')"
+AD_MARK = r'(?:^|&)(?:yclid|gclid|fbclid|utm_source|utm_medium|utm_campaign|_openstat)='   # как errors.AD_MARK
+SEARCH_HOST = r'(^|\.)(yandex\.[a-z.]+|ya\.ru|google\.[a-z.]+|bing\.com|go\.mail\.ru|duckduckgo\.com|search\.yahoo\.com|rambler\.ru|nova\.rambler\.ru)$'   # как visits.SEARCH
 EPOCH_DAY = "(DATE '1970-01-01' + CAST({ts} // 86400 AS INTEGER))"   # день по часам лога: время в базе — секунды без пояса
 WHO = """coalesce(v.category, '') AS category, coalesce(v.type, '') AS type, coalesce(v.fam, u.fam, '') AS fam, coalesce(u.fam_cat, '') AS fam_cat,
          coalesce(v.fam_verified, '') AS fam_verified, coalesce(v.channel, '') AS channel, coalesce(v.channel_sub, '') AS channel_sub"""
@@ -70,19 +78,55 @@ WHERE coalesce(h.scope, 'site') <> 'off'
 GROUP BY ALL ORDER BY ALL"""
 
 
+# Откуда запрос — по рефереру и параметрам (enum origin): ads — метки рекламы в адресе; internal — со страницы сайта (не обновление той же страницы);
+# search — с поисковика; sites — с другого сайта; direct — без реферера или обновление той же страницы. ref_scope — только реферер: site / none / external.
+EV_COLS = f"""e.path_id, e.host_id, coalesce(h.scope, 'site') AS scope, e.status, coalesce(v.category, '') AS category, coalesce(v.type, '') AS type,
+       coalesce(v.fam, u.fam, '') AS fam, coalesce(u.fam_cat, '') AS fam_cat, coalesce(v.fam_verified, '') AS fam_verified,
+       CASE WHEN coalesce(r.is_internal, false) THEN 'site' WHEN coalesce(r.ref_host, 'nan') IN ('', '-', 'nan') THEN 'none' ELSE 'external' END AS ref_scope,
+       CASE WHEN coalesce(regexp_matches(q.query, '{AD_MARK}'), false) THEN 'ads'
+            WHEN coalesce(r.is_internal, false) AND coalesce(r.ref_path, 'nan') <> p.path THEN 'internal'
+            WHEN NOT coalesce(r.is_internal, false) AND coalesce(r.ref_host, 'nan') NOT IN ('', '-', 'nan') AND regexp_matches(trim(split_part(coalesce(r.ref_host, 'nan'), ',', 1)), '{SEARCH_HOST}') THEN 'search'
+            WHEN NOT coalesce(r.is_internal, false) AND coalesce(r.ref_host, 'nan') NOT IN ('', '-', 'nan') THEN 'sites'
+            ELSE 'direct' END AS origin,
+       e.is_page, e.ip_id, e.vid, e.bytes, e.ts, e.eid, e.ref_id"""
+EV_FROM = """access_events e JOIN dim_host h ON h.host_id = e.host_id JOIN visits v ON v.vid = e.vid LEFT JOIN dim_ua u ON u.ua_id = v.ua_id
+       LEFT JOIN dim_ref r ON r.ref_id = e.ref_id LEFT JOIN dim_query q ON q.query_id = e.query_id JOIN dim_path p ON p.path_id = e.path_id"""
+FIRST = "min(struct_pack(t := ts, i := eid, r := ref_id))"
+
+SQL_PATH_STATUS = f"""CREATE OR REPLACE TABLE sum_path_status AS
+SELECT path_id, host_id, scope, status, category, type, fam, fam_cat, fam_verified, origin, ref_scope, is_page,
+       CAST(count(*) AS BIGINT) AS n_req, CAST(count(DISTINCT ip_id) AS INTEGER) AS n_ip, CAST(count(DISTINCT vid) AS INTEGER) AS n_visits, CAST(coalesce(sum(bytes), 0) AS BIGINT) AS bytes,
+       {EPOCH_DAY.format(ts='min(ts)')} AS day_first, {EPOCH_DAY.format(ts='max(ts)')} AS day_last,
+       CAST(f.t AS BIGINT) AS ts_first, CAST(f.i AS BIGINT) AS eid_first, f.r AS sample_ref_id
+FROM (SELECT *, {FIRST} OVER (PARTITION BY path_id, host_id, status, category, type, fam, fam_cat, fam_verified, origin, ref_scope, is_page) AS f
+      FROM (SELECT {EV_COLS} FROM {EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off'))
+GROUP BY ALL ORDER BY ALL"""
+
+SQL_PATH_DAY = f"""CREATE OR REPLACE TABLE sum_path_day AS
+SELECT path_id, {EPOCH_DAY.format(ts='ts')} AS day, scope, category,
+       CAST(count(*) AS BIGINT) AS n_req, CAST(count(*) FILTER (NOT staff) AS BIGINT) AS n_ext, CAST(count(*) FILTER (NOT staff AND status = 200 AND bytes > 0) AS BIGINT) AS n_served_ext,
+       CAST(l.t AS BIGINT) AS ts_last_ext, CAST(l.i AS BIGINT) AS eid_last_ext, CAST(l.s AS SMALLINT) AS last_status_ext, l.b AS last_served_ext
+FROM (SELECT *, max(CASE WHEN NOT staff THEN struct_pack(t := ts, i := eid, s := status, b := (status = 200 AND bytes > 0)) END)
+             OVER (PARTITION BY path_id, {EPOCH_DAY.format(ts='ts')}, scope, category) AS l
+      FROM (SELECT e.path_id, coalesce(h.scope, 'site') AS scope, coalesce(v.category, '') AS category, e.ts, e.eid, e.status, e.bytes,
+                   e.ip_id IN (SELECT ip_id FROM site_staff WHERE role = 'сотрудник') AS staff
+            FROM access_events e JOIN dim_host h ON h.host_id = e.host_id JOIN visits v ON v.vid = e.vid WHERE coalesce(h.scope, 'site') <> 'off'))
+GROUP BY ALL ORDER BY ALL"""
+
+
 def enabled():
     """NXLD_SUMMARIES=0 — блоки считают по-старому, по таблицам в памяти (для сверки); сводки при этом всё равно строятся."""
     return os.environ.get('NXLD_SUMMARIES', '1') != '0'
 
 
 def build(workdir, con=None, log=None):
-    """Обе сводки — заново из событий и визитов. Возвращает {таблица: строк}."""
+    """Сводки — заново из событий и визитов. Возвращает {таблица: строк}."""
     import time
     own = con is None
     if own: con = db.connect(workdir)
     out = {}
     try:
-        for name, sql in (('sum_time', SQL_TIME), ('sum_minute', SQL_MINUTE)):
+        for name, sql in (('sum_time', SQL_TIME), ('sum_minute', SQL_MINUTE), ('sum_path_status', SQL_PATH_STATUS), ('sum_path_day', SQL_PATH_DAY)):
             t0 = time.time()
             con.execute(sql)
             out[name] = db.mark_built(con, name, seconds=time.time() - t0)
@@ -123,6 +167,20 @@ class Sums:
     def minute(self, select, where=None):
         return self.q(f"SELECT {select} FROM sum_minute WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL ORDER BY ALL")
 
+    def path(self, select, where=None, having=None):
+        """Свёртка sum_path_status (адрес — p.path из dim_path): группировка — по всем колонкам без сумм. Счётчики разных IP и визитов не складываются."""
+        return self.q(f"SELECT {select} FROM sum_path_status s JOIN dim_path p USING (path_id) WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL{' HAVING ' + having if having else ''} ORDER BY ALL")
+
+    def path_day(self, select, where=None, params=None):
+        """Свёртка sum_path_day."""
+        return self.q(f"SELECT {select} FROM sum_path_day d JOIN dim_path p USING (path_id) WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL ORDER BY ALL", params)
+
+    def events(self, select, where=None, extra='', params=None):
+        """Запрос по событиям (access_events) в контексте отчёта — для счётчиков, которые по сводке не сложить (разные IP по адресу и коду).
+        Колонки событий — EV_COLS плюс p.path и extra; where — условие по ним."""
+        return self.q(f"SELECT {select} FROM (SELECT {EV_COLS}, p.path AS path, e.is_redirect_hop AS is_hop{', ' + extra if extra else ''} FROM {EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off') "
+                      f"WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL ORDER BY ALL", params)
+
     # ---- готовые свёртки, общие для нескольких блоков ----
     def days(self):
         """Дни, в которые были запросы, по порядку (YYYY-MM-DD)."""
@@ -151,6 +209,18 @@ class Sums:
             FROM visits v WHERE v.scope IN ('site', 'server') AND {w} GROUP BY ALL
             UNION ALL SELECT '' AS d, coalesce(v.category, '') AS category, CAST(count(DISTINCT v.ip_id) AS BIGINT) AS n_ip
             FROM visits v WHERE v.scope IN ('site', 'server') AND {w} GROUP BY ALL ORDER BY ALL""")
+
+
+def base_codes(c, paths):
+    """Адреса (текст) → коды категорий c.R['base']: блоки хранят адрес кодом строки таблицы запросов; порядок «по коду» — это порядок их группировок."""
+    ix = getattr(c, '_base_index', None)
+    if ix is None: ix = c._base_index = pd.Index(c.R['base'].cat.categories.astype(str))
+    return ix.get_indexer(pd.Index(paths).astype(str))
+
+
+def thousands(col):
+    """SQL-текст числа с неразрывным пробелом между тысячами (как common.codes_text и common.who_text): 1 234 567."""
+    return f"replace(format('{{:,}}', {col}), ',', '\u00a0')"
 
 
 def who_sql(classes):

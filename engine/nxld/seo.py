@@ -153,30 +153,78 @@ def robot_files(c, ok):
 NOT_PAGE = re.compile(r'^/(bitrix|local|upload|manager|admin|cgi-bin)/|/index\.php$|\.(php|html?)$|/filter/', re.I)
 
 
+SEARCH_OK_SQL = "fam_cat = 'Поисковик' AND fam_verified = 'да'"   # те же запросы, что seo.masks: подлинный поисковый робот
+
+
+def _uncrawled_sums(c):
+    """Три входа «Страниц без обхода» из базы: визиты людей по адресу (запрос по событиям: разные визиты не складываются), запросы страниц подлинных
+    поисковиков и их последний день (сводка по адресам), и текст кодов ответа для нужных адресов — функцией. Адрес — кодом строки таблицы запросов."""
+    sm = c.sums
+    P = sm.events('path, CAST(count(DISTINCT vid) AS BIGINT) AS n', "category = 'Люди' AND is_page AND status = 200 AND NOT is_hop")
+    ppl = pd.Series(P['n'].values, index=summaries.base_codes(c, P['path'])).sort_index()
+    B = sm.path("p.path AS path, CAST(sum(n_req) AS BIGINT) AS n, max(day_last) AS d", f'{SEARCH_OK_SQL} AND is_page')
+    ix = summaries.base_codes(c, B['path'])
+    rb = pd.Series(B['n'].values, index=ix).sort_index()
+    last = pd.Series(((pd.to_datetime(B['d']) - pd.Timestamp('1970-01-01')).dt.days.astype('int64') * 86400).values, index=ix).sort_index()
+
+    def codes_of(codes):   # «404 (33), 200 (2)»: по убыванию, при равных — кто встретился раньше
+        paths = [str(c.R['base'].cat.categories[k]) for k in codes]
+        T = sm.q(f"""SELECT path, string_agg(status || ' (' || {summaries.thousands('n')} || ')', ', ' ORDER BY n DESC, f.t, f.i) AS txt FROM (
+                SELECT p.path AS path, s.status AS status, sum(s.n_req) AS n, min(struct_pack(t := s.ts_first, i := s.eid_first)) AS f
+                FROM sum_path_status s JOIN dim_path p USING (path_id) WHERE {sm.where} AND {SEARCH_OK_SQL} AND is_page AND p.path IN (SELECT unnest(?)) GROUP BY p.path, s.status) GROUP BY path""", [paths])
+        return pd.Series(T['txt'].values, index=summaries.base_codes(c, T['path']))
+    return ppl, rb, last, codes_of
+
+
 def uncrawled(c, ok, min_people=3):
     """Страницы людей, которые поисковики не открывали за период; и обратное — что поисковики обходят, а люди не открывают."""
     R = c.R
     bc, bcode = _cats(R, 'base')
     pg = R['is_page'].values; st = R['status'].values
-    hp = c.human & pg & (st == 200) & ~R['is_redirect_hop'].values
-    ppl = pd.Series(R['vid'].values[hp]).groupby(bcode[hp]).nunique()
-    rb = pd.Series(1, index=bcode[ok & pg]).groupby(level=0).size()
-    last = pd.Series(R['ts'].values[ok & pg]).groupby(bcode[ok & pg]).max()
+    if getattr(c, 'sums', None) is not None:
+        ppl, rb, last, codes_of = _uncrawled_sums(c)
+    else:
+        hp = c.human & pg & (st == 200) & ~R['is_redirect_hop'].values
+        ppl = pd.Series(R['vid'].values[hp]).groupby(bcode[hp]).nunique()
+        rb = pd.Series(1, index=bcode[ok & pg]).groupby(level=0).size()
+        last = pd.Series(R['ts'].values[ok & pg]).groupby(bcode[ok & pg]).max()
+        rs_all = pd.Series(st[ok & pg]).groupby(bcode[ok & pg]).agg(lambda s: codes_text(s))
+        codes_of = lambda codes: rs_all.reindex(codes)
     from .common import real_addresses
     real = real_addresses(c)
     keep = np.array([bool(real[i]) and not NOT_PAGE.search(bc[i]) for i in ppl.index]) if len(ppl) else np.array([], bool)
     P = ppl[keep][ppl[keep] >= min_people] if len(ppl) else ppl   # настоящие страницы сайта: без служебных путей, фильтров и скриптов
     miss = P[~P.index.isin(rb.index)].sort_values(ascending=False)
     A = pd.DataFrame({'страница': bc[miss.index], 'визитов_людей': miss.values.astype(int)})
-    rs = pd.Series(st[ok & pg]).groupby(bcode[ok & pg]).agg(lambda s: codes_text(s))
     only = rb[~rb.index.isin(ppl.index)].sort_values(ascending=False).head(500)
+    rs = codes_of(only.index)
     B = pd.DataFrame({'страница': bc[only.index], 'запросов_роботов': only.values.astype(int), 'коды': rs.reindex(only.index).values,
                       'последний_обход': pd.to_datetime(last.reindex(only.index).values, unit='s').strftime('%d.%m.%Y')})
     return A, B, int(len(P))
 
 
+def _redirects_sums(c):
+    """«Переадресации поисковикам» из сводки по адресам: сколько, коды и три главных робота — строками из SQL (при равных счётах — кто встретился раньше)."""
+    sm = c.sums
+    base = f"{sm.where} AND {SEARCH_OK_SQL} AND status BETWEEN 300 AND 399"
+    T = sm.q(f"""SELECT path, CAST(sum(n) AS BIGINT) AS n, string_agg(status || ' (' || {summaries.thousands('n')} || ')', ', ' ORDER BY n DESC, f.t, f.i) AS codes FROM (
+            SELECT p.path AS path, s.status AS status, sum(s.n_req) AS n, min(struct_pack(t := s.ts_first, i := s.eid_first)) AS f
+            FROM sum_path_status s JOIN dim_path p USING (path_id) WHERE {base} GROUP BY p.path, s.status) GROUP BY path""")
+    if not len(T): return pd.DataFrame()
+    F = sm.q(f"""SELECT path, string_agg(fam || ' (' || n || ')', ', ' ORDER BY n DESC, f.t, f.i) AS robots FROM (
+            SELECT path, fam, n, f, row_number() OVER (PARTITION BY path ORDER BY n DESC, f.t, f.i) AS rk FROM (
+              SELECT p.path AS path, s.fam AS fam, sum(s.n_req) AS n, min(struct_pack(t := s.ts_first, i := s.eid_first)) AS f
+              FROM sum_path_status s JOIN dim_path p USING (path_id) WHERE {base} GROUP BY p.path, s.fam)) WHERE rk <= 3 GROUP BY path""")
+    T = T.merge(F, on='path', how='left')
+    T['b'] = summaries.base_codes(c, T['path'])
+    T = T.sort_values('b').reset_index(drop=True)   # порядок строк — как у группировки по коду адреса: от него зависит порядок равных
+    t = pd.DataFrame({'адрес': T['path'].values, 'переадресаций': T['n'].values, 'коды': T['codes'].values, 'роботы': T['robots'].values})
+    return t.sort_values('переадресаций', ascending=False).reset_index(drop=True)
+
+
 def redirects(c, ok):
     """Переадресации, которые получают поисковики: адрес, сколько раз, кто."""
+    if getattr(c, 'sums', None) is not None: return _redirects_sums(c)
     R = c.R
     st = R['status'].values
     m = ok & (st >= 300) & (st < 400)

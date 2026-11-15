@@ -510,65 +510,128 @@ def _family(k, ref=None):
     return m.group(1) + '_*' if m else k
 
 
-def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300, staff=None, zone_prefixes=(), T=None):
+def _param_inputs_sums(R, sums, sys_prefixes, zone_prefixes):
+    """Входы перечня параметров из базы: счётчики по строке параметров — из сводки параметров (sum_params), пары «параметр = значение» — из query_params,
+    разные визиты людей и счётчики по префиксам папок — запросами по событиям (папки известны только после «Анатомии»), живые разделы — из сводки по адресам.
+    Строка параметров — кодом категории R['query']: в этом порядке прежний расчёт перебирал строки."""
+    from urllib.parse import unquote
+    qix = pd.Index(R['query'].cat.categories.astype(str).values)
+    L = len(qix)
+    M = sums.q(f"SELECT d.query AS query, s.* EXCLUDE (query_id) FROM sum_params s JOIN dim_query d USING (query_id) WHERE {sums.where}")
+    qi = qix.get_indexer(M['query'])
+    M = M[qi >= 0]; qi = qi[qi >= 0]
+    n = M['n_req'].values.astype('int64')
+    hum = (M['category'] == 'Люди').values
+    pg_ok = (M['is_page'] & ~M['is_embedded'] & M['is_get']).values
+    scan = (M['fam_cat'] == 'Сканеры безопасности').values
+    named = ((M['fam'] != '') & ~scan & ~hum)
+    bc = lambda m: np.bincount(qi[m], weights=n[m], minlength=L).astype('int64')
+    ALL = np.ones(len(M), bool)
+    I = dict(cnt=bc(ALL), cnt_nav=bc(pg_ok), cnt_nav_h=bc(pg_ok & hum), cnt_scan=bc(scan), cnt_int_h=bc(hum & M['ref_internal'].values), cnt_emb=bc(M['is_embedded'].values),
+             cnt_staff=bc((M['category'] == 'Свои').values), cnt_err=bc(M['is_err'].values), cnt_named=bc(named.values))
+    # префиксы системных папок и закрытых зон — по событиям
+    Z = sums.events("qtext AS query, CAST(count(*) FILTER (WHERE sysf) AS BIGINT) AS sys, CAST(count(*) FILTER (WHERE zonef) AS BIGINT) AS zone", "qtext <> '' AND qtext <> 'nan'",
+                    extra="q.query AS qtext, len(list_filter(?::VARCHAR[], lambda x: starts_with(p.path, x))) > 0 AS sysf, len(list_filter(?::VARCHAR[], lambda x: starts_with(p.path, x))) > 0 AS zonef",
+                    params=[list(sys_prefixes or []), list(zone_prefixes or [])])
+    zi = qix.get_indexer(Z['query'])
+    I['cnt_sys'] = np.bincount(zi[zi >= 0], weights=Z['sys'].values[zi >= 0], minlength=L).astype('int64')
+    I['cnt_zone'] = np.bincount(zi[zi >= 0], weights=Z['zone'].values[zi >= 0], minlength=L).astype('int64')
+    # люди-визиты по строке параметров; разделы и роботы по строке
+    H = sums.events("qtext AS query, vid", "category = 'Люди' AND qtext <> '' AND qtext <> 'nan'", extra="q.query AS qtext")
+    hi = qix.get_indexer(H['query'])
+    I['HV'] = pd.DataFrame({'q': hi[hi >= 0], 'vid': H['vid'].values[hi >= 0]}).drop_duplicates()
+    sec = M['section'].values != ''
+    I['SQ'] = pd.DataFrame({'q': qi[sec], 'sec': M['section'].values[sec], 'm': n[sec]}).groupby(['q', 'sec'])['m'].sum().reset_index()
+    nh = ~hum
+    I['FQ'] = pd.DataFrame({'q': qi[nh], 'fam': M['fam'].values[nh], 'm': n[nh]}).groupby(['q', 'fam'])['m'].sum().reset_index()
+    ok = sums.path("p.path AS path", "status BETWEEN 200 AND 299 AND category IN ('Люди', 'Свои')")
+    I['lived'] = set(pd.unique(ok['path'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values))
+    # пары «параметр = значение» — в порядке строк и их частей
+    Q = sums.q(f"SELECT d.query AS query, k.pos AS pos, k.key AS key, k.value AS value FROM query_params k JOIN dim_query d USING (query_id) "
+               f"WHERE k.query_id IN (SELECT query_id FROM sum_params WHERE {sums.where})")
+    Q['q'] = qix.get_indexer(Q['query'])
+    Q = Q[Q['q'] >= 0].sort_values(['q', 'pos'], kind='stable')
+    uk = pd.Series(pd.unique(Q['key']), dtype=object)
+    norm = dict(zip(uk, uk.map(lambda k: unquote(k).strip())))
+    k0 = Q['key'].map(norm)
+    v = Q['value'].fillna('')
+    num = k0.str.fullmatch(r'\d+|[0-9a-f]{16,}') & (v == '')
+    k1 = k0.where(~num, '(число без имени)')
+    good = (k1.str.len() >= 1) & (k1.str.len() <= 40) & k1.str.fullmatch(r'[\w\[\]\-.()а-я ;]+')
+    I['P'] = pd.DataFrame({'q': Q['q'].values[good.values], 'ключ': k1.values[good.values], 'значение': v.values[good.values]})
+    return I
+
+
+_PARAM_COLS = ['параметр', 'ключ', 'ключи', 'группа', 'что', 'источник', 'ссылка', 'запросов', 'людей', 'значений', 'частое_значение',
+                                     'значения', 'вместе_с', 'где', 'роботы']
+
+
+def query_params_inventory(R, human, groups, nav_keys=(), sys_prefixes=(), ref=None, top_n=300, staff=None, zone_prefixes=(), T=None, sums=None):
     """Ключ (или семейство ключей) параметра → группа, что это, откуда знаем, запросы, люди, значения, где встречается.
     Порядок решения: кто спрашивает (атаки, сканеры) → справочник → поведение (навигация на страницах, системные папки, пачка) → имя.
     Семейство (itemsFilter_*) решается целиком по суммарному поведению и показывается одной строкой."""
     from urllib.parse import unquote
-    qc = R['query'].cat.categories.to_series().astype(str)
-    codes = R['query'].cat.codes.values
-    has = codes >= 0
-    L = len(qc)
-    bc = lambda m: np.bincount(codes[m], minlength=L)
-    cnt = bc(has)
-    emb = R['is_embedded'].values if 'is_embedded' in R else np.zeros(len(R), bool)
-    pg_ok = has & R['is_page'].values & ~emb & (R['method'].values == 'GET')   # обычные страницы, не вставки
-    cnt_nav, cnt_nav_h = bc(pg_ok), bc(pg_ok & np.asarray(human))
-    bstr = R['base'].cat.categories.to_series().astype(str)
-    sys_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in sys_prefixes)).values if sys_prefixes else np.zeros(len(bstr), bool)
-    cnt_sys = bc(has & sys_b[R['base'].cat.codes.values])
-    scan = R['fam_cat'].astype(str).values == 'Сканеры безопасности' if 'fam_cat' in R else np.zeros(len(R), bool)
-    cnt_scan = bc(has & scan)
-    cnt_int_h = bc(has & np.asarray(human) & R['ref_internal'].values)   # люди, пришедшие со страниц сайта
-    cnt_emb = bc(has & emb)   # подгрузки внутри открытой страницы
-    cnt_staff = bc(has & (np.asarray(staff) if staff is not None else np.zeros(len(R), bool)))
     R_zone_paths = list(zone_prefixes)
-    # разделы, куда за весь лог ходили люди или сотрудники: зонд стучится туда, где никого не бывает
-    sec_all = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
-    ok_ = (R['status'].values >= 200) & (R['status'].values < 300)   # переадресация — не ответ: сайт может слать 301 на любой адрес
-    lived = set(pd.unique(sec_all[(np.asarray(human) | (np.asarray(staff) if staff is not None else np.zeros(len(R), bool))) & ok_]))   # живой раздел — людям там отвечают
     foreign_paths = list(getattr(ref, 'foreign_paths', ()) or ())   # папки и признаки движков, которых на сайте нет
-    zone_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in R_zone_paths)).values if R_zone_paths else np.zeros(len(bstr), bool)
-    cnt_zone = bc(has & zone_b[R['base'].cat.codes.values])
-    cnt_err = bc(has & (R['status'].values >= 400))
-    srch = R['fam_cat'].astype(str).values == 'Поисковик' if 'fam_cat' in R else np.zeros(len(R), bool)
-    cnt_srch = bc(has & srch)
-    named = (R['fam'].astype(str).values != '') & ~scan & ~np.asarray(human)   # известные роботы (поисковики, SEO, ИИ…), не сканеры
-    cnt_named = bc(has & named)
     other = getattr(ref, 'other', None)   # справочник всех движков: ключ чужого движка без людей — зонд под этот движок
     if T is None:
         from .thresholds import Sizes
         T = Sizes(визиты=int(pd.unique(R['vid'].values[np.asarray(human)]).size), запросы=len(R), ip=int(R['ip'].nunique()))
     t_people, t_int, t_nav, t_pack, t_frag = T('ключ_вызывают_люди'), T('ключ_со_страниц_сайта'), T('навигация_люди_на_страницах'), T('пачка_ключей'), T('обрывок_ключа')
-    pairs = []   # (код запроса, ключ, значение)
-    for i, q in enumerate(qc.values):
-        if not cnt[i] or not q or q == 'nan': continue
-        for kv in q.split('&'):
-            k, _, v = kv.partition('=')
-            k = unquote(k).strip()
-            if re.fullmatch(r'\d+|[0-9a-f]{16,}', k) and not v: k = '(число без имени)'   # ?1778857049245644 — метка от кэша
-            if 1 <= len(k) <= 40 and re.fullmatch(r'[\w\[\]\-.()а-я ;]+', k): pairs.append((i, k, v))
-    if not pairs:   # в логе нет ни одного параметра — пустой реестр с теми же колонками (вызывающий код фильтрует по ним)
-        return pd.DataFrame(columns=['параметр', 'ключ', 'ключи', 'группа', 'что', 'источник', 'ссылка', 'запросов', 'людей', 'значений', 'частое_значение',
-                                     'значения', 'вместе_с', 'где', 'роботы'])
-    P = pd.DataFrame(pairs, columns=['q', 'ключ', 'значение'])
-    P['n'] = cnt[P['q'].values]
-    hm = has & np.asarray(human)
-    HV = pd.DataFrame({'q': codes[hm], 'vid': R['vid'].values[hm]}).drop_duplicates()
-    sec = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
-    SQ = pd.DataFrame({'q': codes[has], 'sec': sec[has]}).groupby(['q', 'sec']).size().rename('m').reset_index()
-    fams_ = R['fam'].astype(str).values
-    FQ = pd.DataFrame({'q': codes[has & ~np.asarray(human)], 'fam': fams_[has & ~np.asarray(human)]}).groupby(['q', 'fam']).size().rename('m').reset_index()
+    if sums is not None:   # всё, что строится по строкам параметров, — из сводки параметров и запросов по событиям (summaries.Sums)
+        I = _param_inputs_sums(R, sums, sys_prefixes, R_zone_paths)
+        cnt, cnt_nav, cnt_nav_h, cnt_sys, cnt_scan, cnt_int_h, cnt_emb, cnt_staff, cnt_zone, cnt_err, cnt_named = (I[k] for k in ('cnt', 'cnt_nav', 'cnt_nav_h', 'cnt_sys', 'cnt_scan', 'cnt_int_h', 'cnt_emb', 'cnt_staff', 'cnt_zone', 'cnt_err', 'cnt_named'))
+        lived, P, HV, SQ, FQ = I['lived'], I['P'], I['HV'], I['SQ'], I['FQ']
+        if not len(P): return pd.DataFrame(columns=_PARAM_COLS)
+        P['n'] = cnt[P['q'].values]
+    else:
+        qc = R['query'].cat.categories.to_series().astype(str)
+        codes = R['query'].cat.codes.values
+        has = codes >= 0
+        L = len(qc)
+        bc = lambda m: np.bincount(codes[m], minlength=L)
+        cnt = bc(has)
+        emb = R['is_embedded'].values if 'is_embedded' in R else np.zeros(len(R), bool)
+        pg_ok = has & R['is_page'].values & ~emb & (R['method'].values == 'GET')   # обычные страницы, не вставки
+        cnt_nav, cnt_nav_h = bc(pg_ok), bc(pg_ok & np.asarray(human))
+        bstr = R['base'].cat.categories.to_series().astype(str)
+        sys_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in sys_prefixes)).values if sys_prefixes else np.zeros(len(bstr), bool)
+        cnt_sys = bc(has & sys_b[R['base'].cat.codes.values])
+        scan = R['fam_cat'].astype(str).values == 'Сканеры безопасности' if 'fam_cat' in R else np.zeros(len(R), bool)
+        cnt_scan = bc(has & scan)
+        cnt_int_h = bc(has & np.asarray(human) & R['ref_internal'].values)   # люди, пришедшие со страниц сайта
+        cnt_emb = bc(has & emb)   # подгрузки внутри открытой страницы
+        cnt_staff = bc(has & (np.asarray(staff) if staff is not None else np.zeros(len(R), bool)))
+        # разделы, куда за весь лог ходили люди или сотрудники: зонд стучится туда, где никого не бывает
+        sec_all = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
+        ok_ = (R['status'].values >= 200) & (R['status'].values < 300)   # переадресация — не ответ: сайт может слать 301 на любой адрес
+        lived = set(pd.unique(sec_all[(np.asarray(human) | (np.asarray(staff) if staff is not None else np.zeros(len(R), bool))) & ok_]))   # живой раздел — людям там отвечают
+        zone_b = bstr.map(lambda x: any(x.startswith(p_) for p_ in R_zone_paths)).values if R_zone_paths else np.zeros(len(bstr), bool)
+        cnt_zone = bc(has & zone_b[R['base'].cat.codes.values])
+        cnt_err = bc(has & (R['status'].values >= 400))
+        srch = R['fam_cat'].astype(str).values == 'Поисковик' if 'fam_cat' in R else np.zeros(len(R), bool)
+        cnt_srch = bc(has & srch)
+        named = (R['fam'].astype(str).values != '') & ~scan & ~np.asarray(human)   # известные роботы (поисковики, SEO, ИИ…), не сканеры
+        cnt_named = bc(has & named)
+        pairs = []   # (код запроса, ключ, значение)
+        for i, q in enumerate(qc.values):
+            if not cnt[i] or not q or q == 'nan': continue
+            for kv in q.split('&'):
+                k, _, v = kv.partition('=')
+                k = unquote(k).strip()
+                if re.fullmatch(r'\d+|[0-9a-f]{16,}', k) and not v: k = '(число без имени)'   # ?1778857049245644 — метка от кэша
+                if 1 <= len(k) <= 40 and re.fullmatch(r'[\w\[\]\-.()а-я ;]+', k): pairs.append((i, k, v))
+        if not pairs:   # в логе нет ни одного параметра — пустой реестр с теми же колонками (вызывающий код фильтрует по ним)
+            return pd.DataFrame(columns=['параметр', 'ключ', 'ключи', 'группа', 'что', 'источник', 'ссылка', 'запросов', 'людей', 'значений', 'частое_значение',
+                                         'значения', 'вместе_с', 'где', 'роботы'])
+        P = pd.DataFrame(pairs, columns=['q', 'ключ', 'значение'])
+        P['n'] = cnt[P['q'].values]
+        hm = has & np.asarray(human)
+        HV = pd.DataFrame({'q': codes[hm], 'vid': R['vid'].values[hm]}).drop_duplicates()
+        sec = R['base'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values
+        SQ = pd.DataFrame({'q': codes[has], 'sec': sec[has]}).groupby(['q', 'sec']).size().rename('m').reset_index()
+        fams_ = R['fam'].astype(str).values
+        FQ = pd.DataFrame({'q': codes[has & ~np.asarray(human)], 'fam': fams_[has & ~np.asarray(human)]}).groupby(['q', 'fam']).size().rename('m').reset_index()
     # написания одного ключа → самое частое; обрывки из битых адресов (начало более частого ключа) — прочь
     tot = P.groupby('ключ')['n'].sum()
     low = tot.groupby(tot.index.str.lower()).idxmax()

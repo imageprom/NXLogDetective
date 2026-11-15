@@ -107,6 +107,20 @@ def make_log():
         for k in range(5):   # картинки сайта на чужих сайтах: хотлинк; поисковики и сайт сам — не в счёт
             L.line(f'91.{d}.{k}.9', t + timedelta(hours=19, minutes=k), f'/upload/iblock/{k % 3}.jpg', 200, ref=f'https://copy{k % 2}.example.net/post/{k}', size=600_000 + k, host=MAIN)
             L.line(f'91.{d}.{k}.8', t + timedelta(hours=19, minutes=10 + k), '/upload/iblock/1.jpg', 200, ref='https://yandex.ru/images/', size=100_000, host=MAIN)
+        for k in range(40):   # параметры: сортировка и страницы списка (много запросов), метки рекламы, длинные значения, атака, токен, персональные данные
+            ip = f'95.165.{d}.{100 + k % 60}'
+            L.line(ip, t + timedelta(hours=20, seconds=30 * k), f'/catalog/?sort={["price", "name"][k % 2]}&PAGEN_1={k % 6 + 1}', 200, ref=f'https://{MAIN}/catalog/', host=MAIN)
+            L.line(ip, t + timedelta(hours=20, minutes=30, seconds=30 * k), f'/catalog/shary/?filter[price][from]={k % 5 * 100}&filter[price][to]={k % 5 * 100 + 300}&brand={k % 3}', 200, ref=f'https://{MAIN}/catalog/', host=MAIN)
+        if d == 2:
+            for k in range(1100):   # больше тысячи запросов с одним параметром
+                L.line(f'95.165.{100 + k % 90}.{k % 200 + 1}', t + timedelta(hours=21, seconds=k), '/news/?sort=date', 200, ref=f'https://{MAIN}/news/', host=MAIN)
+        for k in range(3):
+            L.line(f'95.165.{d}.{110 + k}', t + timedelta(hours=22, seconds=k), f'/akcii/?utm_source=yandex&utm_medium=cpc&utm_campaign=c{k}&yclid={7000000 + k}', 200, ref='https://yandex.ru/', host=MAIN)
+            L.line(f'95.165.{d}.{110 + k}', t + timedelta(hours=22, minutes=1, seconds=k), '/about/?q=' + 'очень-длинное-значение-' * 8 + str(k), 200, ref=f'https://{MAIN}/', host=MAIN)
+            L.line(f'95.165.{d}.{110 + k}', t + timedelta(hours=22, minutes=2, seconds=k), f'/contacts/?phone=%2B79991112{200 + k}&email=user{k}%40example.com', 200, ref=f'https://{MAIN}/', host=MAIN)
+            L.line(f'95.165.{d}.{110 + k}', t + timedelta(hours=22, minutes=3, seconds=k), f'/personal/?token=a1b2c3d4e5f6{k}a7b8c9d0&sessid={900000 + k}', 200, ref=f'https://{MAIN}/', host=MAIN)
+            L.line('203.0.113.53', t + timedelta(hours=23, seconds=k), f'/catalog/?id={k}%27%20union%20select%201', 200, ua=SCAN_UA, host=MAIN)
+            L.line('203.0.113.53', t + timedelta(hours=23, minutes=1, seconds=k), f'/index.php?file=../../../../etc/passwd&x={k}', 404, ua=SCAN_UA, host=MAIN)
         L.line(f'95.165.{d}.5', t + timedelta(hours=11, minutes=40), '/repaired/', 404, ref=f'https://{IPHOST}/', host=IPHOST)   # тот же адрес на хосте вне сайта
     # сбой на третий день: шесть минут страницы отдают 5xx разным посетителям, часть не дождалась
     t = T0 + timedelta(days=2, hours=15)
@@ -459,6 +473,7 @@ CONVERTED = {
     '03 Утечки': lambda r: r['security']['утечки'],
     '02 Битые внутренние': lambda r: r['errors']['битые_внутренние'],
     '02 Битые внешние': lambda r: r['errors']['битые_внешние'],
+    '01 Параметры запросов': lambda r: pd.DataFrame(r['params']),
     '02 Битые из скриптов': lambda r: r['sheets']['Ошибки']['Битые адреса из скриптов'],
     '03 Хотлинк': lambda r: r['sheets']['Нагрузка и безопасность']['Хотлинк'],
     '03 Конструкты': lambda r: r['security']['конструкты'],

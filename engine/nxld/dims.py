@@ -46,8 +46,11 @@ def _update(con, table, key, df):
     """Записывает колонки df в строки таблицы по ключу."""
     if not len(df): return
     con.register('upd_df', df)
-    con.execute(f"UPDATE {table} t SET " + ', '.join(f'{c} = u.{c}' for c in df.columns if c != key) + f" FROM upd_df u WHERE t.{key} = u.{key}")
+    con.execute('CREATE OR REPLACE TEMP TABLE upd_tmp AS SELECT * FROM upd_df')   # сначала в таблицу базы: обновление прямо из таблицы pandas на порядок медленнее
     con.unregister('upd_df')
+    for c in df.columns:   # по колонке за раз: обновление нескольких колонок одним запросом в DuckDB в десятки раз медленнее
+        if c != key: con.execute(f'UPDATE {table} t SET {c} = u.{c} FROM upd_tmp u WHERE t.{key} = u.{key}')
+    con.execute('DROP TABLE upd_tmp')
 
 
 def ua_features(uas):

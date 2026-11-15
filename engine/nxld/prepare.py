@@ -191,6 +191,8 @@ def run(paths, workdir, log=print, map_override=None):
     V['n_goal'] = pd.Series(is_goal, index=R.index).groupby(R['vid']).sum()
     V['n_conv'] = pd.Series(succ, index=R.index).groupby(R['vid']).sum()
     dims.store_path_site(con, R['base'].cat.categories, tpl, bases.str.contains(admin_rx, regex=True).values, site_map['catalog_templates'])
+    from . import store
+    store.all_of(workdir, R, V, site_map, map_override, con=con)   # признаки событий, визиты и карта сайта — в базу проверки
     con.close()
     log('5/5 Сохранение')
     F, gaps = inventory(state, R, E, dup_report)

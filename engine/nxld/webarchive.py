@@ -103,7 +103,7 @@ def _outage(c, real, windows):
     """Окна сбоев (blocks.outage_windows по всем запросам сервера), в которые робот веб-архива шёл заметной долей трафика."""
     if windows is None:
         from .blocks import outage_windows
-        _, windows = outage_windows(c.R, c.R['status'].values, c.E_srv)
+        _, windows = outage_windows(c.R, c.R['status'].values, c.E_srv, sums=getattr(c, 'sums', None))
     R = c.R
     ts, st = R['ts'].values, R['status'].values
     hum = c.human

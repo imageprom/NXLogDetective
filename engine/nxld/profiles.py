@@ -539,14 +539,25 @@ def extras(c, res):
         tot['Новые IP|Ботов'] = int(B['ip'].nunique())
         out['журнал'] = pd.concat([D, pd.DataFrame([{'день': 'Итого', **tot}])], ignore_index=True)
     # расписание: запросы ботов по видам, день × час
-    rg = np.asarray(c.rg)
-    vk = pd.Series(V['subgroup'].map(sig_kind).values, index=V.index)
-    rk = vk.reindex(R['vid'].values).values
-    day, hr = R['day'].astype(str).values, R['hour'].values.astype(int)
     heat = {}
-    for lab, m in (('Все боты', rg == 'Боты'), ('Подделки роботов', (rg == 'Боты') & (rk == 'Подделка робота')),
-                   ('Сканеры и зонды', (rg == 'Боты') & (rk == 'Зонды и перебор')), ('Маскировка под браузер', (rg == 'Боты') & (rk == 'Маскировка'))):
-        if m.any(): heat[lab] = pd.DataFrame({'d': day[m], 'h': hr[m]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
+    LABS = (('Все боты', None), ('Подделки роботов', 'Подделка робота'), ('Сканеры и зонды', 'Зонды и перебор'), ('Маскировка под браузер', 'Маскировка'))
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # день × час × тип бота — из сводки «Время»; вид бота — по типу
+        from . import summaries
+        T = sm.time(f"{summaries.DAY} AS d, CAST(hour AS BIGINT) AS h, type, CAST(sum(n_req) AS BIGINT) AS n", where="category = 'Боты'", having='sum(n_req) > 0')
+        T['k'] = T['type'].map(sig_kind)
+        days_all = sm.days()
+        for lab, k in LABS:
+            X = T if k is None else T[T['k'] == k]
+            if len(X): heat[lab] = X.groupby(['d', 'h'])['n'].sum().unstack(fill_value=0).reindex(index=days_all, columns=range(24), fill_value=0)
+    else:
+        rg = np.asarray(c.rg)
+        vk = pd.Series(V['subgroup'].map(sig_kind).values, index=V.index)
+        rk = vk.reindex(R['vid'].values).values
+        day, hr = R['day'].astype(str).values, R['hour'].values.astype(int)
+        for lab, k in LABS:
+            m = (rg == 'Боты') if k is None else (rg == 'Боты') & (rk == k)
+            if m.any(): heat[lab] = pd.DataFrame({'d': day[m], 'h': hr[m]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
     out['расписание'] = heat
     # боты в рекламе: визиты ботов с рекламных переходов
     A = B[B['channel'].astype(str) == 'Реклама']

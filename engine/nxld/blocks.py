@@ -2,7 +2,7 @@
 import re
 from collections import Counter, defaultdict
 import numpy as np, pandas as pd
-from . import recon, ipdb
+from . import recon, ipdb, summaries
 from .recon import mask_pd
 from . import operators
 from .common import top_values, dmy
@@ -28,6 +28,7 @@ class Ctx:
     def __init__(self, R, V, E, T, site_map, inv, G=None, E_srv=None):
         R['day'] = R['day'].cat.reorder_categories(sorted(R['day'].cat.categories)).cat.as_ordered()
         self.R, self.V, self.E, self.T, self.m, self.inv, self.G = R, V, E, T, site_map, inv, G
+        self.sums = None   # сводки базы проверки (summaries.Sums) в контексте этих таблиц; None — базы нет, расчёты по дням, часам и минутам идут по R и V
         self.E_srv = E if E_srv is None else E_srv   # error-лог всего сервера (без копий): сбои и признаки торможения; E — для 02 только хосты сайта
         gc = pd.Categorical(V['group'].values)
         sc = pd.Categorical(V['subgroup'].values)
@@ -115,9 +116,44 @@ def day_span(R):
     return out
 
 
+def day_span_of(c):
+    """day_span для контекста: из сводки «Время» (первый и последний запрос дня), без базы — по таблице запросов."""
+    sm = getattr(c, 'sums', None)
+    if sm is None: return day_span(c.R)
+    T = sm.day_span()
+    a, b = pd.to_datetime(T['t0'], unit='s'), pd.to_datetime(T['t1'], unit='s')
+    out = pd.DataFrame({'_с': a.dt.strftime('%H:%M').values, '_по': b.dt.strftime('%H:%M').values}, index=pd.Index(T['d'].astype(object).values))
+    out['_полный'] = (out['_с'] <= '00:05') & (out['_по'] >= '23:55')
+    return out
+
+
+def _activity_sums(c):
+    """«Журнал активности» из базы проверки: визиты и заявки — из сводки «Время» (по часу начала визита), разные IP — запросом по визитам."""
+    sm = c.sums
+    T = sm.time(f"{summaries.DAY} AS d, category AS g, CAST(sum(n_visits_started) AS BIGINT) AS nv, CAST(sum(n_goal_started) AS BIGINT) AS ng", having='sum(n_visits_started) > 0')
+    I = sm.visit_ips()
+    D = pd.DataFrame({'день': sorted(T['d'].unique())}).set_index('день')
+    col = lambda X, g, v: X[X['g'] == g].set_index('d')[v]
+    I = I.rename(columns={'category': 'g'})
+    for g in ACT_GROUPS: D[f'Визиты|{SHORT.get(g, g)}'] = col(T, g, 'nv')
+    for g in ACT_GROUPS: D[f'IP|{SHORT.get(g, g)}'] = col(I[I['d'] != ''], g, 'n_ip')
+    for g in ('Люди', 'Боты', 'Свои'): D[f'Заявки|{g}'] = col(T, g, 'ng')
+    D = D.fillna(0).astype(int)
+    D = D.join(day_span_of(c)).reset_index()
+    tot = {'день': 'Итого', '_полный': True, '_с': '', '_по': ''}
+    I0 = I[I['d'] == ''].set_index('g')['n_ip']
+    for g in ACT_GROUPS:
+        tot[f'Визиты|{SHORT.get(g, g)}'] = int(D[f'Визиты|{SHORT.get(g, g)}'].sum())
+        tot[f'IP|{SHORT.get(g, g)}'] = int(I0.get(g, 0))
+    for g in ('Люди', 'Боты', 'Свои'):
+        tot[f'Заявки|{g}'] = int(D[f'Заявки|{g}'].sum())
+    return pd.concat([D, pd.DataFrame([tot])], ignore_index=True)
+
+
 def activity(c):
     """Активность по дням: визиты и уникальные IP по группам, отправленные заявки (роботы форм не шлют), какая часть суток в логе.
     Последняя строка — «Итого»: IP за весь период уникальные, а не сумма по дням."""
+    if getattr(c, 'sums', None) is not None: return _activity_sums(c)
     R, V = c.R, c.V
     days = sorted(V['day'].unique())
     D = pd.DataFrame({'день': days}).set_index('день')
@@ -264,17 +300,22 @@ ERR_TYPES = [
 ]
 
 
-def outage_windows(R, st, E, gap=3):
+def outage_windows(R, st, E, gap=3, sums=None):
     """Окна сбоев. Пик: в минуте ≥3 страниц с 5xx у ≥3 разных IP (не один робот на битых адресах) и ≥25% страниц с 5xx (разрыв ≤3 мин склеивается).
     Деградация: соседние минуты, где доля 5xx+499 у страниц ≥ max(3×обычной для этого часа, 20%) при ≥5 страницах,
     или запросов меньше 30% обычного для этого часа. Пик расширяется деградацией в обе стороны (разрыв ≤3 мин).
     Отдельные окна деградации без пика тоже возвращаются (пик_минут = 0)."""
-    page = R['is_page'].values | (R['method'].values == 'POST')
-    M = pd.DataFrame({'m': R['ts'].values // 60, 'p5': page & (st >= 500), 'p499': page & (st == 499), 'p': page,
-                      'n': np.ones(len(st), dtype=np.int32), 's_ok': R['is_static'].values & (st < 400), 's': R['is_static'].values})
-    mm = M.groupby('m').sum()
-    m5 = page & (st >= 500)
-    mm['ip5'] = pd.DataFrame({'m': M['m'].values[m5], 'ip': R['ip'].values[m5]}).groupby('m')['ip'].nunique()
+    if sums is not None:   # счётчики по минутам — из сводки «Минута»; разных IP со страницами 5xx — отдельным запросом по событиям (по категориям IP не складываются)
+        M = sums.minutes().set_index('m')
+        mm = pd.DataFrame({'p5': M['n_page_post_5xx'], 'p499': M['n_page_post_499'], 'p': M['n_page_post'], 'n': M['n_req'], 's_ok': M['n_static_ok'], 's': M['n_static']})
+        mm['ip5'] = sums.minute_ips_5xx().set_index('m')['ip5']
+    else:
+        page = R['is_page'].values | (R['method'].values == 'POST')
+        M = pd.DataFrame({'m': R['ts'].values // 60, 'p5': page & (st >= 500), 'p499': page & (st == 499), 'p': page,
+                          'n': np.ones(len(st), dtype=np.int32), 's_ok': R['is_static'].values & (st < 400), 's': R['is_static'].values})
+        mm = M.groupby('m').sum()
+        m5 = page & (st >= 500)
+        mm['ip5'] = pd.DataFrame({'m': M['m'].values[m5], 'ip': R['ip'].values[m5]}).groupby('m')['ip'].nunique()
     mm['ip5'] = mm['ip5'].fillna(0)
     full = np.arange(mm.index.min(), mm.index.max() + 1)
     mm = mm.reindex(full, fill_value=0)
@@ -525,14 +566,23 @@ def errors(c, F):
     rg = np.asarray(c.rg)
     who = np.select([c.human, c.search_ok, rg == 'Роботы', rg == 'Свои'], [0, 1, 2, 3], 4).astype(np.int8)
     kl = np.select([st >= 500, st == 499, st == 404, st >= 400], [0, 1, 2, 3], 4).astype(np.int8)
-    X = pd.DataFrame({'d': R['day'].cat.codes.values, 'w': who, 'k': kl}).groupby(['d', 'w', 'k']).size().reset_index(name='n')
-    X['день'] = R['day'].cat.categories[X['d']]; X['кто'] = WHO[X['w']]; X['класс'] = KL[X['k']]
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # день × кто × класс кода — из сводки «Время»
+        wq = summaries.who_sql([(0, summaries.HUMAN), (1, summaries.SEARCH_OK), (2, "category = 'Роботы'"), (3, "category = 'Свои'"), 4])
+        T = sm.time(f"{summaries.DAY} AS день, {wq} AS w, CAST(sum(n_5xx) AS BIGINT) AS k0, CAST(sum(n_499) AS BIGINT) AS k1, CAST(sum(n_404) AS BIGINT) AS k2, "
+                    "CAST(sum(n_4xx - n_499 - n_404) AS BIGINT) AS k3, CAST(sum(n_req - n_5xx - n_4xx) AS BIGINT) AS k4")
+        X = pd.concat([T[['день', 'w']].assign(k=k, n=T[f'k{k}'].values) for k in range(5)], ignore_index=True)
+        X = X[X['n'] > 0].sort_values(['день', 'w', 'k']).reset_index(drop=True)
+    else:
+        X = pd.DataFrame({'d': R['day'].cat.codes.values, 'w': who, 'k': kl}).groupby(['d', 'w', 'k']).size().reset_index(name='n')
+        X['день'] = R['day'].cat.categories[X['d']]
+    X['кто'] = WHO[X['w']]; X['класс'] = KL[X['k']]
     S['Ошибки по дням'] = X.pivot_table(index=['день', 'кто'], columns='класс', values='n', fill_value=0).reset_index()
     K = pd.DataFrame({'код': st, 'w': who}).groupby(['код', 'w']).size().reset_index(name='n')
     K['кто'] = WHO[K['w']]
     S['Коды ответа'] = K.pivot_table(index='код', columns='кто', values='n', fill_value=0).reset_index()
     # сбои: пик (страницы массово отдают 5xx) и деградация вокруг него (доля 5xx+499 в разы выше обычной для этого часа или провал трафика)
-    S['Сбои'], outages = outage_windows(R, st, c.E_srv)
+    S['Сбои'], outages = outage_windows(R, st, c.E_srv, sums=sm)
     for w in outages:
         if w['пик_минут'] >= 2 and w['страниц_с_5xx'] >= 10:
             deg = f"деградация {str(w['деградация_с'])[:16]}–{str(w['деградация_по'])[11:16]}, " if w['деградация_с'] != w['начало'] or w['деградация_по'] != w['конец'] else ''
@@ -831,11 +881,19 @@ def load_security(c, F):
     S = {}
     st = R['status'].values
     by = R['bytes'].values
-    hr = pd.DataFrame({'h': R['ts'].values // 3600, 'g': c.rg.codes, 'b': by}).groupby(['h', 'g']).agg(n=('b', 'size'), mb=('b', 'sum')).reset_index()
-    hr['час'] = dt(hr['h'] * 3600); hr['группа'] = c.rg.categories[hr['g']]
+    sums_ = getattr(c, 'sums', None)
+    mn = pd.DataFrame({'m': R['ts'].values // 60, 'ip': R['ip'].cat.codes.values, 'e': st >= 500, 'c': st == 499})   # минута × IP нужна «Флуду» (сами строки)
+    if sums_ is not None:   # час × категория — из сводки «Время»; запросы, 5xx и 499 по минутам — из сводки «Минута»
+        hr = sums_.time("CAST(date_diff('day', DATE '1970-01-01', day) AS BIGINT) * 24 + hour AS h, category AS группа, CAST(sum(n_req) AS BIGINT) AS n, CAST(sum(bytes) AS BIGINT) AS mb")
+        hr['час'] = dt(hr['h'] * 3600)
+        M = sums_.minutes()
+        pm = pd.DataFrame({'запросов': M['n_req'].values, 'ошибок_5xx': M['n_5xx'].values, 'не_дождались_499': M['n_499'].values}, index=pd.Index(M['m'].values, name='m'))
+    else:
+        hr = pd.DataFrame({'h': R['ts'].values // 3600, 'g': c.rg.codes, 'b': by}).groupby(['h', 'g']).agg(n=('b', 'size'), mb=('b', 'sum')).reset_index()
+        hr['час'] = dt(hr['h'] * 3600); hr['группа'] = c.rg.categories[hr['g']]
+        pm = mn.groupby('m').agg(запросов=('ip', 'size'), ошибок_5xx=('e', 'sum'), не_дождались_499=('c', 'sum'))
     S['Нагрузка по часам'] = hr.pivot_table(index='час', columns='группа', values='n', fill_value=0).reset_index()
-    mn = pd.DataFrame({'m': R['ts'].values // 60, 'ip': R['ip'].cat.codes.values, 'e': st >= 500, 'c': st == 499})
-    pm = mn.groupby('m').agg(запросов=('ip', 'size'), ошибок_5xx=('e', 'sum'), не_дождались_499=('c', 'sum')).sort_values('запросов', ascending=False).head(30)
+    pm = pm.sort_values('запросов', ascending=False).head(30)
     sub = R.loc[np.isin(mn['m'].values, pm.index.values), ['ts', 'ip', 'fam']]
     sub = sub.assign(m=sub['ts'] // 60)
     tops = sub.groupby('m').agg(главный_IP=('ip', lambda s: topn(s.astype(str), 1)), главный_робот=('fam', lambda s: topn(s.astype(str)[s.astype(str) != ''], 1)))
@@ -1326,7 +1384,10 @@ def marketing(c, F):
     S['Качество и очистка по каналам'] = cl.reset_index().rename(columns={'channel': 'канал'})
     # органика
     org = H[H['channel'] == 'Поиск']
-    if len(org):
+    if len(org) and getattr(c, 'sums', None) is not None:   # визиты людей из поиска по дням начала — из сводки «Время»
+        T = c.sums.time(f"channel_sub, {summaries.DAY} AS day, CAST(sum(n_visits_started) AS BIGINT) AS n", where=f"{summaries.HUMAN} AND channel = 'Поиск'", having='sum(n_visits_started) > 0')
+        S['Органика'] = T.groupby(['channel_sub', 'day'])['n'].sum().unstack('channel_sub', fill_value=0).reset_index()
+    elif len(org):
         S['Органика'] = org.groupby(['channel_sub', 'day']).size().unstack('channel_sub', fill_value=0).reset_index()
     # реклама
     AD = H[H['channel'] == 'Реклама'].copy()

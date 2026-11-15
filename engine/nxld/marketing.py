@@ -4,6 +4,7 @@
 качество каналов и заявок, рекламные срезы с ботами и кликами впустую, вердикт площадкам.
 Оформление (report_marketing) только рисует; те же цифры берут выжимка для Redmine и снимок."""
 import numpy as np, pandas as pd
+from . import summaries
 
 AD_DIMS = (('кампания', 'Кампании'), ('фраза', 'Фразы'), ('source', 'Площадки'), ('aid', 'Объявления'), ('region', 'Регионы'), ('device', 'Устройства (метка)'))
 
@@ -142,20 +143,51 @@ def heat_week(df, val=None):
     return w.groupby([df['weekday'].astype(int), df['hour'].astype(int)]).sum().unstack(fill_value=0).reindex(index=range(7), columns=range(24), fill_value=0)
 
 
-def journal(V, J0):
+def _journal_sums(V, sm):
+    """Журнал маркетинга из сводки «Время»: визиты и заявки по дню начала визита, по категории и каналу.
+    «Впустую» зависит от кода ответа посадочной страницы — по таблице визитов."""
+    hum, bot, ad, se = summaries.HUMAN, "category = 'Боты'", "channel = 'Реклама'", "channel = 'Поиск'"
+    f = lambda col, cond, name: f"CAST(coalesce(sum({col}) FILTER ({cond}), 0) AS BIGINT) AS {name}"
+    T = sm.time(', '.join([f"{summaries.DAY} AS day", f('n_visits_started', hum, 'h'), f('n_visits_started', f'{hum} AND {ad}', 'h_ad'), f('n_visits_started', f'{hum} AND {se}', 'h_se'),
+                           f('n_visits_started', f'{bot} AND {ad}', 'b_ad'), f('n_goal_started', hum, 'goal'), f('n_conv_started', hum, 'conv'),
+                           f('n_conv_started', f'{hum} AND {ad}', 'conv_ad'), f('n_conv_started', bot, 'conv_b')]), having='sum(n_visits_started) > 0').set_index('day')
+    T = T[T['h'] > 0]   # как и раньше: в строках — дни, когда начинались визиты людей
+    A = V[V['channel'].astype(str) == 'Реклама']
+    D = pd.DataFrame({'Визиты людей|Все': T['h'], 'Визиты людей|Реклама': T['h_ad'], 'Визиты людей|Поиск': T['h_se'], 'Визиты людей|Прочие': T['h'] - T['h_ad'] - T['h_se']})
+    D['Рекламные клики|Ботов'] = T['b_ad']
+    D['Рекламные клики|Впустую'] = A[_wasted(A)].groupby('day').size()
+    D['Заявки|Отправлено'] = T['goal']
+    D['Заявки|Принято'] = T['conv']
+    D['Заявки|Из рекламы'] = T['conv_ad']
+    D['Заявки|От ботов'] = T['conv_b']
+    return D
+
+
+def heat_week_sums(sm):
+    """heat_week из сводки «Время»: визиты людей (nv), из них по рекламе (nv_ad), принятые заявки людей (nc) — по дню недели и часу начала визита."""
+    T = sm.time("CAST(isodow(day) - 1 AS BIGINT) AS weekday, CAST(hour AS BIGINT) AS hour, CAST(sum(n_visits_started) AS BIGINT) AS nv, "
+                "CAST(coalesce(sum(n_visits_started) FILTER (channel = 'Реклама'), 0) AS BIGINT) AS nv_ad, CAST(sum(n_conv_started) AS BIGINT) AS nc",
+                where=summaries.HUMAN, having='sum(n_visits_started) > 0')
+    grid = lambda X, col: X.set_index(['weekday', 'hour'])[col].unstack(fill_value=0).reindex(index=range(7), columns=range(24), fill_value=0)
+    return {'nv': grid(T, 'nv') if len(T) else None, 'nv_ad': grid(T[T['nv_ad'] > 0], 'nv_ad') if (T['nv_ad'] > 0).any() else None, 'nc': grid(T, 'nc') if len(T) else None}
+
+
+def journal(V, J0, sums=None):
     """Журнал маркетинга по дням: визиты людей по каналам, рекламные клики (люди и боты), заявки."""
     if J0 is None or not len(J0): return None
-    Hm = V[V['group'] == 'Люди']; ch = Hm['channel'].astype(str)
-    g = Hm.groupby('day')
-    D = pd.DataFrame({'Визиты людей|Все': g.size(), 'Визиты людей|Реклама': Hm[ch == 'Реклама'].groupby('day').size(),
-                      'Визиты людей|Поиск': Hm[ch == 'Поиск'].groupby('day').size(), 'Визиты людей|Прочие': Hm[~ch.isin(['Реклама', 'Поиск'])].groupby('day').size()})
-    A = V[V['channel'].astype(str) == 'Реклама']
-    D['Рекламные клики|Ботов'] = A[A['group'] == 'Боты'].groupby('day').size()
-    D['Рекламные клики|Впустую'] = A[_wasted(A)].groupby('day').size()
-    D['Заявки|Отправлено'] = g['n_goal'].sum()
-    D['Заявки|Принято'] = g['n_conv'].sum()
-    D['Заявки|Из рекламы'] = Hm[ch == 'Реклама'].groupby('day')['n_conv'].sum()
-    D['Заявки|От ботов'] = V[V['group'] == 'Боты'].groupby('day')['n_conv'].sum()
+    if sums is not None: D = _journal_sums(V, sums)
+    else:
+        Hm = V[V['group'] == 'Люди']; ch = Hm['channel'].astype(str)
+        g = Hm.groupby('day')
+        D = pd.DataFrame({'Визиты людей|Все': g.size(), 'Визиты людей|Реклама': Hm[ch == 'Реклама'].groupby('day').size(),
+                          'Визиты людей|Поиск': Hm[ch == 'Поиск'].groupby('day').size(), 'Визиты людей|Прочие': Hm[~ch.isin(['Реклама', 'Поиск'])].groupby('day').size()})
+        A = V[V['channel'].astype(str) == 'Реклама']
+        D['Рекламные клики|Ботов'] = A[A['group'] == 'Боты'].groupby('day').size()
+        D['Рекламные клики|Впустую'] = A[_wasted(A)].groupby('day').size()
+        D['Заявки|Отправлено'] = g['n_goal'].sum()
+        D['Заявки|Принято'] = g['n_conv'].sum()
+        D['Заявки|Из рекламы'] = Hm[ch == 'Реклама'].groupby('day')['n_conv'].sum()
+        D['Заявки|От ботов'] = V[V['group'] == 'Боты'].groupby('day')['n_conv'].sum()
     D = D.fillna(0).astype(int).reset_index().rename(columns={'index': 'день', 'day': 'день'})
     meta = J0[J0['день'] != 'Итого'][['день', '_с', '_по', '_полный']]
     D = meta.merge(D, on='день', how='left').fillna(0)
@@ -179,12 +211,19 @@ def quality(V):
 def build(c, res):
     V = c.V
     H = V[V['group'] == 'Люди']
-    out = {'журнал': journal(V, (res.get('errors') or {}).get('журнал')), 'качество': quality(V)}
+    sm = getattr(c, 'sums', None)
+    out = {'журнал': journal(V, (res.get('errors') or {}).get('журнал'), sm), 'качество': quality(V)}
     A = ad_visits(V)
     AH = A[A['group'] == 'Люди'] if len(A) else A
-    out['время'] = [('Визиты людей', 'Все визиты людей за период', heat_week(H)),
-                    ('Визиты из рекламы', 'Люди, пришедшие по рекламным ссылкам', heat_week(AH) if len(AH) else None),
-                    ('Принятые заявки', 'Заявки людей, принятые сайтом', heat_week(H, 'n_conv'))]
+    if sm is not None:   # день недели × час по началу визита — из сводки «Время»
+        W = heat_week_sums(sm)
+        out['время'] = [('Визиты людей', 'Все визиты людей за период', W['nv']),
+                        ('Визиты из рекламы', 'Люди, пришедшие по рекламным ссылкам', W['nv_ad']),
+                        ('Принятые заявки', 'Заявки людей, принятые сайтом', W['nc'])]
+    else:
+        out['время'] = [('Визиты людей', 'Все визиты людей за период', heat_week(H)),
+                        ('Визиты из рекламы', 'Люди, пришедшие по рекламным ссылкам', heat_week(AH) if len(AH) else None),
+                        ('Принятые заявки', 'Заявки людей, принятые сайтом', heat_week(H, 'n_conv'))]
     out['реклама_боты'] = ad_bots(A)
     label_ads((res.get('sheets') or {}).get('Маркетинг', {}), out['реклама_боты'])   # подписи фраз и регионов — общий уровень, не оформление
     out.update(ad_tops((res.get('sheets') or {}).get('Маркетинг', {}), out['реклама_боты']))

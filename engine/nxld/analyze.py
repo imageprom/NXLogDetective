@@ -130,12 +130,16 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     E_02, E_srv, n_e02, n_ecopy = hosts_.split_error_log(E, m.get('hosts') or [])   # 02 — error-лог только хостов сайта; сбои и торможение — весь сервер без копий
     m['off_site'].update(error_log_не_вошло_в_02=n_e02, error_log_копии=n_ecopy)
     if n_e02 or n_ecopy: log(f'Error-лог: в 02 не вошло {n_e02:,} строк с хостов вне сайта, из них копии на других доменах — {n_ecopy:,}')
-    from . import store
-    store.all_of(workdir, R, V, m)   # правила закончились: итоговые категории визитов и признаки событий — в базу проверки (все визиты, до среза для отчёта)
+    from . import store, db as db_, summaries
+    if db_.exists(workdir):
+        store.all_of(workdir, R, V, m)   # правила закончились: итоговые категории визитов и признаки событий — в базу проверки (все визиты, до среза для отчёта)
+        summaries.build(workdir)   # сводки «Время» и «Минута»: расчёты по дням, часам и минутам блоки читают из них
+    sums_all, sums_site = summaries.for_contexts(workdir)   # базы нет (таблицы положены руками) — None: блоки считают по таблицам в памяти
     ip_stats = hosts_.ip_host_stats(R, V, m.get('hosts') or [])   # обращения по IP сервера — для карточки в 03 (считаются до среза: нераспознанные тоже обращались)
     Rc, Vc = _cut(R, V, ~hide_r, ~unrec_v)
     R, V = Rc, visits.freeze(Vc)   # правила закончились: повторяющиеся строки — категории
     c = blocks.Ctx(R, V, E_02, T, m, inv, G, E_srv=E_srv)
+    c.sums = sums_all
     engines_ = [e.get('движок') for e in (m.get('engines') or []) if isinstance(e, dict)]
     # реестр адресов — общий для всех листов; бэкап, скачанный своими («Свои · скачал бэкап»), — не адрес сайта: иначе он считался бы утечкой и шёл бы в дела
     c.addr = classify.build(R, c.human, np.asarray((c.rg == 'Свои') & (np.asarray(c.rsub) != 'скачал бэкап')), engines_)
@@ -144,6 +148,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     else:
         Rs, Vs = _cut(R, V, s_r, V['host_site'].astype(bool))
         cs = blocks.Ctx(Rs, Vs, E_02, T, m, inv, G, E_srv=E_srv)
+        cs.sums = sums_site
         cs.addr = classify.build(Rs, cs.human, np.asarray((cs.rg == 'Свои') & (np.asarray(cs.rsub) != 'скачал бэкап')), engines_)
     Rs = cs.R
     F = Findings()

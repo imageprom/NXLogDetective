@@ -5,7 +5,7 @@
 import re
 import numpy as np
 import pandas as pd
-from . import common
+from . import common, summaries
 from .common import ip_profile, codes_text, split_codes_arr, dmy, dmy_many, episode_id, who_text
 
 GROUPS_HEAT = ('Все', 'Люди', 'Роботы', 'Боты')
@@ -28,19 +28,28 @@ def _cat(R, col):
 def heat(c):
     """Запросов за час: день × час по группам; и где нагрузка программ пересекается с людьми и растёт 499."""
     R = c.R
-    day = R['day'].astype(str).values
-    hr = R['hour'].values.astype(int)
-    rg = np.asarray(c.rg)
     out = {}
-    for g in GROUPS_HEAT:
-        m = np.ones(len(R), bool) if g == 'Все' else (rg == g)
-        P = pd.DataFrame({'d': day[m], 'h': hr[m]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(columns=range(24), fill_value=0)
-        out[g] = P
-    # пересечение: часы, где у людей много запросов и у программ (роботы + боты) тоже; доля 499 у людей в эти часы
-    st = R['status'].values
-    hum = c.human
-    X = pd.DataFrame({'d': day, 'h': hr, 'p': hum, 'b': np.isin(rg, ('Роботы', 'Боты')), 'w': hum & (st == 499)})
-    H = X.groupby(['d', 'h']).agg(люди=('p', 'sum'), программы=('b', 'sum'), обрывы=('w', 'sum')).reset_index()
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # день × час × категория — из сводки «Время»
+        T = sm.time(f"{summaries.DAY} AS d, CAST(hour AS BIGINT) AS h, category AS g, CAST(sum(n_req) AS BIGINT) AS n, CAST(sum(n_499) AS BIGINT) AS w")
+        for g in GROUPS_HEAT:
+            out[g] = summaries.series2(T if g == 'Все' else T[T['g'] == g], 'd', 'h', 'n').unstack(fill_value=0).reindex(columns=range(24), fill_value=0)
+        hm, pm = (T['g'] == 'Люди').values, T['g'].isin(('Роботы', 'Боты')).values
+        H = pd.DataFrame({'d': T['d'].values, 'h': T['h'].values, 'люди': np.where(hm, T['n'].values, 0), 'программы': np.where(pm, T['n'].values, 0),
+                          'обрывы': np.where(hm, T['w'].values, 0)}).groupby(['d', 'h']).sum().reset_index()
+    else:
+        day = R['day'].astype(str).values
+        hr = R['hour'].values.astype(int)
+        rg = np.asarray(c.rg)
+        for g in GROUPS_HEAT:
+            m = np.ones(len(R), bool) if g == 'Все' else (rg == g)
+            P = pd.DataFrame({'d': day[m], 'h': hr[m]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(columns=range(24), fill_value=0)
+            out[g] = P
+        # пересечение: часы, где у людей много запросов и у программ (роботы + боты) тоже; доля 499 у людей в эти часы
+        st = R['status'].values
+        hum = c.human
+        X = pd.DataFrame({'d': day, 'h': hr, 'p': hum, 'b': np.isin(rg, ('Роботы', 'Боты')), 'w': hum & (st == 499)})
+        H = X.groupby(['d', 'h']).agg(люди=('p', 'sum'), программы=('b', 'sum'), обрывы=('w', 'sum')).reset_index()
     H['доля_499'] = H['обрывы'] / H['люди'].clip(lower=1)
     base_499 = float(H['обрывы'].sum() / max(1, H['люди'].sum()))
     q_p, q_b = H['люди'].quantile(0.75), H['программы'].quantile(0.75)
@@ -57,7 +66,7 @@ def bursts(c, OUT=None, k=3.0, add=500, gap=10, min_excess=2000):
     Для каждого: сколько, кто, что били, чем ответил сервер, сработала ли защита, последствия, картина."""
     R = c.R
     ts = R['ts'].values
-    idx, full, norm = common.minute_norm(ts)
+    idx, full, norm = common.minute_norm_of(c)   # запросы по минутам — из сводки «Минута»
     hot = full >= np.maximum(k * norm, norm + add)
     E = common.episodes(idx[hot], gap)
     if not E: return pd.DataFrame()
@@ -659,12 +668,24 @@ def journal(c, res):
     st = R['status'].values
     find = vm & (st == 200) & (R['bytes'].values > 0) & leak
     other = ~np.isin(rg, ('Люди', 'Роботы', 'Боты'))
-    X = pd.DataFrame({'d': day, 'b': R['bytes'].values, 'h': c.human, 'r': rg == 'Роботы', 'bt': rg == 'Боты', 'o': other, 'v': vm, 'f': find, 'm': R['ts'].values // 60})
-    g = X.groupby('d')
-    D = pd.DataFrame({'Запросов|Все': g.size(), 'Запросов|Люди': g['h'].sum(), 'Запросов|Роботы': g['r'].sum(), 'Запросов|Боты': g['bt'].sum(), 'Запросов|Прочие': g['o'].sum(),
-                      'Трафик|ГБ': (g['b'].sum() / GB).round().astype(int),
-                      'Пик|В минуту': X.groupby(['d', 'm']).size().groupby(level=0).max(),
-                      'Сканеры|Запросов': g['v'].sum(), 'Сканеры|Находок': g['f'].sum()}).reset_index().rename(columns={'d': 'день'})
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # запросы по категориям и трафик по дням — из сводки «Время», пик в минуту — из сводки «Минута»; сканеры и находки — по адресам (таблица запросов)
+        T = sm.time(f"{summaries.DAY} AS d, CAST(sum(n_req) AS BIGINT) AS n, CAST(coalesce(sum(n_req) FILTER (category = 'Люди'), 0) AS BIGINT) AS h, "
+                    "CAST(coalesce(sum(n_req) FILTER (category = 'Роботы'), 0) AS BIGINT) AS r, CAST(coalesce(sum(n_req) FILTER (category = 'Боты'), 0) AS BIGINT) AS bt, "
+                    "CAST(coalesce(sum(n_req) FILTER (category NOT IN ('Люди', 'Роботы', 'Боты')), 0) AS BIGINT) AS o, CAST(sum(bytes) AS BIGINT) AS b").set_index('d')
+        M = sm.minutes()
+        peak = M['n_req'].groupby(pd.to_datetime(M['m'].values * 60, unit='s').strftime('%Y-%m-%d')).max()
+        g = pd.DataFrame({'d': day, 'v': vm, 'f': find}).groupby('d')
+        D = pd.DataFrame({'Запросов|Все': T['n'], 'Запросов|Люди': T['h'], 'Запросов|Роботы': T['r'], 'Запросов|Боты': T['bt'], 'Запросов|Прочие': T['o'],
+                          'Трафик|ГБ': (T['b'] / GB).round().astype(int), 'Пик|В минуту': peak,
+                          'Сканеры|Запросов': g['v'].sum(), 'Сканеры|Находок': g['f'].sum()}).rename_axis('d').reset_index().rename(columns={'d': 'день'})
+    else:
+        X = pd.DataFrame({'d': day, 'b': R['bytes'].values, 'h': c.human, 'r': rg == 'Роботы', 'bt': rg == 'Боты', 'o': other, 'v': vm, 'f': find, 'm': R['ts'].values // 60})
+        g = X.groupby('d')
+        D = pd.DataFrame({'Запросов|Все': g.size(), 'Запросов|Люди': g['h'].sum(), 'Запросов|Роботы': g['r'].sum(), 'Запросов|Боты': g['bt'].sum(), 'Запросов|Прочие': g['o'].sum(),
+                          'Трафик|ГБ': (g['b'].sum() / GB).round().astype(int),
+                          'Пик|В минуту': X.groupby(['d', 'm']).size().groupby(level=0).max(),
+                          'Сканеры|Запросов': g['v'].sum(), 'Сканеры|Находок': g['f'].sum()}).reset_index().rename(columns={'d': 'день'})
     meta = J0[J0['день'] != 'Итого'][['день', '_с', '_по', '_полный']]
     D = meta.merge(D, on='день', how='left').fillna(0)
     tot = {k_: (int(D[k_].sum()) if k_ != 'Пик|В минуту' else int(D[k_].max())) for k_ in D.columns if '|' in k_}

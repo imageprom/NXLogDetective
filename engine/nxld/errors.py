@@ -8,6 +8,7 @@
 Вкладки по кодам показывают всё, вместе со сканерами: зонды и конструкты посторонних там серыми строками."""
 import numpy as np
 import pandas as pd
+from . import summaries
 
 WHO = ('Люди', 'Поисковики', 'Роботы', 'Мониторинг', 'Утилиты', 'Боты', 'Свои')
 ORIGIN = ('Со страниц сайта', 'Напрямую', 'С других сайтов')
@@ -22,6 +23,10 @@ def who_of(c):
     """Кто получил ответ: люди, поисковики (подлинные), прочие роботы, боты, свои — индексы в WHO."""
     rg = np.asarray(c.rg)
     return np.select([c.human, c.search_ok, rg == 'Роботы', rg == 'Системы мониторинга', rg == 'Утилиты', rg == 'Свои'], [0, 1, 2, 3, 4, 6], 5).astype(np.int8)
+
+
+# те же классы для свёрток сводки «Время» (summaries.who_sql): условия по порядку, последним — номер для остальных
+WHO_SQL = [(0, summaries.HUMAN), (1, summaries.SEARCH_OK), (2, "category = 'Роботы'"), (3, "category = 'Системы мониторинга'"), (4, "category = 'Утилиты'"), (6, "category = 'Свои'"), 5]
 
 
 def origin_of(R):
@@ -381,18 +386,26 @@ def broken(T, Sr=None):
 
 def journal(c):
     """Журнал ошибок по дням: 5xx и 4xx — по группам, 499 — у людей и поисковиков; плюс какая часть суток попала в лог."""
-    from .blocks import day_span
+    from .blocks import day_span_of
     R = c.R
-    st = R['status'].values
-    w = who_of(c)
-    day = R['day'].astype(str).values
-    D = pd.DataFrame({'день': sorted(pd.unique(day))}).set_index('день')
-    for lab, mk in (('5xx', st >= 500), ('4xx', (st >= 400) & (st < 500) & (st != 499))):
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # день × кто: 5xx, 4xx без 499 и 499 — из сводки «Время»
+        T = sm.time(f"{summaries.DAY} AS d, {summaries.who_sql(WHO_SQL)} AS w, CAST(sum(n_5xx) AS BIGINT) AS e5, CAST(sum(n_4xx - n_499) AS BIGINT) AS e4, CAST(sum(n_499) AS BIGINT) AS e499")
+        D = pd.DataFrame({'день': sorted(T['d'].unique())}).set_index('день')
+        cnt = lambda col, i: (lambda X: X[X[col] > 0].set_index('d')[col])(T[T['w'] == i])
+    else:
+        st = R['status'].values
+        w = who_of(c)
+        day = R['day'].astype(str).values
+        D = pd.DataFrame({'день': sorted(pd.unique(day))}).set_index('день')
+        mks = {'e5': st >= 500, 'e4': (st >= 400) & (st < 500) & (st != 499), 'e499': st == 499}
+        cnt = lambda col, i: pd.Series(day[mks[col] & (w == i)]).value_counts()
+    for lab, col in (('5xx', 'e5'), ('4xx', 'e4')):
         for i, nm in enumerate(WHO):
-            D[f'{lab}|{nm}'] = pd.Series(day[mk & (w == i)]).value_counts()
+            D[f'{lab}|{nm}'] = cnt(col, i)
     for i, nm in ((0, 'Люди'), (1, 'Поисковики')):
-        D[f'499 — не дождались|{nm}'] = pd.Series(day[(st == 499) & (w == i)]).value_counts()
-    D = D.fillna(0).astype(int).join(day_span(R)).reset_index()
+        D[f'499 — не дождались|{nm}'] = cnt('e499', i)
+    D = D.fillna(0).astype(int).join(day_span_of(c)).reset_index()
     tot = {'день': 'Итого', '_полный': True, '_с': '', '_по': ''}
     tot.update({k: int(D[k].sum()) for k in D.columns if '|' in k})
     return pd.concat([D, pd.DataFrame([tot])], ignore_index=True)
@@ -440,23 +453,34 @@ def slowness(c):
     """Признаки торможения по часам: доля обрывов 499 у людей, ошибки шлюза 502 и 504, таймауты в error-логе;
     если в логе есть время ответа ($request_time) — медиана по часам. Таблицы «день × час»."""
     R = c.R
-    day, hr, st = R['day'].astype(str).values, R['hour'].values.astype(int), R['status'].values
     hum = c.human
-    X = pd.DataFrame({'d': day[hum], 'h': hr[hum], 'w': st[hum] == 499})
-    g = X.groupby(['d', 'h'])
-    n, w = g.size(), g['w'].sum()
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # день × час: запросы и обрывы 499 у людей, ответы шлюза 502 и 504 — из сводки «Время»
+        T = sm.time(f"{summaries.DAY} AS d, CAST(hour AS BIGINT) AS h, CAST(coalesce(sum(n_req) FILTER ({summaries.HUMAN}), 0) AS BIGINT) AS n, "
+                    f"CAST(coalesce(sum(n_499) FILTER ({summaries.HUMAN}), 0) AS BIGINT) AS w, CAST(sum(n_502 + n_504) AS BIGINT) AS gw")
+        Th = T[T['n'] > 0].set_index(['d', 'h'])
+        n, w = Th['n'], Th['w']
+        days_all = sorted(T['d'].unique())
+        gws = summaries.series2(T, 'd', 'h', 'gw')
+    else:
+        day, hr, st = R['day'].astype(str).values, R['hour'].values.astype(int), R['status'].values
+        X = pd.DataFrame({'d': day[hum], 'h': hr[hum], 'w': st[hum] == 499})
+        g = X.groupby(['d', 'h'])
+        n, w = g.size(), g['w'].sum()
+        days_all = sorted(set(day))
+        gw = np.isin(st, (502, 504))
+        gws = pd.DataFrame({'d': day[gw], 'h': hr[gw]}).groupby(['d', 'h']).size()
     share = (w / n.clip(lower=1) * 100).where(n >= 50)   # мало запросов — доля ничего не значит
     out = {'499': share.unstack().reindex(columns=range(24)).round(1),
            '_499_n': n.unstack().reindex(columns=range(24)).fillna(0)}
-    gw = np.isin(st, (502, 504))
-    out['шлюз'] = pd.DataFrame({'d': day[gw], 'h': hr[gw]}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
+    out['шлюз'] = gws.unstack(fill_value=0).reindex(index=days_all, columns=range(24), fill_value=0)
     E = c.E_srv
     if E is not None and len(E) and 'msg' in E:
         m = E['msg'].astype(str).str.contains(TIMEOUT_RX, regex=True, case=False).values
         t = pd.to_datetime(E['ts'].values[m].astype('int64'), unit='s')
-        out['таймауты'] = pd.DataFrame({'d': t.strftime('%Y-%m-%d'), 'h': t.hour}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=sorted(set(day)), columns=range(24), fill_value=0)
+        out['таймауты'] = pd.DataFrame({'d': t.strftime('%Y-%m-%d'), 'h': t.hour}).groupby(['d', 'h']).size().unstack(fill_value=0).reindex(index=days_all, columns=range(24), fill_value=0)
     if 'rt' in R:
-        Y = pd.DataFrame({'d': day[hum], 'h': hr[hum], 'rt': R['rt'].values[hum]})
+        Y = pd.DataFrame({'d': R['day'].astype(str).values[hum], 'h': R['hour'].values.astype(int)[hum], 'rt': R['rt'].values[hum]})   # время ответа в базе не хранится: по таблице запросов
         out['время'] = Y.groupby(['d', 'h'])['rt'].median().unstack().reindex(columns=range(24)).round(2)
     S_ = share.dropna().sort_values(ascending=False)
     out['_худшие'] = [(d, h, float(v)) for (d, h), v in S_.head(3).items()]

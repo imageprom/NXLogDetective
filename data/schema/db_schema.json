@@ -1,7 +1,7 @@
 {
  "name": "nxld_check_db",
  "title_ru": "База проверки NX Log Detective",
- "schema_version": "0.3-draft-4",
+ "schema_version": "0.3-draft-5",
  "date": "2026-11-15",
  "status": "согласовано 15.11; ip_period — черновик",
  "file": "work/nxld.duckdb",
@@ -826,17 +826,6 @@
      "name": "is_service",
      "type": "BOOLEAN",
      "ru": "служебный файл: robots.txt, sitemap, favicon, /.well-known…"
-    },
-    {
-     "name": "tpl",
-     "type": "VARCHAR",
-     "ru": "шаблон адреса: числа и коды свёрнуты (правило общее, от сайта не зависит)",
-     "old": "R.tpl"
-    },
-    {
-     "name": "section",
-     "type": "VARCHAR",
-     "ru": "раздел верхнего уровня"
     }
    ],
    "depends_on": [
@@ -847,7 +836,7 @@
     "ref:probes"
    ],
    "built_in": "prepare",
-   "replaces": "R.pkl (ext, is_static, tpl)",
+   "replaces": "R.pkl (ext, is_static)",
    "rows_est": "65 тыс. / 0,5–1 млн",
    "note_ru": "Только то, что не зависит от сайта: пересчитывается лишь при изменении справочников. Роль адреса на этом сайте — в path_site.",
    "status": "agreed"
@@ -1605,6 +1594,17 @@
      "fk": "dim_path.path_id"
     },
     {
+     "name": "tpl",
+     "type": "VARCHAR",
+     "ru": "шаблон адреса: числа и коды свёрнуты; уровень, где у людей много разных значений, свёрнут (зависит от лога)",
+     "old": "R.tpl"
+    },
+    {
+     "name": "section",
+     "type": "VARCHAR",
+     "ru": "раздел верхнего уровня"
+    },
+    {
      "name": "is_admin",
      "type": "BOOLEAN",
      "ru": "админка движка",
@@ -1636,13 +1636,14 @@
    ],
    "depends_on": [
     "dim_path",
+    "access_events",
     "site_facts",
     "site_pages",
     "site_actions",
     "site_embedded"
    ],
    "built_in": "prepare",
-   "replaces": "R.pkl (is_admin, is_catalog), проверки регулярками по каждой строке",
+   "replaces": "R.pkl (tpl, is_admin, is_catalog), проверки регулярками по каждой строке",
    "rows_est": "как dim_path",
    "note_ru": "ИЗ ПРОВЕРКИ СХЕМЫ: вынесено из dim_path, иначе словарь адресов и карта сайта зависели друг от друга по кругу. Регулярки карты применяются один раз к словарю адресов, а не к каждой строке лога.",
    "status": "agreed"

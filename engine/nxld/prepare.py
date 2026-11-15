@@ -67,15 +67,17 @@ def run(paths, workdir, log=print, map_override=None):
     if len(E): E.to_pickle(os.path.join(workdir, 'errors.pkl'))   # прежний вид error-лога — для блоков, которые ещё не читают базу
     elif os.path.exists(os.path.join(workdir, 'errors.pkl')): os.remove(os.path.join(workdir, 'errors.pkl'))
     db.set_meta(con, 'engine_version', VERSION)
-    con.close()
+    from . import dims
+    db.ensure(con, ['query_params', 'path_site'])
     from . import hosts as hosts_
     hosts = site_hosts_from(state, R)
     if map_override and map_override.get('site_hosts'): hosts = list(map_override['site_hosts']) + hosts   # поправка добавляет домены сайта (первый — основной)
     not_site = [hosts_.normalize(h) for h in (map_override or {}).get('not_site_hosts') or []]   # поправка убирает домены: это не сайт
     hosts = [h for h in hosts_.names_only(hosts) if h not in not_site]   # только имена: IP сервера — не домен сайта
     vh_names = [n for n in dict.fromkeys(hosts_.normalize(v) for v in (R['vhost'].cat.categories if 'vhost' in R else [])) if n]   # хосты, к которым обращаются в этом логе (включая IP сервера)
-    R = load.add_features(R, hosts + [h for h in vh_names if h not in hosts])   # реферер с любого из них — переход внутри сервера, не «внешний сайт»
+    R = load.add_features(R, con, hosts + [h for h in vh_names if h not in hosts])   # реферер с любого из них — переход внутри сервера, не «внешний сайт»
     site_mask, host_table, copy_mask = hosts_.classify(R, hosts, not_site)   # тип хоста — один раз, по запросам к нему; дальше его берут блоки
+    dims.store_hosts(con, host_table, hosts_.normalize)   # область хоста: сайт / тот же сервер / копии вне отчёта
     off_ = hosts_.summary(host_table)
     if copy_mask.any() and not copy_mask.all():   # копии на других доменах — вне всех блоков отчёта, включая 03 и 04: из данных убираем (счёт — в сводке хостов)
         R = R[~copy_mask].reset_index(drop=True)
@@ -87,7 +89,7 @@ def run(paths, workdir, log=print, map_override=None):
     if off_['хостов']:
         log(f"   хостов вне сайта: {off_['хостов']}, запросов к ним {off_['запросов']:,} ({off_['запросов'] / max(1, len(R)):.1%}): " + ', '.join(f"{r['хост']} ({r['запросов']:,})" for r in off_['хосты'][:8])
             + (f"; копии на других доменах — {off_['копии_запросов']:,} запросов, вне всех блоков отчёта" if off_.get('копии_запросов') else ''))
-    T = load.ip_table(R)
+    T = load.ip_table(R, con)
     R = load.attach_ip(R, T)
     log(f'   запросов {len(R):,}, IP {len(T):,}, {time.time()-t0:.0f} с')
     log('3/5 Разведка')
@@ -188,6 +190,8 @@ def run(paths, workdir, log=print, map_override=None):
     if sh['found']: log('   действия на сайте: ' + ', '.join(f"{f['kind']} {f['path']} ({f['how']}, визитов {f['visits']})" for f in sh['found'][:6]))
     V['n_goal'] = pd.Series(is_goal, index=R.index).groupby(R['vid']).sum()
     V['n_conv'] = pd.Series(succ, index=R.index).groupby(R['vid']).sum()
+    dims.store_path_site(con, R['base'].cat.categories, tpl, bases.str.contains(admin_rx, regex=True).values, site_map['catalog_templates'])
+    con.close()
     log('5/5 Сохранение')
     F, gaps = inventory(state, R, E, dup_report)
     inv = dict(version=VERSION, files=F.astype(str).to_dict('records'), duplicates=dup_report, hour_gaps=[str(g) for g in gaps],

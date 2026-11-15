@@ -34,7 +34,16 @@ def memory_limit():
 
 def connect(workdir, read_only=False):
     os.makedirs(workdir, exist_ok=True)
-    con = duckdb.connect(os.path.join(workdir, FILE), read_only=read_only)
+    fn = os.path.join(workdir, FILE)
+    if not read_only and os.path.exists(fn):   # база другой версии схемы — строится заново (логи читаются ещё раз)
+        c0 = duckdb.connect(fn)
+        try: old = c0.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        except duckdb.Error: old = None
+        c0.close()
+        if not old or old[0] != schema()['schema_version']:
+            for f in (fn, fn + '.wal'):
+                if os.path.exists(f): os.remove(f)
+    con = duckdb.connect(fn, read_only=read_only)
     lim = memory_limit()
     if lim: con.execute(f"SET memory_limit='{lim}'")
     tmp = os.path.join(workdir, 'db_tmp')

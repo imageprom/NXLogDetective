@@ -17,51 +17,41 @@ def load_requests(con):
     return R, [dict(source=n, lines_duplicate=int(k)) for n, k in rep]
 
 
-def add_features(R, site_hosts):
-    """Признаки запроса. site_hosts — домены сайта (для внутренних рефереров)."""
-    base = R['base'].cat.categories.to_series()
-    ext = base.str.extract(r'\.([A-Za-z0-9]{1,5})$')[0].str.lower().fillna('')
-    R['ext'] = ext.values[R['base'].cat.codes.values]
+def add_features(R, con, site_hosts):
+    """Признаки запроса — из словарей базы проверки (dims): расширение адреса, реферер, семейство и вид браузера.
+    site_hosts — хосты этого сервера (реферер с любого из них — внутренний переход)."""
+    from . import dims
+    dims.fill_common(con)
+    dims.fill_ref(con, site_hosts)
+    P = dims.per_category(con, 'dim_path', 'path', ['ext', 'is_static'], R['base'].cat.categories)
+    codes = R['base'].cat.codes.values
+    R['ext'] = P['ext'].values.astype(object)[codes]
     R['ext'] = R['ext'].astype('category')
-    R['is_static'] = R['ext'].isin(STATIC_EXT).values
-    # реферер: внутренний / внешний хост / путь
-    ref = R['ref'].cat.categories.to_series()
-    host = ref.str.extract(r'^https?://([^/:?#]+)')[0].str.lower().str.replace(r'^www\.', '', regex=True).fillna('')
-    rx = '|'.join(re.escape(h) for h in site_hosts) if site_hosts else r'^$'
-    internal = host.str.fullmatch(rf'(?:.+\.)?(?:{rx})').fillna(False)
-    rpath = ref.str.replace(r'^https?://[^/]+', '', regex=True).str.split('?').str[0]
+    R['is_static'] = P['is_static'].values.astype(bool)[codes]
+    F = dims.per_category(con, 'dim_ref', 'ref', ['ref_host', 'ref_path', 'is_internal'], R['ref'].cat.categories)
     codes = R['ref'].cat.codes.values
-    R['ref_host'] = pd.Categorical.from_codes(pd.Categorical(host.values).codes[codes], categories=pd.Categorical(host.values).categories)
-    R['ref_internal'] = internal.values[codes]
-    rp = pd.Categorical(rpath.where(internal, '').values)
+    h = pd.Categorical(F['ref_host'].values.astype(object))
+    R['ref_host'] = pd.Categorical.from_codes(h.codes[codes], categories=h.categories)
+    R['ref_internal'] = F['is_internal'].values.astype(bool)[codes]
+    rp = pd.Categorical(F['ref_path'].values.astype(object))
     R['ref_path'] = pd.Categorical.from_codes(rp.codes[codes], categories=rp.categories)
-    # семейство робота по UA
-    uas = R['ua'].cat.categories
-    fam = [uafam.family(u) for u in uas]
+    U = dims.per_category(con, 'dim_ua', 'ua', ['fam', 'fam_cat', 'is_browser', 'is_old', 'is_mobile', 'is_webview'], R['ua'].cat.categories)
     fcodes = R['ua'].cat.codes.values
-    famname = np.array([f[0] if f else '' for f in fam], dtype=object)
-    famcat = np.array([f[1] if f else '' for f in fam], dtype=object)
-    R['fam'] = pd.Categorical(famname[fcodes])
-    R['fam_cat'] = pd.Categorical(famcat[fcodes])
-    uas_s = pd.Series(uas)
-    browser = uas_s.str.contains(r'^Mozilla/5\.0 \(', regex=True) & ~uas_s.str.contains(r'HeadlessChrome|PhantomJS|Lightpanda', regex=True)
-    old = uas_s.str.contains(r'MSIE [1-9]\.|Chrome/[1-5]\d\.|Firefox/[1-4]\d\.|Windows NT [45]\.|Android [1-4]\.', regex=True)
-    mobile = uas_s.str.contains(r'Mobile|Android|iPhone|iPad', regex=True)
-    webview = uas_s.str.contains(r'; wv\)|YaApp|FBAN|Instagram|VKAndroidApp|com\.vk|Telegram', regex=True)
-    R['ua_browser'] = (browser & ~old).values[fcodes] & (famname[fcodes] == '')
-    R['ua_old'] = old.values[fcodes]
-    R['ua_mobile'] = mobile.values[fcodes]
-    R['ua_webview'] = webview.values[fcodes]
+    R['fam'] = pd.Categorical(U['fam'].values.astype(object)[fcodes])
+    R['fam_cat'] = pd.Categorical(U['fam_cat'].values.astype(object)[fcodes])
+    for c, k in (('ua_browser', 'is_browser'), ('ua_old', 'is_old'), ('ua_mobile', 'is_mobile'), ('ua_webview', 'is_webview')):
+        R[c] = U[k].values.astype(bool)[fcodes]
     R['day'] = pd.to_datetime(R['ts'], unit='s').dt.strftime('%Y-%m-%d').astype('category')
     R['hour'] = ((R['ts'] // 3600) % 24).astype('int8')
     return R
 
 
-def ip_table(R):
-    ips = R['ip'].cat.categories
-    T = ipdb.lookup(list(ips))
-    T.index = range(len(T))
-    return T
+def ip_table(R, con):
+    """Сведения о сети по IP запросов — из словаря IP базы проверки, в порядке категорий R.ip."""
+    from . import dims
+    D = dims.per_category(con, 'dim_ip', 'ip', ['asn', 'org', 'cc', 'net_first', 'net_last', 'nettype'], R['ip'].cat.categories)
+    return pd.DataFrame({'ip': list(R['ip'].cat.categories), 'asn': D['asn'].values.astype(np.int64), 'org': D['org'].values.astype(object), 'cc': D['cc'].values.astype(object),
+                         'net_first': D['net_first'].values.astype(np.int64), 'net_last': D['net_last'].values.astype(np.int64), 'nettype': D['nettype'].values.astype(object)})
 
 
 def attach_ip(R, T):

@@ -97,6 +97,16 @@ def make_log():
             for k in range(1050):
                 L.line('66.249.66.3', t + timedelta(hours=8, seconds=k), '/moved/', 301, ua=UA_GOOGLE, host=MAIN)
                 L.line(f'95.165.{d}.{100 + k % 90}', t + timedelta(hours=18, seconds=k), '/upload/big/video.mp4', 200, ref=f'https://{MAIN}/catalog/', size=900_000, host=MAIN)
+        for i_, u in enumerate(('/undefined', '/catalog/%7B%7Bitem.id%7D%7D/', '/[object%20Object]')):   # конструкты: скрипты сайта собирают адрес из шаблона; роботы и посторонние тоже стучатся
+            for k in range(2 + i_ % 2):   # человек открывает страницу, и скрипт этой страницы запрашивает битый адрес
+                t_ = t + timedelta(hours=9, minutes=40 + 3 * i_ + 9 * k)
+                _human(L, f'95.165.{d}.{20 + k + 3 * i_}', t_, MAIN, '/catalog/shary/', n_pages=1)
+                L.line(f'95.165.{d}.{20 + k + 3 * i_}', t_ + timedelta(seconds=45), u, 404, ref=f'https://{MAIN}/catalog/shary/' if i_ != 2 else '-', host=MAIN)
+            L.line('66.249.66.1', t + timedelta(hours=9, minutes=50 + i_), u, 404, ua=UA_GOOGLE, host=MAIN)
+            L.line('203.0.113.52', t + timedelta(hours=9, minutes=55 + i_), u, 200 if i_ == 1 else 404, ua=SCAN_UA, host=MAIN)
+        for k in range(5):   # картинки сайта на чужих сайтах: хотлинк; поисковики и сайт сам — не в счёт
+            L.line(f'91.{d}.{k}.9', t + timedelta(hours=19, minutes=k), f'/upload/iblock/{k % 3}.jpg', 200, ref=f'https://copy{k % 2}.example.net/post/{k}', size=600_000 + k, host=MAIN)
+            L.line(f'91.{d}.{k}.8', t + timedelta(hours=19, minutes=10 + k), '/upload/iblock/1.jpg', 200, ref='https://yandex.ru/images/', size=100_000, host=MAIN)
         L.line(f'95.165.{d}.5', t + timedelta(hours=11, minutes=40), '/repaired/', 404, ref=f'https://{IPHOST}/', host=IPHOST)   # тот же адрес на хосте вне сайта
     # сбой на третий день: шесть минут страницы отдают 5xx разным посетителям, часть не дождалась
     t = T0 + timedelta(days=2, hours=15)
@@ -139,7 +149,7 @@ def run():
             summaries.build = build
             seen = []
             q_orig = summaries.Sums.q
-            summaries.Sums.q = lambda self, sql, params=None: (seen.append(sql), q_orig(self, sql, params))[1]   # какие сводки читал analyze
+            summaries.Sums.q = lambda self, sql, params=None, frames=None: (seen.append(sql), q_orig(self, sql, params, frames))[1]   # какие сводки читал analyze
             try: new = _results(work, '1')
             finally: summaries.build, summaries.Sums.q = orig, q_orig
         finally:
@@ -151,10 +161,12 @@ def run():
         ST, SM = con.execute('SELECT * FROM sum_time').df(), con.execute('SELECT * FROM sum_minute').df()
         PS = con.execute("""SELECT p.path, h.host, s.* EXCLUDE (path_id, host_id) FROM sum_path_status s JOIN dim_path p USING (path_id) JOIN dim_host h USING (host_id)""").df()
         PD = con.execute("SELECT p.path, d.* EXCLUDE (path_id) FROM sum_path_day d JOIN dim_path p USING (path_id)").df()
+        LK = con.execute("SELECT p.path, l.* EXCLUDE (dst_path_id) FROM sum_links l JOIN dim_path p ON p.path_id = l.dst_path_id").df()
+        PM = con.execute("SELECT q.query, m.* EXCLUDE (query_id) FROM sum_params m JOIN dim_query q USING (query_id)").df()
         cols = {t: con.execute(f'DESCRIBE {t}').df()[['column_name', 'column_type']].values.tolist() for t in summaries.TABLES}
         built = dict(con.execute("SELECT table_name, rows FROM build_state WHERE table_name LIKE 'sum_%'").fetchall())
         con.close()
-        yield dict(old=old, new=new, R=grab['R'], V=grab['V'], ST=ST, SM=SM, PS=PS, PD=PD, cols=cols, built=built, work=work, seen=' '.join(seen))
+        yield dict(old=old, new=new, R=grab['R'], V=grab['V'], ST=ST, SM=SM, PS=PS, PD=PD, LK=LK, PM=PM, cols=cols, built=built, work=work, seen=' '.join(seen))
 
 
 def _rv(run):
@@ -192,10 +204,10 @@ def test_columns_match_schema(run):
     S = db.schema()['by_name']
     for t in summaries.TABLES:
         assert run['cols'][t] == [[c['name'], c['type']] for c in S[t]['columns']], t
-        assert run['built'][t] == len({'sum_time': run['ST'], 'sum_minute': run['SM'], 'sum_path_status': run['PS'], 'sum_path_day': run['PD']}[t])   # db.mark_built
+        assert run['built'][t] == len({'sum_time': run['ST'], 'sum_minute': run['SM'], 'sum_path_status': run['PS'], 'sum_path_day': run['PD'], 'sum_links': run['LK'], 'sum_params': run['PM']}[t])   # db.mark_built
     PS, PD = run['PS'], run['PD']
-    for t, T in (('sum_time', run['ST']), ('sum_minute', run['SM']), ('sum_path_status', PS), ('sum_path_day', PD)):
-        key = [{'path_id': 'path'}.get(k, k) for k in S[t]['pk']]
+    for t, T in (('sum_time', run['ST']), ('sum_minute', run['SM']), ('sum_path_status', PS), ('sum_path_day', PD), ('sum_links', run['LK']), ('sum_params', run['PM'])):
+        key = [{'path_id': 'path', 'dst_path_id': 'path', 'query_id': 'query'}.get(k, k) for k in S[t]['pk']]
         if t == 'sum_path_status': key = [k for k in key if k != 'host_id'] + ['host']
         assert not T.duplicated(key).any(), t   # зерно: одна строка на ключ
         assert set(T['scope']) <= {'site', 'server'}
@@ -321,6 +333,52 @@ def test_sum_path_status_contexts(run):
     assert (S.reindex(R_.index) > R_).any()
 
 
+LK_KEYS = ['src_kind', 'src', 'ref_host', 'path', 'status', 'is_ad', 'scope', 'category', 'fam', 'fam_verified']
+
+
+def test_sum_links_equals_pandas(run):
+    """Переходы: ответы 4xx и 5xx, все переходы с других сайтов и все запросы к адресам-конструктам — остальное в сводку не входит."""
+    X = _requests(run)
+    R = run['R']
+    X['src_kind'] = X['ref_scope'].where(X['ref_scope'] != 'none', 'none')
+    X['src'] = np.where(X['ref_scope'] == 'site', R['ref_path'].astype(str).values, np.where(X['ref_scope'] == 'external', R['ref_host'].astype(str).values, ''))
+    X['ref_host'] = R['ref_host'].astype(str).values
+    X['is_ad'] = pd.Series(R['query'].astype(str).values).str.contains(AD, regex=True).values
+    from nxld import classify
+    form = np.array([classify.form_of(p_)[0] for p_ in R['base'].cat.categories.astype(str)])[R['base'].cat.codes.values]
+    X = X[(X['status'] >= 400) | (X['ref_scope'] == 'external') | (form == 'конструкт')]
+    g = X.groupby(LK_KEYS)
+    want = pd.DataFrame({'n_req': g.size(), 'n_ip': g['ip'].nunique(), 'n_visits': g['vid'].nunique(), 'bytes': g['bytes'].sum(), 'day_first': g['day'].min(), 'day_last': g['day'].max(),
+                         'ts_first': g['ts'].min()}).astype('int64', errors='ignore')
+    LK = run['LK'].assign(day_first=lambda d: d['day_first'].dt.strftime('%Y-%m-%d'), day_last=lambda d: d['day_last'].dt.strftime('%Y-%m-%d'))
+    got = LK.set_index(LK_KEYS)[['n_req', 'n_ip', 'n_visits', 'bytes', 'day_first', 'day_last', 'ts_first']]
+    for col in ('n_req', 'n_ip', 'n_visits', 'bytes', 'ts_first'):
+        got[col] = got[col].astype('int64'); want[col] = want[col].astype('int64')
+    pd.testing.assert_frame_equal(got.sort_index(), want.sort_index(), check_names=False, check_index_type=False)
+    assert {'site', 'external', 'none'} <= set(X['src_kind']) and X['is_ad'].any() and (form == 'конструкт').any()
+    # и в контекстах чтения «сайт» и «всё» — те же срезы запросов, что R и V в analyze
+    for ctx, xm in (('site', X['scope'] == 'site'), ('all', ~((X['scope'] == 'server') & (X['category'] == 'Люди')))):
+        T = summaries.Sums(run['work'], ctx).links('s.src_kind AS k, s.status AS st, CAST(sum(s.n_req) AS BIGINT) AS n', group=True)
+        assert T.set_index(['k', 'st'])['n'].to_dict() == X[xm].groupby(['src_kind', 'status']).size().to_dict(), ctx
+
+
+def test_sum_params_equals_pandas(run):
+    """Параметры: все запросы с непустой строкой параметров — по строке, разделу и признакам запроса."""
+    X = _requests(run)
+    R = run['R']
+    X['query'] = R['query'].astype(str).values
+    X['section'] = pd.Series(R['base'].astype(str).values).str.extract(r'^(/[^/?]*/?)')[0].fillna('').values
+    X['ref_internal'] = R['ref_internal'].values.astype(bool)
+    X['is_embedded'] = R['is_embedded'].values.astype(bool); X['is_get'] = R['method'].values == 'GET'; X['is_err'] = X['status'] >= 400
+    X = X[(X['query'] != '') & (X['query'] != 'nan')]
+    k = ['query', 'section', 'scope', 'category', 'fam', 'fam_cat', 'ref_internal', 'is_page', 'is_embedded', 'is_get', 'is_err']
+    g = X.groupby(k)
+    want = pd.DataFrame({'n_req': g.size(), 'n_ip': g['ip'].nunique(), 'n_visits': g['vid'].nunique()}).astype('int64')
+    got = run['PM'].set_index(k)[['n_req', 'n_ip', 'n_visits']].astype('int64')
+    pd.testing.assert_frame_equal(got.sort_index(), want.sort_index(), check_names=False, check_index_type=False)
+    assert len(want) > 20 and X['is_err'].any() and X['ref_internal'].any() and X['is_page'].any()
+
+
 def test_sum_path_day_equals_pandas(run):
     X = _requests(run)
     staff = set(run['new']['site_map'].get('staff_ips') or [])
@@ -399,6 +457,11 @@ CONVERTED = {
     '03 Тяжёлые файлы (лист блока)': lambda r: r['sheets']['Нагрузка и безопасность']['Тяжёлые файлы'],
     '03 Тяжёлые файлы (срез)': lambda r: r['security']['тяжёлые'],
     '03 Утечки': lambda r: r['security']['утечки'],
+    '02 Битые внутренние': lambda r: r['errors']['битые_внутренние'],
+    '02 Битые внешние': lambda r: r['errors']['битые_внешние'],
+    '02 Битые из скриптов': lambda r: r['sheets']['Ошибки']['Битые адреса из скриптов'],
+    '03 Хотлинк': lambda r: r['sheets']['Нагрузка и безопасность']['Хотлинк'],
+    '03 Конструкты': lambda r: r['security']['конструкты'],
 }
 
 

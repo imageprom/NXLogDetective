@@ -382,9 +382,78 @@ ERRLOG_MEANING = {
     'Прочее': ('прочие сообщения', False)}
 
 
+def _link_frame(c, internal):
+    """Строки переходов с ошибкой на страницы сайта из сводки переходов: источник, цель, код, кто, число, дни и первое появление (для порядка равных)."""
+    sm = c.sums
+    A = c.addr
+    ok = (A['форма'].values == 'страница') & (A['зонд'].values == '')
+    allowed = pd.DataFrame({'path': np.asarray(c.R['base'].cat.categories.astype(str))[ok]})
+    cond = "s.src_kind = 'site' AND s.src <> p.path" if internal else "(s.src_kind = 'external' OR s.is_ad)"
+    return sm.links("s.src_kind AS src_kind, s.src AS src, s.ref_host AS ref_host, s.is_ad AS is_ad, p.path AS dst, ps.tpl AS dtpl, st.tpl AS stpl, s.status AS status, s.category AS category, "
+                             "s.fam AS fam, s.fam_verified AS fam_verified, s.n_req AS n, strftime(s.day_first, '%Y-%m-%d') AS d0, strftime(s.day_last, '%Y-%m-%d') AS d1, s.ts_first AS t, s.eid_first AS i",
+                             f"s.status >= 400 AND s.status <> 499 AND {cond} AND p.path IN (SELECT path FROM allowed)", frames={'allowed': allowed}), allowed
+
+
+def _broken_links_sums(c, internal):
+    """broken_links из сводки переходов; разные визиты по паре «откуда → куда» — запросом по событиям (по строкам сводки они не складываются)."""
+    from .visits import SEARCH
+    sm = c.sums
+    L, allowed = _link_frame(c, internal)
+    if not len(L): return pd.DataFrame()
+    human = (L['category'] == 'Люди').values
+    se = ((L['category'] != 'Люди') & L['fam'].isin(summaries.SEARCH_FAMS) & (L['fam_verified'] == 'да')).values
+    host = L['ref_host'].astype(str).str.split(',').str[0].str.strip()
+    if internal:
+        L['откуда'] = L['stpl'].where(L['stpl'].notna(), L['src'])
+        L['страница'] = L['src']
+        keys = ['откуда', 'куда']
+    else:
+        kind = np.where(L['is_ad'], 'реклама', np.where(host.str.contains(SEARCH, regex=True).values, 'поиск', 'сайты'))
+        L['вид'] = kind
+        L['откуда'] = np.where(host.isin(['', '-', 'nan']), 'без реферера', host)
+        L['страница'] = host
+        keys = ['вид', 'откуда', 'куда']
+    L['куда'] = L['dtpl'].astype(str)
+    L['адрес'] = L['dst']
+    L['люди'] = human; L['поисковики'] = se
+    L['n_h'] = np.where(human, L['n'], 0); L['n_s'] = np.where(se, L['n'], 0)
+    # коды: по числу запросов, при равных — кто встретился раньше
+    C = L.groupby(keys + ['status'], sort=True).agg(n=('n', 'sum'), t=('t', 'min')).reset_index()
+    F = L.sort_values(['t', 'i']).groupby(keys + ['status'], sort=True)['i'].first().rename('i0').reset_index()
+    C = C.merge(F, on=keys + ['status']).merge(L.groupby(keys + ['status'], sort=True)['t'].min().rename('t0').reset_index(), on=keys + ['status'])
+    C = C.sort_values(keys + ['n', 't0', 'i0'], ascending=[True] * len(keys) + [False, True, True], kind='stable')
+    codes = (C['status'].astype(int).astype(str) + ': ' + C['n'].astype(int).astype(str)).groupby([C[k] for k in keys], sort=True).agg(', '.join)
+    g = L.groupby(keys, sort=True)
+    D = pd.DataFrame({'переходов': g['n'].sum(), 'людей': g['n_h'].sum(), 'поисковиков': g['n_s'].sum(), 'страниц': g['страница'].nunique(), 'адресов': g['адрес'].nunique(),
+                      'коды': codes, 'первый': g['d0'].min(), 'последний': g['d1'].max()})
+    # разные визиты — по событиям: пары (источник, цель, визит) с теми же условиями
+    cond = "src_kind = 'site' AND src <> path" if internal else "(src_kind = 'external' OR is_ad)"
+    V = sm.q(f"""SELECT DISTINCT ev.src_kind AS src_kind, ev.src AS src, ev.ref_host AS ref_host, ev.is_ad AS is_ad, p.path AS dst, ev.vid AS vid FROM (
+                SELECT CASE WHEN coalesce(r.is_internal, false) THEN 'site' WHEN coalesce(r.ref_host, 'nan') IN ('', '-', 'nan') THEN 'none' ELSE 'external' END AS src_kind,
+                       CASE WHEN coalesce(r.is_internal, false) THEN coalesce(r.ref_path, 'nan') ELSE coalesce(r.ref_host, 'nan') END AS src, coalesce(r.ref_host, 'nan') AS ref_host,
+                       coalesce(regexp_matches(q.query, '{summaries.AD_MARK}'), false) AS is_ad, e.path_id AS path_id, e.vid AS vid, e.status AS status, coalesce(h.scope, 'site') AS scope, coalesce(v.category, '') AS category
+                FROM {summaries.EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off') ev JOIN dim_path p ON p.path_id = ev.path_id JOIN allowed a ON a.path = p.path
+                WHERE ev.status >= 400 AND ev.status <> 499 AND {sm.where.replace('scope', 'ev.scope').replace('category', 'ev.category')} AND ({cond.replace('src_kind', 'ev.src_kind').replace('src <> path', 'ev.src <> p.path').replace('is_ad', 'ev.is_ad')})""",
+             frames={'allowed': allowed})
+    V_host = V['ref_host'].astype(str).str.split(',').str[0].str.strip()
+    tp = sm.q(f"SELECT DISTINCT p2.path AS path, ps2.tpl AS tpl FROM sum_path_status s2 JOIN dim_path p2 USING (path_id) JOIN path_site ps2 USING (path_id) WHERE {sm.where}")
+    tpl_of = dict(zip(tp['path'], tp['tpl']))
+    if internal:
+        V['откуда'] = V['src'].map(tpl_of).fillna(V['src']).where(V['src_kind'] == 'site', V['src']).values
+    else:
+        V['вид'] = np.where(V['is_ad'], 'реклама', np.where(V_host.str.contains(SEARCH, regex=True).values, 'поиск', 'сайты'))
+        V['откуда'] = np.where(V_host.isin(['', '-', 'nan']), 'без реферера', V_host)
+    V['куда'] = V['dst'].map(tpl_of).astype(str)
+    D['визитов'] = V.groupby(keys)['vid'].nunique()
+    D = D[['переходов', 'визитов', 'людей', 'поисковиков', 'страниц', 'адресов', 'коды', 'первый', 'последний']]
+    D['актуально'] = D['последний'] >= recent_day(c.R)
+    return D.sort_values(['людей', 'переходов'], ascending=False).reset_index()
+
+
 def broken_links(c, internal=True):
     """Битые ссылки по шаблонам: внутренние — «где стоит ссылка → куда ведёт» (страница сайта → несуществующая страница);
     внешние — «откуда пришли → куда»: реклама, поиск, другие сайты. Зонды не в счёт, только страницы."""
+    if getattr(c, 'sums', None) is not None: return _broken_links_sums(c, internal)
     R, A = c.R, c.addr
     st = R['status'].values
     cc = R['base'].cat.codes.values

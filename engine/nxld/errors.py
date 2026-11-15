@@ -59,7 +59,12 @@ def outages(c, X):
     t1 = pd.to_datetime(D['деградация_по'].fillna(D['конец'])) if 'деградация_по' in D else pd.to_datetime(D['конец'])
     D['сбой'] = pd.to_datetime(D['начало']).dt.strftime('%d.%m %H:%M')
     D['t0'] = t0.values.astype('datetime64[s]').astype('int64'); D['t1'] = t1.values.astype('datetime64[s]').astype('int64')   # секунды эпохи, как R['ts']; конец окна уже последняя секунда минуты (#28)
-    D['запросов'] = [int(((ts >= a) & (ts <= b)).sum()) for a, b in zip(D['t0'], D['t1'])]
+    sm = getattr(c, 'sums', None)
+    if sm is not None and (D['t0'] % 60 == 0).all() and (D['t1'] % 60 == 59).all():   # окно — целые минуты: запросы по минутам — из сводки «Минута»
+        M = sm.minutes().set_index('m')['n_req']
+        D['запросов'] = [int(M[(M.index >= a // 60) & (M.index <= b // 60)].sum()) for a, b in zip(D['t0'], D['t1'])]
+    else:
+        D['запросов'] = [int(((ts >= a) & (ts <= b)).sum()) for a, b in zip(D['t0'], D['t1'])]
     D['день'] = pd.to_datetime(D['начало']).dt.strftime('%Y-%m-%d')
     return D
 
@@ -322,6 +327,12 @@ def codes_table(c):
     return T.drop(columns=['t0', 't1'])
 
 
+def codes_line(X, key='b'):
+    """«404: 33, 500: 2» по строкам (адрес, код) — по адресу, в порядке строк X. Одним проходом по таблице, без вызова функции на каждый адрес."""
+    s = X['код'].astype('int64').astype(str) + ': ' + X['запросов'].astype('int64').astype(str)
+    return s.groupby(X[key].values, sort=True).agg(', '.join)
+
+
 def by_family(T, family, Sr=None):
     """Вкладка по коду: строки по адресу, коды семейства — списком; сортировка: люди, затем все запросы."""
     if T is None or not len(T): return pd.DataFrame()
@@ -332,10 +343,10 @@ def by_family(T, family, Sr=None):
     g = X.groupby('b')
     D = g[num].sum()
     D['IP'] = g['IP'].max()   # по разным кодам IP не складываются; оценка снизу
-    D['коды'] = g.apply(lambda d: ', '.join(f"{k}: {n}" for k, n in zip(d['код'], d['запросов'])))
+    D['коды'] = codes_line(X)
     for col in ('адрес', 'форма', 'группа', 'существование', 'зонд', 'раздел', 'статус', 'итог', 'тип', 'сейчас', 'актуально', 'болел', 'почему', 'критично'):
         if col in X: D[col] = g[col].first()
-    D['источник'] = g['источник'].agg(lambda s: next((x for x in s if x), ''))
+    D['источник'] = X['источник'].replace('', np.nan).groupby(X['b'].values).first().fillna('')   # первый непустой в порядке строк
     if Sr is not None and len(Sr):
         Sx = Sr[f(Sr['код'].values) & Sr['b'].isin(D.index)]
         txt = sources_texts(Sx)
@@ -417,7 +428,7 @@ def broken(T, Sr=None):
     if not len(E): return pd.DataFrame()
     g = E.groupby('b')
     D = g[['Люди', 'Поисковики', 'Свои', 'запросов']].sum()
-    D['коды'] = g.apply(lambda d: ', '.join(f"{k}: {n}" for k, n in d.groupby('код')['запросов'].sum().items()))
+    D['коды'] = codes_line(E.sort_values(['b', 'код'], kind='stable'))   # по возрастанию кода
     for col in ('адрес', 'тип', 'группа', 'раздел', 'статус', 'итог', 'менялся', 'сейчас', 'актуально', 'болел', 'почему', 'критично'): D[col] = g[col].first()
     D['первый'] = g['первый'].min(); D['последний'] = g['последний'].max()
     if Sr is not None and len(Sr):

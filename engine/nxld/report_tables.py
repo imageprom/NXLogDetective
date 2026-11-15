@@ -177,21 +177,31 @@ def header_groups(ws, groups, H=4, X=1):
     ws.row_dimensions[H - 1].height = 20
 
 
+def merged_at(ws):
+    """Функция (строка, колонка) → ячейка входит в объединённый диапазон листа. То же, что `coordinate in ws.merged_cells`, но без перебора всех диапазонов на каждую ячейку
+    (на листах с тысячами объединений перебор занимал минуты)."""
+    rows = {}
+    for m in ws.merged_cells.ranges:
+        for r_ in range(m.min_row, m.max_row + 1): rows.setdefault(r_, []).append((m.min_col, m.max_col))
+    return lambda r, c: any(a <= c <= b for a, b in rows.get(r, ()))
+
+
 def fit_widths(ws, start_row=4, lo=9, hi=44, skip=()):
     """Ширины колонок по содержимому всех таблиц листа — для листов, где таблиц несколько."""
     from openpyxl.utils import get_column_letter as L_
     best = {}
+    in_merged = merged_at(ws)
     for row in ws.iter_rows(min_row=start_row):
         if sum(c.value is not None for c in row) < 3: continue   # заметки, ссылки и заголовки таблиц — одна ячейка, на ширину не влияют
         for c in row:
-            if c.value is None or c.column == 1 or c.coordinate in ws.merged_cells: continue
+            if c.value is None or c.column == 1 or in_merged(c.row, c.column): continue
             n = max(len(x) for x in str(c.value).split('\n'))
             best[c.column] = max(best.get(c.column, 0), n)
     hw = {}   # шапки таблиц (оранжевая заливка): слово названия не рвётся посередине
     for row in ws.iter_rows(min_row=3):
         for c in row:
             if isinstance(c.value, str) and c.fill is not None and c.fill.fgColor is not None and str(c.fill.fgColor.rgb)[-6:] == ORANGE[-6:] \
-                    and c.coordinate not in ws.merged_cells:
+                    and not in_merged(c.row, c.column):
                 hw[c.column] = max(hw.get(c.column, 0), max((len(w_) for w_ in c.value.split()), default=0) * 1.1 + 1.5)
     for j, n in best.items():
         if L_(j) in skip: continue
@@ -310,10 +320,11 @@ def sanitize(wb):
             if j > 2:
                 ws.merge_cells(start_row=r_, start_column=2, end_row=r_, end_column=j)
                 merged[(r_, 2)] = None
+        in_merged = merged_at(ws)
         for row in ws.iter_rows():
             for c in row:
                 v = c.value
-                if not isinstance(v, numbers.Number) or isinstance(v, bool) or c.coordinate in ws.merged_cells and (c.row, c.column) not in merged: continue
+                if not isinstance(v, numbers.Number) or isinstance(v, bool) or in_merged(c.row, c.column) and (c.row, c.column) not in merged: continue
                 sz = (c.font.sz or 11) if c.font else 11
                 need = len(_shown(v, c.number_format or '')) * sz / 10 * (1.12 if c.font and c.font.b else 1.0) + 2.2
                 m = merged.get((c.row, c.column))
@@ -1059,6 +1070,7 @@ def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=No
                 w_ = max(len(x) for x in words) * 1.1 + 1
             lines = max(lines, math.ceil(len(str(c)) * 1.15 / max(4, w_ - 1)))
         ws.row_dimensions[r].height = max(20, 13 * lines + 8)
+    styles = {}   # стиль ячейки — один раз на сочетание признаков; дальше готовый (как в data_sheet)
     row_merges = []   # объединения строк — пачкой в конце: в объединённую ячейку писать нельзя, а merge_cells на каждую строку квадратичен
     for row in df.itertuples(index=False):
         r += 1
@@ -1070,14 +1082,25 @@ def extra_table(ws, df, code, widths=None, wrap=(), row_rule=None, size=9, at=No
             cell = ws.cell(r, pos[j], v)
             isnum = isinstance(v, numbers.Number) and not isinstance(v, bool)
             ff = font_rule(dict(zip(cols, row))) if font_rule else None
-            cell.font = Font(name='Arial', size=size, color=ff or (RED if cols[j] in red else '000000'))
-            cell.alignment = Alignment(horizontal='right' if isnum else 'left', vertical='top', wrap_text=cols[j] in wrap, indent=1)
-            if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
-            cell.border = Border(bottom=SEP)
-            if rf: cell.fill = PatternFill('solid', fgColor=rf)
+            color = ff or (RED if cols[j] in red else '000000')
+            key = (color, isnum, cols[j] in wrap, bool(isnum and isinstance(v, int) and abs(v) >= 1000), rf)
+            st = styles.get(key)
+            if st is not None: cell._style = copy(st)
+            else:
+                cell.font = Font(name='Arial', size=size, color=color)
+                cell.alignment = Alignment(horizontal='right' if isnum else 'left', vertical='top', wrap_text=cols[j] in wrap, indent=1)
+                if isnum and isinstance(v, int) and abs(v) >= 1000: cell.number_format = NUM_FMT
+                cell.border = Border(bottom=SEP)
+                if rf: cell.fill = PatternFill('solid', fgColor=rf)
+                styles[key] = copy(cell._style)
             for k_ in range(1, span[j]):
-                cc = ws.cell(r, pos[j] + k_); cc.border = Border(bottom=SEP)
-                if rf: cc.fill = PatternFill('solid', fgColor=rf)
+                cc = ws.cell(r, pos[j] + k_)
+                sk = ('span', rf)
+                if sk in styles: cc._style = copy(styles[sk])
+                else:
+                    cc.border = Border(bottom=SEP)
+                    if rf: cc.fill = PatternFill('solid', fgColor=rf)
+                    styles[sk] = copy(cc._style)
         for j in range(len(cols)):
             if span[j] > 1: row_merges.append((r, pos[j], r, pos[j] + span[j] - 1))
         if max(span) > 1:   # высота строки — по самому длинному тексту в объединённых ячейках

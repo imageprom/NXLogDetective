@@ -211,7 +211,30 @@ def file_types(c):
     return g.sort_values('байт', ascending=False).reset_index().rename(columns={'e': 'расширение'})
 
 
+def _heavy_files_sums(c, top):
+    """«Тяжёлые файлы» из сводки по адресам: запросы, байт, с сайта и дни — по статике с ответом 200; «кто» — два главных по запросам (при равных — кто встретился раньше)."""
+    sm = c.sums
+    H = sm.path("p.path AS path, CAST(sum(n_req) AS BIGINT) AS запросов, CAST(sum(bytes) AS BIGINT) AS байт, CAST(coalesce(sum(n_req) FILTER (WHERE ref_scope = 'site'), 0) AS BIGINT) AS с_сайта, "
+                "strftime(min(day_first), '%Y-%m-%d') AS первый, strftime(max(day_last), '%Y-%m-%d') AS последний", 'p.is_static AND status = 200')
+    H['b'] = summaries.base_codes(c, H['path'])
+    H = H.sort_values('b').reset_index(drop=True)   # порядок строк — как у группировки по коду адреса: от него зависит порядок равных
+    g = pd.DataFrame({'запросов': H['запросов'].values, 'байт': H['байт'].values, 'средний': (H['байт'] / H['запросов']).values, 'с_сайта': H['с_сайта'].values,
+                      'первый': H['первый'].values, 'последний': H['последний'].values}, index=H['b'].values)
+    g = g.sort_values('байт', ascending=False).head(top)
+    paths = [str(c.R['base'].cat.categories[k]) for k in g.index]
+    W = sm.q(f"""SELECT path, string_agg(category || ' (' || {summaries.thousands('n')} || ')', ', ' ORDER BY n DESC, f.t, f.i) AS txt FROM (
+            SELECT path, category, n, f, row_number() OVER (PARTITION BY path ORDER BY n DESC, f.t, f.i) AS rk FROM (
+              SELECT p.path AS path, s.category AS category, sum(s.n_req) AS n, min(struct_pack(t := s.ts_first, i := s.eid_first)) AS f
+              FROM sum_path_status s JOIN dim_path p USING (path_id) WHERE {sm.where} AND p.is_static AND s.status = 200 AND p.path IN (SELECT unnest(?)) GROUP BY p.path, s.category)) WHERE rk <= 2 GROUP BY path""", [paths])
+    g['кто'] = pd.Series(W['txt'].values, index=summaries.base_codes(c, W['path'])).reindex(g.index).values
+    g['файл'] = c.R['base'].cat.categories.astype(str).values[g.index]
+    A = getattr(c, 'addr', None)
+    g['вид'] = A['группа'].values[g.index] if A is not None else ''
+    return g.reset_index(drop=True)
+
+
 def heavy_files(c, top=200):
+    if getattr(c, 'sums', None) is not None: return _heavy_files_sums(c, top)
     R = c.R
     st = R['status'].values
     m = R['is_static'].values & (st == 200)
@@ -631,13 +654,26 @@ def leaks(c, S, checks=None):
     days_all = sorted(R['day'].astype(str).unique())
     rows = []
     checks = checks or {}
+    sm = getattr(c, 'sums', None)
+    if sm is not None:   # по дням: были ли запросы не от сотрудников и отдавался ли файл; последний ответ — из сводки «адрес × день»
+        PD = sm.path_day("p.path AS path, strftime(day, '%Y-%m-%d') AS d, CAST(sum(n_ext) AS BIGINT) AS n_ext, CAST(sum(n_served_ext) AS BIGINT) AS n_served, "
+                         "max(struct_pack(t := ts_last_ext, i := eid_last_ext, s := last_status_ext, b := last_served_ext)) FILTER (WHERE n_ext > 0) AS last", 'n_ext > 0')
+        PD = {k: g for k, g in PD.groupby('path')}
     for _, r in L.iterrows():
         f = str(r['файл'])
-        pc = np.where(bc == f)[0]
-        m = np.isin(bcode, pc) & ~R['ip'].astype(str).isin(staff).values
-        st = R['status'].values[m]; by = R['bytes'].values[m]; d = _sv(R, 'day', m)
-        served = (st == 200) & (by > 0)
-        D = pd.DataFrame({'d': d, 's': served}).groupby('d')['s'].any()
+        if sm is not None:
+            g = PD.get(f)
+            if g is None: D, st, served, d = pd.Series(dtype=bool), [], [], []
+            else:
+                D = pd.Series((g['n_served'] > 0).values, index=g['d'].values).sort_index()
+                lastrow = g.sort_values(['d']).iloc[-1]   # последний день, а в нём — последний ответ
+                st, served, d = [lastrow['last']['s']], [lastrow['last']['b']], [lastrow['d']]
+        else:
+            pc = np.where(bc == f)[0]
+            m = np.isin(bcode, pc) & ~R['ip'].astype(str).isin(staff).values
+            st = R['status'].values[m]; by = R['bytes'].values[m]; d = _sv(R, 'day', m)
+            served = (st == 200) & (by > 0)
+            D = pd.DataFrame({'d': d, 's': served}).groupby('d')['s'].any()
         hist = common.day_runs(D.index, D.values, days_all, {True: 'отдаётся', False: 'закрыт'})
         if len(D) and D.index.max() < days_all[-1]:   # после последнего запроса лог молчит: что с файлом сейчас — по логу не видно
             hist += f"; после {pd.Timestamp(D.index.max()).strftime('%d.%m')} запросов не было"

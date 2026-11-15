@@ -1,4 +1,4 @@
-"""Сводки базы проверки «Время» (sum_time) и «Минута» (sum_minute).
+"""Сводки базы проверки «Время» (sum_time), «Минута» (sum_minute), «Адрес × код» (sum_path_status) и «Адрес × день» (sum_path_day).
 
 1. Числа сводок равны тем же числам, посчитанным pandas по таблицам запросов и визитов (R, V) — по областям site / server
    и с исключением нераспознанных «Людей» хостов вне сайта.
@@ -24,6 +24,7 @@ UA_GOOGLE = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.
 UA_CURL = 'curl/8.4.0'
 SCAN_UA = 'Mozilla/5.0 (Windows NT 6.1; rv:60.0) Gecko/20100101 Firefox/60.0'
 DAYS = 6
+STAFF = '95.165.200.1'
 
 
 def _human(log, ip, t, host, entry, ref='https://yandex.ru/', n_pages=2):
@@ -64,6 +65,35 @@ def make_log():
         # копия сайта на другом домене — вне отчёта
         _human(L, '203.0.113.77', t + timedelta(hours=17), COPY, '/')
         L.line('203.0.113.77', t + timedelta(hours=17, minutes=3), '/old-copy/', 404, ref=f'https://{COPY}/', host=COPY)
+    # адреса и коды: утёкший файл (отдавался, потом закрыт), починившийся и сломавшийся адрес, ошибки у людей, роботов и ботов, разные источники
+    for d in range(DAYS):
+        t = T0 + timedelta(days=d)
+        L.line('203.0.113.60', t + timedelta(hours=1), '/backup.sql', 200 if d < 4 else 403, ua=SCAN_UA, size=5_000_000, host=MAIN)
+        L.line('203.0.113.61', t + timedelta(hours=1, minutes=1), '/backup.sql', 200 if d < 3 else 403, ua=UA_CURL, size=5_000_000, host=MAIN)
+        for k in range(3 + d % 2):   # починился: 500, потом 200; сломался: 200, потом 404
+            ip = f'95.165.{d}.{50 + k}'
+            L.line(ip, t + timedelta(hours=9, minutes=k), '/repaired/', 500 if d < 2 else 200, ref=f'https://{MAIN}/catalog/', host=MAIN)
+            L.line(ip, t + timedelta(hours=9, minutes=k, seconds=5), '/broke/', 200 if d < 3 else 404, ref=f'https://{MAIN}/catalog/shary/', host=MAIN)
+        for k in range(2):   # ошибки от разных источников: поиск, реклама, внешний сайт, обновление той же страницы, без реферера
+            L.line(f'95.165.{d}.{60 + k}', t + timedelta(hours=10, minutes=k), '/gone/', 404, ref='https://yandex.ru/search/?text=x', host=MAIN)
+            L.line(f'95.165.{d}.{62 + k}', t + timedelta(hours=10, minutes=5 + k), '/gone/?yclid=1234567', 404, ref='https://yandex.ru/', host=MAIN)
+            L.line(f'95.165.{d}.{64 + k}', t + timedelta(hours=10, minutes=10 + k), '/gone/', 404, ref='https://example.org/links/', host=MAIN)
+            L.line(f'95.165.{d}.{66 + k}', t + timedelta(hours=10, minutes=15 + k), '/gone/', 404, ref=f'https://{MAIN}/gone/', host=MAIN)
+            L.line(f'95.165.{d}.{68 + k}', t + timedelta(hours=10, minutes=20 + k), '/gone/', 404, ref='-', host=MAIN)
+        for k in range(4):   # поисковый робот: переадресации, ошибки, 5xx, страницы, которых нет у людей; бот: отказы 403
+            L.line('66.249.66.1', t + timedelta(hours=6, minutes=k), '/moved/', 301, ua=UA_GOOGLE, host=MAIN)
+            L.line('66.249.66.2', t + timedelta(hours=6, minutes=10 + k), '/moved/', 301 if k else 302, ua=UA_GOOGLE, host=MAIN)
+            L.line('66.249.66.1', t + timedelta(hours=6, minutes=20 + k), f'/only-robot/{k % 2}/', 404 if k % 3 else 200, ua=UA_GOOGLE, host=MAIN)
+            L.line('203.0.113.70', t + timedelta(hours=7, seconds=k), '/catalog/', 403, ua=SCAN_UA, host=MAIN)
+            L.line('203.0.113.7', t + timedelta(hours=7, minutes=30, seconds=k), '/catalog/', 429, ua=UA_CURL, host=MAIN)
+        for k in range(3):   # тяжёлые файлы: сайт и прямые запросы
+            L.line(f'95.165.{d}.{70 + k}', t + timedelta(hours=11, minutes=k), '/upload/big/video.mp4', 200, ref=f'https://{MAIN}/catalog/', size=900_000 + 10_000 * k, host=MAIN)
+            L.line('203.0.113.80', t + timedelta(hours=11, minutes=10 + k), '/upload/big/video.mp4', 200, ua=UA_CURL, size=900_000, host=MAIN)
+            L.line('203.0.113.81', t + timedelta(hours=11, minutes=20 + k), '/upload/big/photo.jpg', 200, ua=UA_CURL, size=900_000, host=MAIN)
+        for k in range(4):   # страницы, которые поисковик не обходил; и сотрудник, который тоже ходит на утёкший файл
+            _human(L, f'95.165.{d}.{80 + k}', t + timedelta(hours=14, minutes=3 * k), MAIN, '/people-only/', ref='https://yandex.ru/')
+        L.line(STAFF, t + timedelta(hours=1, minutes=5), '/backup.sql', 200, size=5_000_000, host=MAIN)
+        L.line(f'95.165.{d}.5', t + timedelta(hours=11, minutes=40), '/repaired/', 404, ref=f'https://{IPHOST}/', host=IPHOST)   # тот же адрес на хосте вне сайта
     # сбой на третий день: шесть минут страницы отдают 5xx разным посетителям, часть не дождалась
     t = T0 + timedelta(days=2, hours=15)
     for mnt in range(6):
@@ -100,11 +130,14 @@ def run():
         path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
         make_log().write(path)
         try:
-            prepare.run([path], work, log=lambda *a: None)
+            prepare.run([path], work, log=lambda *a: None, map_override={'staff_ips': [STAFF]})   # сотрудник — по поправке карты
             old = _results(work, '0')
             summaries.build = build
+            seen = []
+            q_orig = summaries.Sums.q
+            summaries.Sums.q = lambda self, sql, params=None: (seen.append(sql), q_orig(self, sql, params))[1]   # какие сводки читал analyze
             try: new = _results(work, '1')
-            finally: summaries.build = orig
+            finally: summaries.build, summaries.Sums.q = orig, q_orig
         finally:
             for r, _, fs in os.walk(synth.LEARNED):
                 for f in fs:
@@ -112,10 +145,12 @@ def run():
             for f, b in keep.items(): open(f, 'wb').write(b)
         con = db.connect(work, read_only=True)
         ST, SM = con.execute('SELECT * FROM sum_time').df(), con.execute('SELECT * FROM sum_minute').df()
+        PS = con.execute("""SELECT p.path, h.host, s.* EXCLUDE (path_id, host_id) FROM sum_path_status s JOIN dim_path p USING (path_id) JOIN dim_host h USING (host_id)""").df()
+        PD = con.execute("SELECT p.path, d.* EXCLUDE (path_id) FROM sum_path_day d JOIN dim_path p USING (path_id)").df()
         cols = {t: con.execute(f'DESCRIBE {t}').df()[['column_name', 'column_type']].values.tolist() for t in summaries.TABLES}
         built = dict(con.execute("SELECT table_name, rows FROM build_state WHERE table_name LIKE 'sum_%'").fetchall())
         con.close()
-        yield dict(old=old, new=new, R=grab['R'], V=grab['V'], ST=ST, SM=SM, cols=cols, built=built, work=work)
+        yield dict(old=old, new=new, R=grab['R'], V=grab['V'], ST=ST, SM=SM, PS=PS, PD=PD, cols=cols, built=built, work=work, seen=' '.join(seen))
 
 
 def _rv(run):
@@ -153,9 +188,12 @@ def test_columns_match_schema(run):
     S = db.schema()['by_name']
     for t in summaries.TABLES:
         assert run['cols'][t] == [[c['name'], c['type']] for c in S[t]['columns']], t
-        assert run['built'][t] == len(run['ST' if t == 'sum_time' else 'SM'])   # db.mark_built
-    for t, T in (('sum_time', run['ST']), ('sum_minute', run['SM'])):
-        assert not T.duplicated(S[t]['pk']).any(), t   # зерно: одна строка на ключ
+        assert run['built'][t] == len({'sum_time': run['ST'], 'sum_minute': run['SM'], 'sum_path_status': run['PS'], 'sum_path_day': run['PD']}[t])   # db.mark_built
+    PS, PD = run['PS'], run['PD']
+    for t, T in (('sum_time', run['ST']), ('sum_minute', run['SM']), ('sum_path_status', PS), ('sum_path_day', PD)):
+        key = [{'path_id': 'path'}.get(k, k) for k in S[t]['pk']]
+        if t == 'sum_path_status': key = [k for k in key if k != 'host_id'] + ['host']
+        assert not T.duplicated(key).any(), t   # зерно: одна строка на ключ
         assert set(T['scope']) <= {'site', 'server'}
 
 
@@ -223,6 +261,82 @@ def test_sum_minute_equals_pandas(run):
         assert got5.to_dict() == X[m5].groupby('minute')['ip'].nunique().to_dict(), ctx
 
 
+AD = r'(?:^|&)(?:yclid|gclid|fbclid|utm_source|utm_medium|utm_campaign|_openstat)='
+SEARCH = r'(^|\.)(yandex\.[a-z.]+|ya\.ru|google\.[a-z.]+|bing\.com|go\.mail\.ru|duckduckgo\.com|search\.yahoo\.com|rambler\.ru|nova\.rambler\.ru)$'
+PS_KEYS = ['path', 'host', 'status', 'category', 'type', 'fam', 'fam_cat', 'fam_verified', 'origin', 'ref_scope', 'is_page']
+
+
+def _requests(run):
+    """Запросы со всем, что нужно обеим сводкам по адресам: кто, откуда пришли (по правилам errors.origin_of и errors.sources), день."""
+    R, V = run['R'], run['V']
+    X, _ = _rv(run)
+    rh = R['ref_host'].astype(str).values
+    internal = R['ref_internal'].values.astype(bool)
+    host1 = pd.Series(rh).str.split(',').str[0].str.strip().values
+    ad = pd.Series(R['query'].astype(str).values).str.contains(AD, regex=True).values
+    se = pd.Series(host1).str.contains(SEARCH, regex=True).values
+    self_ = R['ref_path'].astype(str).values == R['base'].astype(str).values
+    none = np.isin(rh, ['', '-', 'nan'])
+    X['path'] = R['base'].astype(str).values; X['host'] = R['vhost'].astype(str).values; X['eid_order'] = np.arange(len(R)); X['vid'] = R['vid'].values
+    X['fam'] = R['fam'].astype(str).values; X['fam_cat'] = R['fam_cat'].astype(str).values; X['fam_verified'] = R['fam_verified'].astype(str).values
+    X['ref_scope'] = np.where(internal, 'site', np.where(none, 'none', 'external'))
+    X['origin'] = np.select([ad, internal & ~self_, ~internal & ~none & se, ~internal & ~none], ['ads', 'internal', 'search', 'sites'], 'direct')
+    X['is_page'] = R['is_page'].values.astype(bool); X['ip'] = R['ip'].astype(str).values
+    return X
+
+
+def test_sum_path_status_equals_pandas(run):
+    X = _requests(run)
+    g = X.groupby(PS_KEYS)
+    want = pd.DataFrame({'n_req': g.size(), 'n_ip': g['ip'].nunique(), 'n_visits': g['vid'].nunique(), 'bytes': g['bytes'].sum(), 'day_first': g['day'].min(), 'day_last': g['day'].max(),
+                         'ts_first': g['ts'].min()}).astype({'n_req': 'int64', 'n_ip': 'int64', 'n_visits': 'int64', 'bytes': 'int64', 'ts_first': 'int64'})
+    PS = run['PS'].assign(day_first=lambda d: d['day_first'].dt.strftime('%Y-%m-%d'), day_last=lambda d: d['day_last'].dt.strftime('%Y-%m-%d'))
+    got = PS.set_index(PS_KEYS)[['n_req', 'n_ip', 'n_visits', 'bytes', 'day_first', 'day_last', 'ts_first']].astype({'n_req': 'int64', 'n_ip': 'int64', 'n_visits': 'int64', 'bytes': 'int64', 'ts_first': 'int64'})
+    pd.testing.assert_frame_equal(got.sort_index(), want.sort_index(), check_names=False, check_index_type=False)
+    # первое появление строки — по порядку событий: (ts_first, eid_first) однозначно; пример реферера — у него
+    assert not run['PS'].duplicated(PS_KEYS + ['ts_first', 'eid_first']).any() and (run['PS']['eid_first'] > 0).all()
+    # все виды «откуда» в логе есть: иначе тест ничего не проверяет
+    assert {'internal', 'ads', 'search', 'sites', 'direct'} <= set(X['origin']), set(X['origin'])
+
+
+def test_sum_path_status_contexts(run):
+    """Контексты чтения: «сайт» и «всё» — те же срезы запросов, что R в analyze; счётчики разных IP и визитов по адресу и коду — запросом по событиям."""
+    X = _requests(run)
+    for ctx, xm in (('site', X['scope'] == 'site'), ('all', ~((X['scope'] == 'server') & (X['category'] == 'Люди')))):
+        sm = summaries.Sums(run['work'], ctx)
+        T = sm.path('p.path AS path, status, CAST(sum(n_req) AS BIGINT) AS n')
+        assert T.set_index(['path', 'status'])['n'].to_dict() == X[xm].groupby(['path', 'status']).size().to_dict(), ctx
+        E = sm.events('path, status, CAST(count(DISTINCT ip_id) AS BIGINT) AS n')
+        assert E.set_index(['path', 'status'])['n'].to_dict() == X[xm].groupby(['path', 'status'])['ip'].nunique().to_dict(), ctx
+        V_ = sm.events('path, CAST(count(DISTINCT vid) AS BIGINT) AS n', 'is_page')
+        assert V_.set_index('path')['n'].to_dict() == X[xm & X['is_page']].groupby('path')['vid'].nunique().to_dict(), ctx
+    # по строкам сводки разные IP по адресу и коду не сложить: сумма больше настоящего числа хотя бы у одного адреса
+    PS = run['PS']
+    S = PS.groupby(['path', 'status'])['n_ip'].sum()
+    R_ = X.groupby(['path', 'status'])['ip'].nunique()
+    assert (S.reindex(R_.index) > R_).any()
+
+
+def test_sum_path_day_equals_pandas(run):
+    X = _requests(run)
+    staff = set(run['new']['site_map'].get('staff_ips') or [])
+    X['ext'] = ~X['ip'].isin(staff)
+    X['served'] = (X['status'] == 200) & (X['bytes'] > 0)
+    k = ['path', 'day', 'scope', 'category']
+    g = X.groupby(k)
+    want = pd.DataFrame({'n_req': g.size(), 'n_ext': g['ext'].sum(), 'n_served_ext': (X['ext'] & X['served']).groupby([X[c] for c in k]).sum()}).astype('int64')
+    E = X[X['ext']]
+    last = E.sort_values(['eid_order']).groupby(k).last()
+    PD = run['PD'].assign(day=lambda d: d['day'].dt.strftime('%Y-%m-%d'))
+    got = PD.set_index(k)
+    pd.testing.assert_frame_equal(got[['n_req', 'n_ext', 'n_served_ext']].astype('int64').sort_index(), want.sort_index(), check_names=False, check_index_type=False)
+    got_l = got[got['n_ext'] > 0]
+    assert (got_l['ts_last_ext'].astype('int64').sort_index() == last['ts'].astype('int64').sort_index()).all()
+    assert (got_l['last_status_ext'].astype('int64').sort_index() == last['status'].astype('int64').sort_index()).all()
+    assert (got_l['last_served_ext'].astype(bool).sort_index() == last['served'].astype(bool).sort_index()).all()
+    assert 'backup.sql' in ' '.join(PD['path']) and (PD['n_served_ext'] > 0).any() and (PD['n_ext'] < PD['n_req']).any()   # утёкший файл есть; сотрудники отделены
+
+
 def _diff(a, b, path='', out=None):
     """Расхождения двух результатов analyze: таблицы — по значениям (тип колонок и индексов не важен), остальное — как есть."""
     out = [] if out is None else out
@@ -271,6 +385,16 @@ CONVERTED = {
     '05 журнал по дням': lambda r: r['marketing']['журнал'],
     '05 Время: день недели × час': lambda r: r['marketing']['время'],
     '06 журнал по дням': lambda r: r['seo']['журнал'],
+    '06 Страницы без обхода: нет у поисковиков': lambda r: r['seo']['без_обхода'],
+    '06 Страницы без обхода: нет у людей': lambda r: r['seo']['без_людей'],
+    '06 Переадресации поисковикам': lambda r: r['seo']['переадресации'],
+    '02 «Адрес × код»': lambda r: r['errors']['коды'],
+    '02 источники ошибок': lambda r: r['errors']['источники'],
+    '02 Пострадавшие страницы': lambda r: r['errors']['нерабочие'],
+    '02 Коды ответа': lambda r: r['sheets']['Ошибки']['Коды ответа'],
+    '03 Тяжёлые файлы (лист блока)': lambda r: r['sheets']['Нагрузка и безопасность']['Тяжёлые файлы'],
+    '03 Тяжёлые файлы (срез)': lambda r: r['security']['тяжёлые'],
+    '03 Утечки': lambda r: r['security']['утечки'],
 }
 
 
@@ -281,6 +405,11 @@ def test_converted_block_equals_old(run, name):
     if isinstance(old, (pd.DataFrame, dict, list)): assert len(old), name   # сравниваем не пустое с пустым
     d = _diff(old, new)
     assert not d, d[:5]
+
+
+def test_analyze_reads_path_summaries(run):
+    """Расчёты по адресам и кодам читают сводки: в запросах analyze — обе таблицы."""
+    assert 'sum_path_status' in run['seen'] and 'sum_path_day' in run['seen'], 'analyze не читал сводки по адресам'
 
 
 def test_whole_result_equals_old(run):

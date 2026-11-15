@@ -545,12 +545,15 @@ def _param_inputs_sums(R, sums, sys_prefixes, zone_prefixes):
     nh = ~hum
     I['FQ'] = pd.DataFrame({'q': qi[nh], 'fam': M['fam'].values[nh], 'm': n[nh]}).groupby(['q', 'fam'])['m'].sum().reset_index()
     ok = sums.path("p.path AS path", "status BETWEEN 200 AND 299 AND category IN ('Люди', 'Свои')")
-    I['lived'] = set(pd.unique(ok['path'].astype(str).str.extract(r'^(/[^/?]*/?)')[0].values))
+    I['lived'] = set(pd.unique(pd.Series(ok['path'].values, dtype=object).astype(str).str.extract(r'^(/[^/?]*/?)')[0].values)) if len(ok) else set()
     # пары «параметр = значение» — в порядке строк и их частей
     Q = sums.q(f"SELECT d.query AS query, k.pos AS pos, k.key AS key, k.value AS value FROM query_params k JOIN dim_query d USING (query_id) "
                f"WHERE k.query_id IN (SELECT query_id FROM sum_params WHERE {sums.where})")
     Q['q'] = qix.get_indexer(Q['query'])
     Q = Q[Q['q'] >= 0].sort_values(['q', 'pos'], kind='stable')
+    if not len(Q):   # в логе нет ни одного параметра
+        I['P'] = pd.DataFrame({'q': np.array([], dtype='int64'), 'ключ': [], 'значение': []})
+        return I
     uk = pd.Series(pd.unique(Q['key']), dtype=object)
     norm = dict(zip(uk, uk.map(lambda k: unquote(k).strip())))
     k0 = Q['key'].map(norm)

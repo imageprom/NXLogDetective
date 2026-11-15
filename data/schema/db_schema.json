@@ -1,7 +1,7 @@
 {
  "name": "nxld_check_db",
  "title_ru": "База проверки NX Log Detective",
- "schema_version": "0.3-draft-6",
+ "schema_version": "0.3-draft-7",
  "date": "2026-11-15",
  "status": "согласовано 15.11; ip_period — черновик",
  "file": "work/nxld.duckdb",
@@ -1823,6 +1823,12 @@
      "type": "VARCHAR",
      "ru": "подканал: Яндекс Директ…",
      "old": "V.channel_sub"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство визита после правил: обычно как в словаре браузеров, но правило может уточнить (сохранение страницы веб-архивом)",
+     "old": "V.fam"
     },
     {
      "name": "fam_verified",
@@ -3779,6 +3785,12 @@
      "type": "VARCHAR",
      "ru": "подканал: Яндекс Директ…",
      "old": "V.channel_sub"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство визита после правил: обычно как в словаре браузеров, но правило может уточнить (сохранение страницы веб-архивом)",
+     "old": "V.fam"
     },
     {
      "name": "fam_verified",

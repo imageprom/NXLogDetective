@@ -19,7 +19,7 @@ CONTEXTS = {'site': "scope = 'site'", 'all': "NOT (scope = 'server' AND category
 SEARCH_FAMS = ('YandexBot', 'Googlebot', 'YandexRenderResourcesBot', 'Googlebot-Image', 'Bingbot')   # подлинные поисковые роботы: тот же список, что blocks.Ctx.search_ok
 DAY = "strftime(day, '%Y-%m-%d')"
 EPOCH_DAY = "(DATE '1970-01-01' + CAST({ts} // 86400 AS INTEGER))"   # день по часам лога: время в базе — секунды без пояса
-WHO = """coalesce(v.category, '') AS category, coalesce(v.type, '') AS type, coalesce(u.fam, '') AS fam, coalesce(u.fam_cat, '') AS fam_cat,
+WHO = """coalesce(v.category, '') AS category, coalesce(v.type, '') AS type, coalesce(v.fam, u.fam, '') AS fam, coalesce(u.fam_cat, '') AS fam_cat,
          coalesce(v.fam_verified, '') AS fam_verified, coalesce(v.channel, '') AS channel, coalesce(v.channel_sub, '') AS channel_sub"""
 
 SQL_TIME = f"""CREATE OR REPLACE TABLE sum_time AS

@@ -46,15 +46,15 @@ def visits(con, V, prepared=False):
     for c in ('n_req', 'n_pages', 'n_pages_raw', 'n_dup', 'n_redirect', 'n_embedded', 'n_static', 'n_post', 'n_head', 'n_err4', 'n_err5', 'n_catalog', 'n_goal', 'n_conv'):
         df[c] = V[c].fillna(0).values.astype('int64') if c in V else 0
     for a, b in (('ip', 'ip'), ('ua', 'ua'), ('entry', 'entry'), ('entry_query', 'entry_query'), ('entry_ref', 'entry_ref'), ('channel', 'channel'), ('channel_sub', 'channel_sub'),
-                 ('fam_verified', 'fam_verified'), ('category', 'group'), ('type', 'subgroup'), ('category_before', 'gov_was')):
+                 ('fam', 'fam'), ('fam_verified', 'fam_verified'), ('category', 'group'), ('type', 'subgroup'), ('category_before', 'gov_was')):
         df[a] = V[b].astype(object).values if b in V else None
     df['scope'] = np.where(V['host_site'].values.astype(bool), 'site', 'server') if 'host_site' in V else 'site'
     con.register('v_df', df)
     con.execute('DELETE FROM visits')
     con.execute("""INSERT INTO visits (vid, ip_id, ua_id, ts_start, ts_end, n_req, n_pages, n_pages_raw, n_dup, n_redirect, n_embedded, n_static, n_post, n_head, n_err4, n_err5, n_catalog, n_goal, n_conv,
-                                       bytes, scope, entry_path_id, entry_query_id, entry_status, entry_ref_id, channel, channel_sub, fam_verified, category, type, category_before)
+                                       bytes, scope, entry_path_id, entry_query_id, entry_status, entry_ref_id, channel, channel_sub, fam, fam_verified, category, type, category_before)
         SELECT v.vid, i.ip_id, u.ua_id, v.ts_start, v.ts_end, v.n_req, v.n_pages, v.n_pages_raw, v.n_dup, v.n_redirect, v.n_embedded, v.n_static, v.n_post, v.n_head, v.n_err4, v.n_err5, v.n_catalog, v.n_goal, v.n_conv,
-               v.bytes, v.scope, p.path_id, q.query_id, v.entry_status, f.ref_id, v.channel, v.channel_sub, v.fam_verified, v.category, v.type, nullif(v.category_before, '')
+               v.bytes, v.scope, p.path_id, q.query_id, v.entry_status, f.ref_id, v.channel, v.channel_sub, v.fam, v.fam_verified, v.category, v.type, nullif(v.category_before, '')
         FROM v_df v LEFT JOIN dim_ip i ON i.ip = v.ip LEFT JOIN dim_ua u ON u.ua = v.ua LEFT JOIN dim_path p ON p.path = v.entry LEFT JOIN dim_query q ON q.query = v.entry_query
         LEFT JOIN dim_ref f ON f.ref = v.entry_ref ORDER BY v.vid""")
     con.unregister('v_df')

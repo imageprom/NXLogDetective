@@ -725,14 +725,18 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     e4 = rows & gone
     e403 = rows & (st == 403)
     # рефереры файлов визита
-    rh = R['ref_host'].astype(str).str.lower().str.removeprefix('www.')
-    has_ref = ~R['ref'].astype(str).isin(['-', '']).values
+    # строковые проверки — по словарю значений (категориям), а не по каждой строке лога
+    rh_c = pd.Series(R['ref_host'].cat.categories.astype(str)).str.lower().str.removeprefix('www.')
+    rh_code = R['ref_host'].cat.codes.values
+    ref_c = np.asarray(R['ref'].cat.categories.astype(str), dtype=object)
+    ref_code = R['ref'].cat.codes.values
+    has_ref = ~np.isin(ref_c, ['-', ''])[ref_code]
     own = {h.lower().removeprefix('www.') for h in own_hosts}
-    own_sys = rows & has_ref & rh.isin(own).values
+    own_sys = rows & has_ref & rh_c.isin(own).values[rh_code]
     inner = rows & has_ref & R['ref_internal'].values.astype(bool) & ~own_sys
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
-        search_ref = rows & has_ref & ~inner & ~own_sys & rh.str.contains(SEARCH, regex=True).values
+        search_ref = rows & has_ref & ~inner & ~own_sys & rh_c.str.contains(SEARCH, regex=True).values[rh_code]
     ext_ref = rows & has_ref & ~inner & ~own_sys & ~search_ref
     # фото по рефереру поисковика — «из поиска по картинкам» (правило 4), а не скачивание; прочие группы скачиваний — как были
     dl = rows & ((dl_c[codes] & ok) | (av_c[codes] & (st == 200)) | (ph_c[codes] & (st == 200) & big_photo & ~search_ref))
@@ -742,8 +746,8 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     key = V['ip'].astype(str) + '|' + V['ua'].astype(str)
     rk = key.reindex(vid[rows]).values
     F = pd.DataFrame({'k': rk, 'b': codes[rows], 't': R['ts'].values[rows], 'st': st[rows], 'asset': asset[rows],
-                      'day': R['ts'].values[rows] // 86400, 'vid': vid[rows], 'ip': R['ip'].astype(str).values[rows],
-                      'ref': R['ref'].astype(str).values[rows]})
+                      'day': R['ts'].values[rows] // 86400, 'vid': vid[rows], 'ip': np.asarray(R['ip'].cat.categories.astype(str), dtype=object)[R['ip'].cat.codes.values[rows]],
+                      'ref': ref_c[ref_code[rows]]})
     n404 = F[F['st'].isin([404, 410])].groupby('k').size()
     rep = F[F['st'] == 200].groupby(['k', 'b', 'day']).size().groupby(level=0).max()
     num = cats.str.extract(r'(\d+)(?=\.[A-Za-z0-9]+$)')[0].astype(float).values
@@ -828,14 +832,16 @@ def mark_files_only(V, R, own_hosts=(), page_form=None):
     is_bot = strong_bot & ~neigh
     is_ppl = behav_ppl & ~(strong_bot | dc)
     n403 = vsum(e403)
+    mi = np.where(m.values)[0]   # улики пишутся только визитам «только файлы» — только для них и собираем текст
+    z403 = n403 > 0
     ev_p = [', '.join(x for x, f in (('соседи по адресу', a), ('офис: много браузеров, рабочие часы, будни', b_), ('обвес одной страницы', o_),
                                      ('домашняя или мобильная сеть', c_), ('закрыто сайтом (403)', z_)) if f)
-            for a, b_, o_, c_, z_ in zip(neigh, office, onepage, home, n403 > 0)]
+            for a, b_, o_, c_, z_ in zip(neigh[mi], office[mi], onepage[mi], home[mi], z403[mi])]
     ev_b = [', '.join(x for x, f in (('невозможная версия браузера', a), ('обход по списку', b_), ('повторы', c_), ('много 404', d_),
                                      ('один файл со многих IP', s_), ('дата-центр', e_), ('закрыто сайтом (403)', z_)) if f)
-            for a, b_, c_, d_, s_, e_, z_ in zip(imp, crawl, repeats, many404, same_v, dc, n403 > 0)]
-    V.loc[m, 'evidence_people'] = pd.Series(ev_p, index=V.index)[m]
-    V.loc[m, 'evidence_bot'] = pd.Series(ev_b, index=V.index)[m]
+            for a, b_, c_, d_, s_, e_, z_ in zip(imp[mi], crawl[mi], repeats[mi], many404[mi], same_v[mi], dc[mi], z403[mi])]
+    V.loc[m, 'evidence_people'] = pd.Series(ev_p, index=V.index[mi])
+    V.loc[m, 'evidence_bot'] = pd.Series(ev_b, index=V.index[mi])
     has_dl, n_files, n4 = vany(dl), vsum(rows), vsum(e4)
     almost404 = (n4 >= 1) & (n4 >= value('files_almost_all_404_share', 0.8) * np.maximum(n_files, 1))
     a_own, a_search, a_inner, a_ext = vany(own_sys), vany(search_ref), vany(inner), vany(ext_ref)

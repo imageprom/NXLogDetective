@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import pandas as pd
 import synth, test_golden_report
-from nxld import db, dims, prepare, ingest
+from nxld import db, dims, prepare, ingest, frames
 
 SQL = """SELECT e.ts, i.ip, i.asn, i.nettype, i.cc, p.ext, p.is_static, f.ref_host, f.is_internal, f.ref_path, u.fam, u.fam_cat, u.is_browser, u.is_old, u.is_mobile, u.is_webview,
                 s.tpl, s.is_admin, h.scope = 'site' host_site
@@ -33,10 +33,24 @@ def _prepare(d, L, name='access.log'):
     return os.path.join(d, 'w')
 
 
-def test_requests_from_database_match_old_table():
+def _computed(monkeypatch):
+    """Перехват таблиц запросов и визитов, как их посчитал prepare в памяти (до записи в базу)."""
+    from nxld import store
+    got = {}
+    real = store.all_of
+
+    def spy(workdir, R, V, m, *a, **k):
+        got.update(R=R.copy(), V=V.copy())
+        return real(workdir, R, V, m, *a, **k)
+    monkeypatch.setattr(store, 'all_of', spy)
+    return got
+
+
+def test_requests_from_database_match_computed(monkeypatch):
     with tempfile.TemporaryDirectory() as d:
+        got = _computed(monkeypatch)
         w = _prepare(d, _log())
-        R = pd.read_pickle(os.path.join(w, 'R.pkl'))
+        R = got['R']
         con = db.connect(w, read_only=True)
         D = con.execute(SQL).fetchdf()
         assert len(D) == len(R) and len(R) > 1000
@@ -82,17 +96,18 @@ def test_only_new_values_are_computed_on_reload(monkeypatch):
         assert con.execute('SELECT count(*) FROM dim_ip WHERE nettype IS NULL').fetchone()[0] == 0
 
 
-def test_visits_flags_and_site_map_are_in_database():
-    """После prepare визиты и признаки событий в базе совпадают с прежними таблицами; карта сайта разложена по таблицам."""
+def test_visits_flags_and_site_map_are_in_database(monkeypatch):
+    """После prepare визиты и признаки событий в базе совпадают с посчитанными; карта сайта разложена по таблицам."""
     import json
     with tempfile.TemporaryDirectory() as d:
+        got = _computed(monkeypatch)
         L = _log()
         ovr = {'staff_ips': ['198.51.100.200'], 'not_site_hosts': ['old.example.net']}
         L.line('198.51.100.200', synth.T0 + timedelta(hours=11), '/about/', 200, host='site.ru')
         p = os.path.join(d, 'access.log'); L.write(p)
         w = os.path.join(d, 'w')
         prepare.run([p], w, log=lambda *_: None, map_override=ovr)
-        R, V = pd.read_pickle(os.path.join(w, 'R.pkl')), pd.read_pickle(os.path.join(w, 'V.pkl'))
+        R, V = got['R'], got['V']
         m = json.load(open(os.path.join(w, 'site_map.json')))
         con = db.connect(w, read_only=True)
         D = con.execute("""SELECT e.vid, e.is_dup, e.is_redirect_hop, e.is_embedded, e.is_page, coalesce(e.form_key, '') goal, e.goal_success, e.is_order, e.order_step
@@ -130,3 +145,43 @@ def test_final_categories_are_written_after_rules():
         cats = dict(con.execute('SELECT category, count(*) FROM visits GROUP BY 1').fetchall())
         assert cats.get('Утилиты') and cats.get('Роботы') and cats.get('Боты')
         assert con.execute("SELECT count(*) FROM visits WHERE category = 'Боты' AND type IS NOT NULL AND type <> ''").fetchone()[0] > 0
+
+
+def test_frames_from_database_equal_computed_tables(monkeypatch):
+    """База — единственное хранилище: таблицы запросов и визитов, собранные из неё, равны посчитанным в prepare — значения, порядок строк и колонок."""
+    with tempfile.TemporaryDirectory() as d:
+        got = _computed(monkeypatch)
+        w = _prepare(d, _log())
+        assert not [f for f in os.listdir(w) if f.endswith('.pkl')]   # отдельных файлов таблиц больше нет
+        R, V = frames.requests(w), frames.visits(w)
+        R0 = got['R'].drop(columns=['_ord'])
+        assert list(R.columns) == list(R0.columns) and len(R) == len(R0)
+        for c in R.columns:
+            assert (R[c].astype(str).values == R0[c].astype(str).values).all(), c
+        assert list(V.columns) == list(got['V'].columns) and V.index.equals(got['V'].index)
+        for c in V.columns:
+            assert (V[c].astype(str).values == got['V'][c].astype(str).values).all(), c
+        assert str(R['base'].dtype) == 'category' and set(R['base'].cat.categories) == set(R0['base'].astype(str).unique())   # только встреченные значения
+
+
+def test_analyze_can_be_rerun_with_same_result():
+    """Правила analyze меняют категории визитов и признаки событий в базе; повторный analyze начинает с состояния после prepare и даёт тот же итог."""
+    from nxld import analyze
+    with tempfile.TemporaryDirectory() as d:
+        L = _log()
+        for k in range(60):   # один файл снова и снова без страниц: в prepare — «Люди», правила analyze дают «Боты · только файлы»
+            L.line('203.0.113.60', synth.T0 + timedelta(hours=3, minutes=7 * k), '/upload/iblock/a1/photo.jpg', 200, host='site.ru')
+        res, _, _ = synth.run(L, d)
+        w = os.path.join(d, 'work')
+
+        def state():
+            con = db.connect(w, read_only=True)
+            try: return (con.execute('SELECT category, type, count(*) FROM visits GROUP BY ALL ORDER BY ALL').fetchall(),
+                         con.execute('SELECT count(*) FILTER (is_page), count(*) FILTER (goal_success) FROM access_events').fetchall())
+            finally: con.close()
+        first = state()
+        res2 = analyze.run(w, log=lambda *_: None)
+        assert state() == first
+        assert res2['summary']['Общий анализ'] == res['summary']['Общий анализ']
+        con = db.connect(w, read_only=True)
+        assert con.execute("SELECT count(*) FROM visits v JOIN prepared_visits p USING (vid) WHERE v.category <> p.category OR v.type IS DISTINCT FROM p.type").fetchone()[0] > 0   # правила действительно что-то изменили

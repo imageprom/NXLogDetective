@@ -8,7 +8,7 @@ import pandas as pd
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 sys.path.insert(0, ROOT)
-from nxld import errors  # noqa: E402
+from nxld import errors, frames  # noqa: E402
 
 SRC_ORDER = ('страницы сайта', 'реклама', 'поиск', 'сайты', 'напрямую')
 
@@ -311,12 +311,12 @@ def test_new_subgroup_values_after_thaw_and_freeze():
 
 
 def test_run_keeps_visits_compact():
-    """Полный прогон: V.pkl хранит повторяющиеся строки категориями, отчёт собирается."""
+    """Полный прогон: таблица визитов хранит повторяющиеся строки категориями, отчёт собирается."""
     log = synth.Log()
     log.people()
     with tempfile.TemporaryDirectory() as d:
         res, out, text = synth.run(log, d)
-        V = pd.read_pickle(os.path.join(d, 'work', 'V.pkl'))
+        V = frames.visits(os.path.join(d, 'work'))
         for c in ('ua', 'nettype', 'channel', 'group', 'subgroup'): assert str(V[c].dtype) == 'category', c
 
 

@@ -1,7 +1,7 @@
 {
  "name": "nxld_check_db",
  "title_ru": "База проверки NX Log Detective",
- "schema_version": "0.3-draft-5",
+ "schema_version": "0.3-draft-6",
  "date": "2026-11-15",
  "status": "согласовано 15.11; ip_period — черновик",
  "file": "work/nxld.duckdb",
@@ -86,6 +86,7 @@
   "site_map.json": "распечатка таблиц site_* и dim_host для Детектива",
   "brief.json": "выжимка — собирается из таблиц",
   "snapshot.json": "снимок для следующей проверки — собирается из сводок, карточек и дел",
+  "R.pkl, V.pkl, T.pkl, G.pkl, errors.pkl": "не пишутся: таблицы для расчётов собираются из базы (nxld/frames.py)",
   "edits.json, --map-override": "вход от человека; загружаются в таблицы evidence и site_overrides",
   "data/reference/*.json": "справочники движка — в git; при запуске отпечатки в ref_versions",
   "STIX, Redmine, CSV, xlsx": "выгрузки наружу"
@@ -3523,6 +3524,260 @@
    "note_ru": "Листы: Источники нагрузки, каналы людей.",
    "status": "agreed",
    "rebuild": "always"
+  },
+  {
+   "name": "prepared_visits",
+   "group": "entity",
+   "grain_ru": "визит после prepare: первичная категория, до правил analyze",
+   "pk": [
+    "vid"
+   ],
+   "columns": [
+    {
+     "name": "vid",
+     "type": "INTEGER",
+     "ru": "номер визита"
+    },
+    {
+     "name": "ip_id",
+     "type": "INTEGER",
+     "ru": "IP",
+     "fk": "dim_ip.ip_id",
+     "old": "V.ip"
+    },
+    {
+     "name": "ua_id",
+     "type": "INTEGER",
+     "ru": "браузер",
+     "fk": "dim_ua.ua_id",
+     "old": "V.ua"
+    },
+    {
+     "name": "ts_start",
+     "type": "BIGINT",
+     "ru": "начало",
+     "old": "V.start"
+    },
+    {
+     "name": "ts_end",
+     "type": "BIGINT",
+     "ru": "конец",
+     "old": "V.end"
+    },
+    {
+     "name": "n_req",
+     "type": "INTEGER",
+     "ru": "запросов",
+     "old": "V.n_req"
+    },
+    {
+     "name": "n_pages",
+     "type": "INTEGER",
+     "ru": "страниц",
+     "old": "V.n_pages"
+    },
+    {
+     "name": "n_pages_raw",
+     "type": "INTEGER",
+     "ru": "страниц до очистки",
+     "old": "V.n_pages_raw"
+    },
+    {
+     "name": "n_dup",
+     "type": "INTEGER",
+     "ru": "повторов",
+     "old": "V.n_dup"
+    },
+    {
+     "name": "n_redirect",
+     "type": "INTEGER",
+     "ru": "шагов переадресации",
+     "old": "V.n_redirect"
+    },
+    {
+     "name": "n_embedded",
+     "type": "INTEGER",
+     "ru": "подгруженных блоков",
+     "old": "V.n_embedded"
+    },
+    {
+     "name": "n_static",
+     "type": "INTEGER",
+     "ru": "файлов статики",
+     "old": "V.n_static"
+    },
+    {
+     "name": "n_post",
+     "type": "INTEGER",
+     "ru": "POST",
+     "old": "V.n_post"
+    },
+    {
+     "name": "n_head",
+     "type": "INTEGER",
+     "ru": "HEAD",
+     "old": "V.n_head"
+    },
+    {
+     "name": "n_err4",
+     "type": "INTEGER",
+     "ru": "ответов 4xx",
+     "old": "V.n_err4"
+    },
+    {
+     "name": "n_err5",
+     "type": "INTEGER",
+     "ru": "ответов 5xx",
+     "old": "V.n_err5"
+    },
+    {
+     "name": "n_catalog",
+     "type": "INTEGER",
+     "ru": "элементов каталога",
+     "old": "V.n_catalog"
+    },
+    {
+     "name": "n_goal",
+     "type": "INTEGER",
+     "ru": "отправок целей",
+     "old": "V.n_goal"
+    },
+    {
+     "name": "n_conv",
+     "type": "INTEGER",
+     "ru": "принятых (заявки и заказы)",
+     "old": "V.n_conv"
+    },
+    {
+     "name": "bytes",
+     "type": "BIGINT",
+     "ru": "байт",
+     "old": "V.bytes"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область визита по хосту",
+     "enum": "scope",
+     "old": "V.host_site"
+    },
+    {
+     "name": "entry_path_id",
+     "type": "INTEGER",
+     "ru": "страница входа",
+     "fk": "dim_path.path_id",
+     "old": "V.entry"
+    },
+    {
+     "name": "entry_query_id",
+     "type": "INTEGER",
+     "ru": "параметры входа",
+     "fk": "dim_query.query_id",
+     "old": "V.entry_query"
+    },
+    {
+     "name": "entry_status",
+     "type": "SMALLINT",
+     "ru": "код ответа на входе",
+     "old": "V.entry_status"
+    },
+    {
+     "name": "entry_ref_id",
+     "type": "INTEGER",
+     "ru": "реферер входа",
+     "fk": "dim_ref.ref_id",
+     "old": "V.entry_ref"
+    },
+    {
+     "name": "channel",
+     "type": "VARCHAR",
+     "ru": "канал: Реклама, Поиск, Прямые…",
+     "old": "V.channel"
+    },
+    {
+     "name": "channel_sub",
+     "type": "VARCHAR",
+     "ru": "подканал: Яндекс Директ…",
+     "old": "V.channel_sub"
+    },
+    {
+     "name": "fam_verified",
+     "type": "VARCHAR",
+     "ru": "подлинность робота: подпись и сеть совпали / подделка / не робот",
+     "old": "V.fam_verified"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория: Люди · Роботы · Боты · Утилиты · Свои · Системы мониторинга",
+     "old": "V.group"
+    },
+    {
+     "name": "type",
+     "type": "VARCHAR",
+     "ru": "тип (что делает): сканер под браузер, спам форм, только файлы, веб-архив…",
+     "old": "V.subgroup"
+    },
+    {
+     "name": "rule",
+     "type": "VARCHAR",
+     "ru": "НОВОЕ: код правила, которое так решило (gov_fingerprint, files_only, form_spam_burst…); пусто — первичная категория по словарям"
+    },
+    {
+     "name": "level",
+     "type": "VARCHAR",
+     "ru": "НОВОЕ: уровень доказанности",
+     "enum": "level"
+    },
+    {
+     "name": "category_before",
+     "type": "VARCHAR",
+     "ru": "НОВОЕ: категория до срабатывания правила",
+     "old": "V.gov_was (частный случай)"
+    }
+   ],
+   "depends_on": [
+    "visits"
+   ],
+   "built_in": "prepare",
+   "replaces": "V.pkl",
+   "rows_est": "128 тыс. / 2,5 млн",
+   "note_ru": "Копия visits на момент окончания prepare. analyze читает визиты отсюда, а итог правил записывает в visits — поэтому analyze можно запускать повторно.",
+   "status": "agreed"
+  },
+  {
+   "name": "prepared_events",
+   "group": "entity",
+   "grain_ru": "признаки события после prepare, которые меняют правила analyze",
+   "pk": [
+    "eid"
+   ],
+   "columns": [
+    {
+     "name": "eid",
+     "type": "BIGINT",
+     "ru": "номер события",
+     "fk": "access_events.eid"
+    },
+    {
+     "name": "is_page",
+     "type": "BOOLEAN",
+     "ru": "просмотр страницы до уточнения по форме адреса"
+    },
+    {
+     "name": "goal_success",
+     "type": "BOOLEAN",
+     "ru": "отправка принята — до проверки по следующим запросам"
+    }
+   ],
+   "depends_on": [
+    "access_events#flags"
+   ],
+   "built_in": "prepare",
+   "replaces": "R.pkl (is_page, goal_success до правил)",
+   "rows_est": "как access_events",
+   "note_ru": "analyze читает эти два признака отсюда, итог пишет в access_events.",
+   "status": "agreed"
   }
  ]
 }

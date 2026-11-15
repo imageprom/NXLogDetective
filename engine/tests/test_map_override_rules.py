@@ -6,7 +6,7 @@ from datetime import timedelta
 import pandas as pd
 
 import synth
-from nxld import prepare
+from nxld import prepare, frames
 
 
 def _log():
@@ -23,7 +23,7 @@ def _prepare(override):
         path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
         _log().write(path)
         prepare.run([path], work, log=lambda *a: None, map_override=override)
-        R, V = pd.read_pickle(os.path.join(work, 'R.pkl')), pd.read_pickle(os.path.join(work, 'V.pkl'))
+        R, V = frames.requests(work), frames.visits(work)
         return int((R['goal'].astype(str) != '').sum()), int(R['goal_success'].sum()), int(V['n_conv'].sum())
 
 

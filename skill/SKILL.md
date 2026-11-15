@@ -69,10 +69,13 @@ python3 engine/nxld_run.py --work ./work --stage analyze \
 Движок положил выжимку `work/brief.json`: проверка, портрет сайта, проблемы с важностью, материал по блокам, файлы и листы, открытые вопросы. **Начинай с неё, а не с таблиц.** Для точечных вопросов загрузи таблицы:
 
 ```python
-import pandas as pd
-R = pd.read_pickle('work/R.pkl')   # все запросы: ts, ip, method, base, query, status, bytes, ref, ua, fam, vid, is_page, tpl, goal ...
-V = pd.read_pickle('work/V.pkl')   # визиты: group, subgroup, channel, entry, n_pages, n_static, n_goal, n_conv ...
+import sys; sys.path.insert(0, 'engine')   # папка движка
+from nxld import frames
+R = frames.requests('work')   # все запросы: ts, ip, method, base, query, status, bytes, ref, ua, fam, vid, is_page, tpl, goal ...
+V = frames.visits('work')     # визиты: group, subgroup, channel, entry, n_pages, n_static, n_goal, n_conv ...
 ```
+
+Таблицы собираются из базы проверки `work/nxld.duckdb` (отдельных файлов `R.pkl`, `V.pkl` больше нет) — в том виде, в каком их оставила подготовка, до правил расчёта.
 
 Что делать:
 - проверь каждую приоритетную проблему (`Срочно` в данных): правда ли это или артефакт (заглушка вместо файла, свой тест, мониторинг). Если первое подозрение не подтвердилось, это тоже вывод для текста;

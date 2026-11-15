@@ -1,5 +1,5 @@
 """NXLD: этап подготовки — логи разбираются один раз и складываются в базу проверки (nxld.duckdb), дальше всё считается по ней.
-Пока идёт переход на базу, в рабочую папку сохраняются и прежние таблицы: R.pkl (запросы), V.pkl (визиты), errors.pkl (error-лог), site_map.json, inventory.json."""
+База — единственное хранилище запросов, визитов и error-лога (таблицы для расчётов — nxld/frames.py). Рядом — распечатки site_map.json и inventory.json."""
 import json, os, re, time
 from collections import Counter
 import numpy as np, pandas as pd
@@ -32,24 +32,6 @@ def inventory(state, R, E, dup_report):
     return F, gaps
 
 
-def compact_save(R, V, T, G, workdir):
-    """Компактное хранение прежних таблиц: без лишних столбцов, узкие типы, справочники вместо строк."""
-    R = R.drop(columns=[c for c in ('user', 'tail', '_ord') if c in R.columns])
-    for c, t in (('ts', 'uint32'), ('bytes', 'uint32'), ('asn', 'uint32'), ('vid', 'int32')):
-        if c in R.columns and R[c].max() < np.iinfo(t).max: R[c] = R[c].astype(t)
-    for c in R.columns:
-        if str(R[c].dtype) == 'category': R[c] = R[c].cat.remove_unused_categories()
-    R.to_pickle(os.path.join(workdir, 'R.pkl'))
-    from .visits import freeze
-    V = freeze(V)
-    V.to_pickle(os.path.join(workdir, 'V.pkl'))
-    T.to_pickle(os.path.join(workdir, 'T.pkl'))
-    G = G.copy()
-    for c in G.columns:
-        if str(G[c].dtype) == 'category': G[c] = G[c].astype(str)
-    G.to_pickle(os.path.join(workdir, 'G.pkl'))
-
-
 def run(paths, workdir, log=print, map_override=None):
     t0 = time.time()
     log('1/5 Приём файлов')
@@ -64,8 +46,6 @@ def run(paths, workdir, log=print, map_override=None):
     log('2/5 Сборка таблицы запросов')
     R, dup_report = load.load_requests(con)
     E = ingest.errors_frame(con)
-    if len(E): E.to_pickle(os.path.join(workdir, 'errors.pkl'))   # прежний вид error-лога — для блоков, которые ещё не читают базу
-    elif os.path.exists(os.path.join(workdir, 'errors.pkl')): os.remove(os.path.join(workdir, 'errors.pkl'))
     db.set_meta(con, 'engine_version', VERSION)
     from . import dims
     db.ensure(con, ['query_params', 'path_site'])
@@ -192,7 +172,7 @@ def run(paths, workdir, log=print, map_override=None):
     V['n_conv'] = pd.Series(succ, index=R.index).groupby(R['vid']).sum()
     dims.store_path_site(con, R['base'].cat.categories, tpl, bases.str.contains(admin_rx, regex=True).values, site_map['catalog_templates'])
     from . import store
-    store.all_of(workdir, R, V, site_map, map_override, con=con)   # признаки событий, визиты и карта сайта — в базу проверки
+    store.all_of(workdir, R, V, site_map, map_override, con=con, prepared=True)   # признаки событий, визиты и карта сайта — в базу проверки
     con.close()
     log('5/5 Сохранение')
     F, gaps = inventory(state, R, E, dup_report)
@@ -201,7 +181,6 @@ def run(paths, workdir, log=print, map_override=None):
                tz=Counter(r.get('tz') for r in state['sources'].values() if r.get('tz')).most_common(1)[0][0] if any(r.get('tz') for r in state['sources'].values()) else '',
                period_errors=[str(pd.to_datetime(E['ts'].min(), unit='s')), str(pd.to_datetime(E['ts'].max(), unit='s'))] if len(E) else None,
                errors_lines=int(len(E)), seconds=round(time.time() - t0))
-    compact_save(R, V, T, G, workdir)
     json.dump(site_map, open(os.path.join(workdir, 'site_map.json'), 'w'), ensure_ascii=False, indent=1, default=str)
     json.dump(inv, open(os.path.join(workdir, 'inventory.json'), 'w'), ensure_ascii=False, indent=1, default=str)
     log(f'Готово за {time.time()-t0:.0f} с: визитов {len(V):,}')

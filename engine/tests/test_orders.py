@@ -6,7 +6,7 @@ from datetime import timedelta
 import pandas as pd
 
 import synth
-from nxld import analyze, prepare
+from nxld import analyze, prepare, frames
 
 AJAX = '/bitrix/components/bitrix/sale.order.ajax/ajax.php'
 SUBSCRIBE = '/bitrix/components/bitrix/catalog.product.subscribe/ajax.php'
@@ -41,7 +41,7 @@ def _prepare(log):
         path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
         log.write(path)
         prepare.run([path], work, log=lambda *a: None)
-        return pd.read_pickle(os.path.join(work, 'R.pkl')), pd.read_pickle(os.path.join(work, 'V.pkl'))
+        return frames.requests(work), frames.visits(work)
 
 
 def test_orders_counted_by_number():
@@ -145,7 +145,7 @@ def test_order_with_error_on_success_page_counted_and_flagged(monkeypatch):
         path, work = os.path.join(d, 'access.log'), os.path.join(d, 'work')
         log.write(path)
         prepare.run([path], work, log=lambda *a: None)
-        assert int(pd.read_pickle(os.path.join(work, 'R.pkl'))['is_order'].sum()) == 6
+        assert int(frames.requests(work)['is_order'].sum()) == 6
         res = analyze.run(work, log=lambda *a: None)
     card = [x for x in res['findings'] if x['key'].split(':')[1] == 'order_page_error']
     assert len(card) == 1 and '403 (1)' in card[0]['факты'] and 'из 6' in card[0]['факты'], card

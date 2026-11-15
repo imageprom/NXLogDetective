@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 from pandas import CategoricalIndex
 
-from nxld import analyze, common, operators, prepare, report
+from nxld import analyze, common, operators, prepare, report, frames
 
 T0 = datetime(2026, 9, 1)
 
@@ -69,7 +69,7 @@ def test_wide_log_full_cycle(tmp_path, narrow_codes, monkeypatch):
         log, work, out = str(tmp_path / 'access.log'), str(tmp_path / 'work'), str(tmp_path / 'out')
         _wide_log(log)
         prepare.run([log], work, log=lambda *a: None)
-        V = pd.read_pickle(os.path.join(work, 'V.pkl'))
+        V = frames.visits(work)
         for c in ('entry', 'ua', 'entry_ref', 'entry_query'): assert str(V[c].dtype) == 'category' and V[c].nunique() > 128, c   # тысячи категорий, как на реальном логе
         analyze.run(work, log=lambda *a: None)
         res = pickle.load(open(os.path.join(work, 'results.pkl'), 'rb'))

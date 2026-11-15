@@ -18,8 +18,9 @@ def _eids(con, n):
     return e
 
 
-def event_flags(con, R):
-    """Признаки события, которым нужен порядок во времени и карта сайта, — в колонки access_events."""
+def event_flags(con, R, prepared=False):
+    """Признаки события, которым нужен порядок во времени и карта сайта, — в колонки access_events.
+    prepared — запись из prepare: состояние «до правил analyze» запоминается в prepared_events (с него analyze начинает при каждом запуске)."""
     df = pd.DataFrame({'eid': _eids(con, len(R))})
     df['vid'] = R['vid'].values.astype('int64')
     for c in ('is_dup', 'is_redirect_hop', 'is_embedded', 'is_page', 'goal_success', 'is_order', 'order_step'):
@@ -31,12 +32,13 @@ def event_flags(con, R):
     con.unregister('fl_df')
     for c in FLAGS:   # по колонке за раз: обновление нескольких колонок одним запросом в DuckDB в десятки раз медленнее
         con.execute(f'UPDATE access_events e SET {c} = f.{c} FROM fl_tmp f WHERE e.eid = f.eid')
+    if prepared: con.execute('CREATE OR REPLACE TABLE prepared_events AS SELECT eid, is_page, goal_success FROM fl_tmp')
     con.execute('DROP TABLE fl_tmp')
     db.mark_built(con, 'access_events')
 
 
-def visits(con, V):
-    """Визиты: счётчики, вход, канал, категория и тип."""
+def visits(con, V, prepared=False):
+    """Визиты: счётчики, вход, канал, категория и тип. prepared — запись из prepare: копия «до правил analyze» в prepared_visits."""
     db.ensure(con, ['visits'])
     df = pd.DataFrame({'vid': np.asarray(V.index, dtype='int64')})
     for a, b in (('ts_start', 'start'), ('ts_end', 'end'), ('entry_status', 'entry_status'), ('bytes', 'bytes')):
@@ -56,6 +58,7 @@ def visits(con, V):
         FROM v_df v LEFT JOIN dim_ip i ON i.ip = v.ip LEFT JOIN dim_ua u ON u.ua = v.ua LEFT JOIN dim_path p ON p.path = v.entry LEFT JOIN dim_query q ON q.query = v.entry_query
         LEFT JOIN dim_ref f ON f.ref = v.entry_ref ORDER BY v.vid""")
     con.unregister('v_df')
+    if prepared: con.execute('CREATE OR REPLACE TABLE prepared_visits AS SELECT * FROM visits')
     db.mark_built(con, 'visits')
 
 
@@ -125,8 +128,8 @@ def site_map(con, m, override=None):
     for t in SITE_TABLES: db.mark_built(con, t)
 
 
-def all_of(workdir, R, V, m, override=None, con=None):
+def all_of(workdir, R, V, m, override=None, con=None, prepared=False):
     own = con is None
     if own: con = db.connect(workdir)
-    event_flags(con, R); visits(con, V); site_map(con, m, override)
+    event_flags(con, R, prepared); visits(con, V, prepared); site_map(con, m, override)
     if own: con.close()

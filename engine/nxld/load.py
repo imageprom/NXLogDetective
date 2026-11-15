@@ -23,6 +23,12 @@ def add_features(R, con, site_hosts):
     from . import dims
     dims.fill_common(con)
     dims.fill_ref(con, site_hosts)
+    return read_features(R, con)
+
+
+def read_features(R, con):
+    """Признаки запроса из уже заполненных словарей (без записи в базу)."""
+    from . import dims
     P = dims.per_category(con, 'dim_path', 'path', ['ext', 'is_static'], R['base'].cat.categories)
     codes = R['base'].cat.codes.values
     R['ext'] = P['ext'].values.astype(object)[codes]

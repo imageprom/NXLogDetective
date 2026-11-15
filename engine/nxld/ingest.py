@@ -356,9 +356,11 @@ def _categorical(ids, dim_ids, dim_vals):
     return pd.Categorical.from_codes(m[ids], categories=cat.cat.categories)
 
 
-def requests_frame(con):
-    """Таблица запросов в прежнем виде (R до признаков): по времени, затем по порядку источников и строк."""
-    ev = con.execute('SELECT ts, ip_id, host_id, method, path_id, query_id, proto, status, bytes, ref_id, ua_id, source_id FROM access_events ORDER BY ts, eid').fetchnumpy()
+def requests_frame(con, without_copies=False):
+    """Таблица запросов в прежнем виде (R до признаков): по времени, затем по порядку источников и строк.
+    without_copies — без запросов к копиям сайта на других доменах (dim_host.scope = 'off')."""
+    ev = con.execute('SELECT e.ts, e.ip_id, e.host_id, e.method, e.path_id, e.query_id, e.proto, e.status, e.bytes, e.ref_id, e.ua_id, e.source_id FROM access_events e' +
+                     (" JOIN dim_host h USING (host_id) WHERE coalesce(h.scope, 'site') <> 'off'" if without_copies else '') + ' ORDER BY e.ts, e.eid').fetchnumpy()
     R = pd.DataFrame({'ts': ev['ts'].astype('int64')})
     for col, dim, idc in (('ip', 'ip', 'ip_id'), ('vhost', 'host', 'host_id')):
         tbl, i_, v_ = DIMS[dim]

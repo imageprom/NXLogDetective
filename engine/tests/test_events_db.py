@@ -115,14 +115,27 @@ def test_new_chunk_is_added_without_reading_old_ones():
         assert count(os.path.join(d, 'w')) == 150
 
 
-def test_logs_sheet_shows_two_periods_and_no_overlap_line():
-    """01 «Логи», блок «Итого»: периоды access- и error-логов отдельными строками; строки «Повторы на стыках» нет."""
+def test_log_periods_are_noted_in_the_lines_about_logs():
+    """Периоды access- и error-логов — пометкой в строках про эти логи: «Исходные данные» на «Обзоре» и «Итого» на «Логах».
+    На «Логах» строка периода называется «Общий период», строка «Повторы на стыках» на месте."""
     with tempfile.TemporaryDirectory() as d:
         L = synth.Log(); L.people(days=3, per_day=10)
         e = write(d, 'error.log', [err(synth.T0 + timedelta(hours=5 + k), synth.RU[0], f'/upload/{k}.jpg') for k in range(30)])
         _, out, _ = synth.run(L, d, '--logs', os.path.join(d, 'access.log'), e)
-        ws = openpyxl.load_workbook(os.path.join(out, 'NXLD_01_Overview.xlsx'))['Логи']
-        labels = {str(c.value): str(ws.cell(c.row, c.column + 1).value) for r in ws.iter_rows() for c in r if c.value}
-        assert 'Период access-логов' in labels and 'Период error-логов' in labels
-        assert labels['Период error-логов'].startswith('1 сентября 2026 05:00 — 2 сентября 2026')
-        assert 'Повторы на стыках' not in labels and 'Период' not in labels
+        wb = openpyxl.load_workbook(os.path.join(out, 'NXLD_01_Overview.xlsx'))
+
+        def pairs(ws):
+            return {str(c.value): str(ws.cell(c.row, c.column + 1).value) for r in ws.iter_rows() for c in r if c.value}
+        logs = pairs(wb['Логи'])
+        assert logs['Access-логи'].endswith(', 1–3 сентября') and logs['Error-логи'].endswith(', 1–2 сентября')
+        assert 'Общий период' in logs and 'Период' not in logs and logs['Повторы на стыках'] == 'нет'
+        src = next(v for ws in wb.worksheets for k, v in pairs(ws).items() if k == 'Исходные данные')
+        assert src.splitlines()[0].endswith('1 файл, 1–3 сентября') and src.splitlines()[1].endswith('1 файл, 1–2 сентября')
+
+
+def test_short_period_wording():
+    from nxld.report_index import ru_period
+    assert ru_period('2026-09-01 00:10', '2026-09-04 23:59') == '1–4 сентября'
+    assert ru_period('2026-09-01', '2026-09-01 12:00') == '1 сентября'
+    assert ru_period('2026-08-28', '2026-09-04') == '28 августа — 4 сентября'
+    assert ru_period('2025-12-30', '2026-01-02') == '30 декабря 2025 — 2 января 2026'

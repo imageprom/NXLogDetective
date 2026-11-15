@@ -36,6 +36,14 @@ def ru_date(ts):
     return f'{t.day} {MONTHS[t.month - 1]} {t.year}'
 
 
+def ru_period(a, b):
+    """Короткий период по дням: «1–4 сентября», «28 августа — 4 сентября», через год — с годами."""
+    a, b = pd.Timestamp(a), pd.Timestamp(b)
+    if a.year != b.year: return f'{ru_date(a)} — {ru_date(b)}'
+    if a.month != b.month: return f'{a.day} {MONTHS[a.month - 1]} — {b.day} {MONTHS[b.month - 1]}'
+    return f'{a.day} {MONTHS[a.month - 1]}' if a.day == b.day else f'{a.day}–{b.day} {MONTHS[a.month - 1]}'
+
+
 def ru_num(x):
     return f'{int(x):,}'.replace(',', ' ')
 
@@ -427,8 +435,8 @@ def build_index(wb, res, sheet_names, title='Обзор'):
     S.pair('Период', f"{p0.day} {MONTHS[p0.month - 1]} — {ru_date(p1)}, {days} {plural(days, 'день', 'дня', 'дней')}")
     files = inv.get('files', [])
     na = sum(1 for f in files if f.get('тип') == 'access'); ne = sum(1 for f in files if f.get('тип') == 'error')
-    src = f"access-лог: {ru_short(inv['requests'])} строк, {na} {plural(na, 'файл', 'файла', 'файлов')}"
-    if inv.get('errors_lines'): src += f"\nerror-лог: {ru_short(inv['errors_lines'])} строк, {ne} {plural(ne, 'файл', 'файла', 'файлов')}"
+    src = f"access-лог: {ru_short(inv['requests'])} строк, {na} {plural(na, 'файл', 'файла', 'файлов')}, {ru_period(*inv['period'])}"
+    if inv.get('errors_lines'): src += f"\nerror-лог: {ru_short(inv['errors_lines'])} строк, {ne} {plural(ne, 'файл', 'файла', 'файлов')}" + (f", {ru_period(*inv['period_errors'])}" if inv.get('period_errors') else '')
     dup = sum(d.get('lines_duplicate', 0) for d in inv.get('duplicates', []))
     if dup: src += f"\nповторы на стыках файлов удалены: {ru_short(dup)} строк"
     S.pair('Исходные данные', src)

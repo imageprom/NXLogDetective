@@ -2,7 +2,7 @@
 from collections import Counter
 import pandas as pd
 from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
-from .report_index import Sheet, ORANGE, ru_num, ru_short, plural, ru_date, NUM_FMT
+from .report_index import Sheet, ORANGE, ru_num, ru_short, plural, ru_date, ru_period, NUM_FMT
 
 F_LIGHT = 'F7F7F7'
 
@@ -80,14 +80,15 @@ def build_files(wb, res, title='Логи'):
         if not len(g): continue
         sites = Counter(g['сайт_по_имени'].astype(str))
         val = f"{len(g)} {plural(len(g), 'файл', 'файла', 'файлов')}, {ru_short(int(g['строк'].sum()))} строк" + (' (с повторами)' if t == 'access' and dup else '')
+        per = inv.get('period') if t == 'access' else inv.get('period_errors')
+        if per: val += f", {ru_period(*per)}"
         if len(sites) > 1: val += '\n' + '\n'.join(f"{s}: {n} {plural(n, 'файл', 'файла', 'файлов')}" for s, n in sites.most_common())
         S.pair(nm, val)
     p0, p1 = inv['period']
     tz = str(inv.get('tz', ''))
-    def period_(a_, b_):
-        return f"{ru_date(a_)} {str(a_)[11:16]} — {ru_date(b_)} {str(b_)[11:16]}"
-    S.pair('Период access-логов', period_(p0, p1) + (f"; часовой пояс {tz[:3]}:{tz[3:]}" if len(tz) == 5 else ''))
-    if inv.get('period_errors'): S.pair('Период error-логов', period_(*inv['period_errors']))
+    S.pair('Общий период', f"{ru_date(p0)} {str(p0)[11:16]} — {ru_date(p1)} {str(p1)[11:16]}" + (f"; часовой пояс {tz[:3]}:{tz[3:]}" if len(tz) == 5 else ''))
+    nd = sum(dup.values())
+    S.pair('Повторы на стыках', f"удалено {ru_num(nd)} {plural(nd, 'строка', 'строки', 'строк')}" if nd else 'нет')
     if copy_of: S.pair('Копии файлов', '\n'.join(f"{shown(a).splitlines()[0]} = {shown(b).splitlines()[0]}" for a, b in copy_of.items()))
     bad = int(F['нераспознано'].sum())
     S.pair('Нераспознанные строки', ru_num(bad) if bad else 'нет')

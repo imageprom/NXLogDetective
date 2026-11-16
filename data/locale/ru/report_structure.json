@@ -1579,27 +1579,6 @@
        "legend": false
       },
       {
-       "code": "search_errors",
-       "status": "approved",
-       "heading": [
-        [
-         {
-          "text": "Поисковые ошибки"
-         }
-        ]
-       ],
-       "subheading": [
-        [
-         {
-          "text": "Страницы, которые поисковые роботы получают с ошибкой, — они выпадают из поиска."
-         }
-        ]
-       ],
-       "notes": [],
-       "links": [],
-       "legend": false
-      },
-      {
        "code": "ad_errors",
        "status": "approved",
        "heading": [

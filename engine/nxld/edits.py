@@ -9,7 +9,9 @@ def apply(res, edits):
     rm = set(edits.get('remove', []))
     res['findings'] = [x for x in res['findings'] if x['key'] not in rm]
     for x in res['findings']:
-        x.update(edits.get('update', {}).get(x['key'], {}))
+        upd = edits.get('update', {}).get(x['key'], {})
+        x.update(upd)
+        if 'важность' in upd: x['_важность_правкой'] = True   # важность задал Детектив: пересчёт тревог её не трогает (alarms.apply)
     for a in edits.get('add', []):
         a = dict(a)
         a.setdefault('key', f"{a.get('блок')}:ии:{len(res['findings'])}")

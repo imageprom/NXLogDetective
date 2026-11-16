@@ -493,7 +493,7 @@ def paren_values(wb):
     перед двоеточием должна стоять не цифра."""
     import re
     global _PV
-    if _PV is None: _PV = re.compile(r'(?<=[^\s\d:]): (\d(?:[\d\u00a0 ]*\d)?)(?=$|,|;|\n|\)|\.\s|\.$)')
+    if _PV is None: _PV = re.compile(r'(?<=[^\s\d:]): (\d(?:[\d\u00a0 ]*\d)?)(?=$|,(?!\d)|;|\n|\)|\.\s|\.$)')   # запятая внутри числа («16,6%») — не конец значения
     for ws in wb.worksheets:
         if ws.sheet_state != 'visible': continue
         for row in ws.iter_rows():

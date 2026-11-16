@@ -70,7 +70,7 @@ def rich_log():
 def test_report_matches_golden_rich():
     with tempfile.TemporaryDirectory() as d:
         _, out, _ = synth.run(rich_log(), d)
-        got = {f: {s: h for s, h in ss.items() if not s.startswith('_')} for f, ss in report_digest.digest(out, mask=r'Отчёт от \d+ \S+ \d{4}').items()}
+        got = {f: {s: h for s, h in ss.items() if not s.startswith('_')} for f, ss in report_digest.digest(out, mask=r'Отчёт от \d+ \S+ \d{4} · NX Log Detective [\w.\-]+').items()}
     if os.environ.get('NXLD_GOLDEN_UPDATE'):
         json.dump(got, open(GOLDEN, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     want = json.load(open(GOLDEN, encoding='utf-8'))

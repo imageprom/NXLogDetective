@@ -123,6 +123,7 @@ def card(S, x, n, sev, here_file, with_block, short=False):
     ws.row_dimensions[S.r].height = max(26, row_height(title, 78) + 4)
     S.r += 1
     if x.get('почему_тревога'): S.pair('Почему тревога', cap(x['почему_тревога']))
+    if x.get('тревога_снята_правкой'): S.pair('Важность задана правкой', cap('по правилам движка была бы «Тревога»: ' + x['тревога_снята_правкой']))
     S.pair('Из показаний', cap(x.get('факт') or x.get('факты') or ''))
     todo = cap(x.get('что_сделать') or '')
     if x.get('где_править') and x['где_править'].lower() not in todo.lower(): todo += f" ({x['где_править']})"

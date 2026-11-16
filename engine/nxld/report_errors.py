@@ -306,13 +306,6 @@ def overview(wb, res, S, site):
         rows = [[r['Адрес'], int(r['Запросов со страниц сайта']), r['Страница-источник']] for _, r in BJ.head(5).iterrows()]
         W.table(['Адрес', 'Запросов', 'Страница'], rows, ['BCD', 'E', 'FGHI'], num=(1,))
         more(W, 'broken_scripts', min(5, len(BJ)), len(BJ), names)
-    SE = S.get('Ошибки у поисковиков')
-    if SE is not None and len(SE):
-        W.block('search_errors')
-        g = (res.get('сводки') or {}).get('поиск_по_роботам')
-        if g is None: g = SE.groupby('робот').agg(типов=('шаблон', 'nunique'), запросов=('запросов', 'sum'), ошибок=('ошибок', 'sum')).sort_values('ошибок', ascending=False).reset_index()
-        W.table(['Робот', 'Типов страниц', 'Запросов', 'Ошибок'], [[r['робот'], int(r['типов']), int(r['запросов']), int(r['ошибок'])] for _, r in g.iterrows()], ['B', 'C', 'D', 'E'], num=(1, 2, 3))
-        more(W, 'search_errors', len(g), len(SE), names, what='типов страниц по роботам')
     AD = S.get('Реклама: посадочные с ошибками')
     if AD is not None and len(AD):
         W.block('ad_errors')

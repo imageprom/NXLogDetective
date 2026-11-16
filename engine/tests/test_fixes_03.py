@@ -50,3 +50,45 @@ def test_country_code_na_is_namibia_not_missing():
     n = int(s[i])
     ip = '.'.join(str((n >> k) & 255) for k in (24, 16, 8, 0))
     assert ipdb.lookup([ip])['cc'].iloc[0] == 'NA'
+
+
+def test_paren_values_keep_decimal_comma():
+    """«…ошибки: 16,6% запросов» — число с запятой остаётся как есть (было «(16),6%»); «Googlebot: 28, YandexBot: 15» по-прежнему в скобках."""
+    import openpyxl
+    from nxld.report_tables import paren_values
+    wb = openpyxl.Workbook(); ws = wb.active
+    ws['A1'] = 'Поисковые роботы получают ошибки: 16,6% запросов'
+    ws['A2'] = 'Googlebot: 28, YandexBot: 15'
+    ws['A3'] = 'Трафик: 1,5 МБ; запросов: 1 234, людей: 7'
+    paren_values(wb)
+    assert ws['A1'].value == 'Поисковые роботы получают ошибки: 16,6% запросов'
+    assert ws['A2'].value == 'Googlebot (28), YandexBot (15)'
+    assert ws['A3'].value == 'Трафик: 1,5 МБ; запросов (1 234), людей (7)'
+
+
+def test_severity_set_by_edit_is_not_overridden_by_alarm():
+    """Важность, заданную правкой Детектива, пересчёт тревог не трогает; причина, по которой движок поднял бы тревогу, остаётся на карточке."""
+    from nxld import alarms, edits
+
+    def res():
+        return dict(findings=[dict(key='Безопасность:pd_in_get:all', блок='Безопасность', важность='Важно', что_происходит='x', главная_цифра=40),
+                              dict(key='Безопасность:webshell:all', блок='Безопасность', важность='Важно', что_происходит='y', главная_цифра=1)], security={})
+    r = res(); alarms.apply(r)
+    assert [x['важность'] for x in r['findings']] == ['Тревога', 'Тревога']
+    r = edits.apply(res(), {'update': {'Безопасность:pd_in_get:all': {'важность': 'Замечание'}}}); alarms.apply(r); alarms.apply(r)   # тревоги пересчитываются не один раз
+    a, b = r['findings']
+    assert a['важность'] == 'Замечание' and 'почему_тревога' not in a and 'персональные данные' in a['тревога_снята_правкой']
+    assert b['важность'] == 'Тревога' and b.get('почему_тревога') and 'тревога_снята_правкой' not in b   # карточку без правки тревога поднимает как раньше
+    r = edits.apply(res(), {'update': {'Безопасность:pd_in_get:all': {'что_сделать': 'z'}}}); alarms.apply(r)
+    assert r['findings'][0]['важность'] == 'Тревога'   # правка другого поля важность не закрепляет
+
+
+def test_no_search_errors_block_in_errors_overview_catalog():
+    """#21: «Поисковые ошибки» живут в 06; на Обзоре 02 такого блока нет ни в каталоге, ни в коде — остаётся ссылка в «Связанном»."""
+    import json
+    J = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'locale', 'ru', 'report_structure.json'), encoding='utf-8'))
+    by = {f['code']: f for f in J['files']}
+    assert 'search_errors' not in [b['code'] for b in by['errors']['sheets'][0]['blocks']]
+    assert 'search_errors' in [b['code'] for b in by['seo']['sheets'][0]['blocks']]
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nxld', 'report_errors.py'), encoding='utf-8').read()
+    assert "W.block('search_errors')" not in src

@@ -89,7 +89,7 @@ def fill_common(con):
     con.execute("""INSERT INTO query_params
         SELECT query_id, pos::SMALLINT, CASE WHEN contains(kv, '=') THEN left(kv, strpos(kv, '=') - 1) ELSE kv END, CASE WHEN contains(kv, '=') THEN substr(kv, strpos(kv, '=') + 1) ELSE NULL END
         FROM (SELECT query_id, unnest(string_split(query, '&')) kv, generate_subscripts(string_split(query, '&'), 1) pos FROM dim_query
-              WHERE query <> '' AND query_id NOT IN (SELECT DISTINCT query_id FROM query_params)) WHERE pos <= 200""")
+              WHERE query <> '' AND query_id NOT IN (SELECT DISTINCT query_id FROM query_params))""")   # все пары: строка параметров не длиннее 1000 знаков, предела по числу пар нет
 
 
 def fill_ref(con, site_hosts):

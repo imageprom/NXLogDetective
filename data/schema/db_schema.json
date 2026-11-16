@@ -1,7 +1,7 @@
 {
  "name": "nxld_check_db",
  "title_ru": "База проверки NX Log Detective",
- "schema_version": "0.3-draft-7",
+ "schema_version": "0.3-draft-8",
  "date": "2026-11-15",
  "status": "согласовано 15.11; ip_period — черновик",
  "file": "work/nxld.duckdb",

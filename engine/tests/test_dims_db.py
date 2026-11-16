@@ -76,6 +76,18 @@ def test_query_params_are_split_once_per_query():
         assert con.execute('SELECT count(*) FROM (SELECT query_id, pos FROM query_params GROUP BY ALL HAVING count(*) > 1)').fetchone()[0] == 0
 
 
+def test_query_with_hundreds_of_params_is_split_completely():
+    """Строка из 250 параметров (перебор сканера) разобрана целиком: предела по числу пар нет."""
+    with tempfile.TemporaryDirectory() as d:
+        L = synth.Log(); L.people(days=1, per_day=3)
+        q = '&'.join(f'{chr(97 + k % 26)}={k % 10}' for k in range(250))
+        assert len(q) < 1000
+        L.line('203.0.113.9', synth.T0 + timedelta(hours=4), '/search/?' + q, 200)
+        w = _prepare(d, L)
+        con = db.connect(w, read_only=True)
+        assert con.execute('SELECT count(*), max(pos) FROM query_params JOIN dim_query USING (query_id) WHERE query = ?', [q]).fetchone() == (250, 250)
+
+
 def test_only_new_values_are_computed_on_reload(monkeypatch):
     """Дозагрузка куска: сеть ищется только для IP, которых не было; изменился справочник — словарь считается заново."""
     with tempfile.TemporaryDirectory() as d:

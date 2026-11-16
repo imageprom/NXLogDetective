@@ -404,6 +404,9 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
     alarms.apply(res, F.items)   # «Тревога» — после всех карточек и срезов
     derive.build(res)   # признаки и сводки для оформления, выжимки и снимка
     pickle.dump(res, open(os.path.join(workdir, 'results.pkl'), 'wb'))
+    from . import conclusions   # выводы — ещё и в таблицы базы проверки (results.pkl остаётся); найденное за прогон — в learned
+    conclusions.write(workdir, res)
+    conclusions.sync_learned(workdir, (m.get('site_hosts') or ['site'])[0])
     brief.save(brief.build(res, cs, prev), workdir)
     log(f'Проблем найдено: {len(F.items)}')
     return res

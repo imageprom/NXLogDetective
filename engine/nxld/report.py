@@ -257,6 +257,11 @@ def build(res, outdir, site=None, edits=None, redmine=None, only=None, workdir=N
     from .profiles import remeasure
     remeasure(res)   # «Меры по IP» и STIX — по окончательной важности дел: после правок Детектива и пересчёта тревог
     derive.build(res)   # признаки и сводки для оформления — готовыми
+    if workdir:   # правки Детектива — в таблицы свидетельств, выводы после правок — в таблицы выводов (results.pkl не меняется)
+        from . import conclusions
+        conclusions.load_edits(workdir, edits)
+        conclusions.write(workdir, res)
+        conclusions.sync_learned(workdir, (res['site_map'].get('site_hosts') or ['site'])[0])
     from . import report_errors
     report_errors.relink(res['findings'])   # карточки ссылаются на новые листы 02
     from . import report_load

@@ -2021,7 +2021,7 @@
     {
      "name": "n",
      "type": "INTEGER",
-     "ru": "номер"
+     "ru": "номер показания (число)"
     },
     {
      "name": "who",
@@ -2031,7 +2031,7 @@
     {
      "name": "made_at",
      "type": "TIMESTAMP",
-     "ru": "когда"
+     "ru": "когда (если разобралась дата)"
     },
     {
      "name": "question",
@@ -2047,13 +2047,18 @@
      "name": "conflict",
      "type": "VARCHAR",
      "ru": "расхождение с логом, если есть"
+    },
+    {
+     "name": "extra",
+     "type": "JSON",
+     "ru": "остальные поля записи как есть (и исходное «когда», если не разобралось)"
     }
    ],
    "depends_on": [],
    "built_in": "analyze",
    "replaces": "edits.json (показания)",
    "rows_est": "0–30",
-   "note_ru": "",
+   "note_ru": "Загружается из edits.json целиком при каждой загрузке (файл — вход, таблица — копия). Файл не меняется.",
    "status": "agreed"
   },
   {
@@ -2067,7 +2072,7 @@
     {
      "name": "n",
      "type": "INTEGER",
-     "ru": "номер"
+     "ru": "номер эксперимента (число)"
     },
     {
      "name": "who",
@@ -2077,7 +2082,7 @@
     {
      "name": "made_at",
      "type": "TIMESTAMP",
-     "ru": "когда"
+     "ru": "когда (если разобралась дата)"
     },
     {
      "name": "goal",
@@ -2102,7 +2107,7 @@
     {
      "name": "ts",
      "type": "BIGINT",
-     "ru": "время, если делали до выгрузки лога"
+     "ru": "время запроса, если делали до выгрузки лога, секунды"
     },
     {
      "name": "conclusion",
@@ -2112,24 +2117,29 @@
     {
      "name": "level",
      "type": "VARCHAR",
-     "ru": "browser / log_confirmed"
+     "ru": "browser / log_confirmed / witness"
     },
     {
      "name": "trace_events",
      "type": "INTEGER",
-     "ru": "найдено событий в логе (IP + время ± 1 мин)"
+     "ru": "найдено событий в логе (IP + время ± 1 мин); считается при сборке выжимки, здесь пусто"
     },
     {
      "name": "changes",
      "type": "JSON",
      "ru": "что изменил в карте сайта"
+    },
+    {
+     "name": "extra",
+     "type": "JSON",
+     "ru": "остальные поля записи как есть (ref, when, time…)"
     }
    ],
    "depends_on": [],
    "built_in": "analyze",
    "replaces": "edits.json (experiments)",
    "rows_est": "0–10",
-   "note_ru": "",
+   "note_ru": "Записи с ref.type = testimony остаются здесь же (с ref в extra): так лежат в файле.",
    "status": "agreed"
   },
   {
@@ -2144,32 +2154,32 @@
     {
      "name": "kind",
      "type": "VARCHAR",
-     "ru": "leak / site_file / embedding / web_archive"
+     "ru": "leak / site_file / embedding"
     },
     {
      "name": "url",
      "type": "VARCHAR",
-     "ru": "адрес"
+     "ru": "адрес: файл или хост"
     },
     {
      "name": "made_at",
      "type": "TIMESTAMP",
-     "ru": "когда"
+     "ru": "когда (если разобралась дата)"
     },
     {
      "name": "status",
      "type": "VARCHAR",
-     "ru": "что получили"
+     "ru": "итог проверки"
     },
     {
      "name": "result",
      "type": "VARCHAR",
-     "ru": "итог"
+     "ru": "что внутри / что получили"
     },
     {
      "name": "details",
      "type": "JSON",
-     "ru": "подробности"
+     "ru": "запись целиком, как в файле"
     }
    ],
    "depends_on": [],
@@ -2226,7 +2236,7 @@
     {
      "name": "decision",
      "type": "VARCHAR",
-     "ru": "оправдано / подтверждено"
+     "ru": "оправдано; пусто — изменена только важность"
     },
     {
      "name": "severity",
@@ -2258,7 +2268,7 @@
     {
      "name": "key",
      "type": "VARCHAR",
-     "ru": "ключ карточки"
+     "ru": "ключ карточки (у добавленной без ключа — блок:ии:номер в списке)"
     },
     {
      "name": "op",
@@ -2268,7 +2278,7 @@
     {
      "name": "patch",
      "type": "JSON",
-     "ru": "что поменять"
+     "ru": "что поменять; для add — карточка целиком"
     }
    ],
    "depends_on": [],
@@ -2290,7 +2300,7 @@
     {
      "name": "kind",
      "type": "VARCHAR",
-     "ru": "param / extension / monitor / signature / action_pattern"
+     "ru": "param / extension / monitor / signature"
     },
     {
      "name": "key",
@@ -2300,7 +2310,7 @@
     {
      "name": "value",
      "type": "JSON",
-     "ru": "описание"
+     "ru": "запись справочника как есть"
     },
     {
      "name": "source",
@@ -2312,7 +2322,7 @@
    "built_in": "analyze",
    "replaces": "data/reference/learned/*.json (запись в папку движка при прогоне)",
    "rows_est": "0–сотни",
-   "note_ru": "",
+   "note_ru": "Записи справочников data/reference/learned/*.json, в которых участвует этот сайт (по отпечатку «сайт-…»). Запись в папку движка остаётся.",
    "status": "agreed"
   },
   {
@@ -2344,14 +2354,9 @@
      "ru": "важность"
     },
     {
-     "name": "verdict",
-     "type": "VARCHAR",
-     "ru": "приговор"
-    },
-    {
      "name": "n_ip",
      "type": "INTEGER",
-     "ru": "IP"
+     "ru": "IP в деле (после правок «люди_ip»)"
     },
     {
      "name": "n_req",
@@ -2361,17 +2366,22 @@
     {
      "name": "ts_first",
      "type": "BIGINT",
-     "ru": "первый"
+     "ru": "первый запрос, секунды"
     },
     {
      "name": "ts_last",
      "type": "BIGINT",
-     "ru": "последний"
+     "ru": "последний запрос, секунды"
     },
     {
      "name": "card",
      "type": "JSON",
-     "ru": "карточка дела: улики, примеры"
+     "ru": "карточка дела: все остальные поля (ключ, обвинения, приметы, меры, сигнатура, состав, IP…)"
+    },
+    {
+     "name": "pos",
+     "type": "INTEGER",
+     "ru": "порядок дела"
     }
    ],
    "depends_on": [
@@ -2382,7 +2392,7 @@
    "built_in": "analyze",
    "replaces": "results.pkl (profiles.дела)",
    "rows_est": "60 / 1 тыс.",
-   "note_ru": "",
+   "note_ru": "Колонка verdict из первого описания убрана: приговор — у IP (ip_measures.verdict), у дела приговора нет.",
    "status": "agreed"
   },
   {
@@ -2391,7 +2401,7 @@
    "grain_ru": "IP в деле",
    "pk": [
     "case_id",
-    "ip_id"
+    "ip"
    ],
    "columns": [
     {
@@ -2407,6 +2417,31 @@
      "fk": "dim_ip.ip_id"
     },
     {
+     "name": "ip",
+     "type": "VARCHAR",
+     "ru": "IP как в отчёте"
+    },
+    {
+     "name": "alias",
+     "type": "VARCHAR",
+     "ru": "кличка дела"
+    },
+    {
+     "name": "subnet",
+     "type": "VARCHAR",
+     "ru": "подсеть"
+    },
+    {
+     "name": "network",
+     "type": "VARCHAR",
+     "ru": "сеть"
+    },
+    {
+     "name": "country",
+     "type": "VARCHAR",
+     "ru": "страна"
+    },
+    {
      "name": "role",
      "type": "VARCHAR",
      "ru": "роль"
@@ -2417,19 +2452,24 @@
      "ru": "запросов"
     },
     {
-     "name": "ts_first",
-     "type": "BIGINT",
-     "ru": "первый"
+     "name": "first_day",
+     "type": "VARCHAR",
+     "ru": "первый — как в отчёте (ДД.ММ.ГГГГ ЧЧ:ММ)"
     },
     {
-     "name": "ts_last",
-     "type": "BIGINT",
-     "ru": "последний"
+     "name": "last_day",
+     "type": "VARCHAR",
+     "ru": "последний — как в отчёте"
     },
     {
      "name": "note",
      "type": "VARCHAR",
      "ru": "пометка"
+    },
+    {
+     "name": "pos",
+     "type": "INTEGER",
+     "ru": "порядок строки"
     }
    ],
    "depends_on": [
@@ -2438,7 +2478,7 @@
    "built_in": "analyze",
    "replaces": "results.pkl (profiles.состав)",
    "rows_est": "2,7 тыс. / 0,7 млн",
-   "note_ru": "",
+   "note_ru": "Первый и последний запрос — готовой строкой, как в «Составе дел»: по ним отчёт не считает.",
    "status": "agreed"
   },
   {
@@ -2461,6 +2501,11 @@
      "fk": "cases.case_id"
     },
     {
+     "name": "alias",
+     "type": "VARCHAR",
+     "ru": "кличка дела"
+    },
+    {
      "name": "rule",
      "type": "VARCHAR",
      "ru": "правило"
@@ -2478,7 +2523,7 @@
     {
      "name": "n_false",
      "type": "INTEGER",
-     "ru": "ложных"
+     "ru": "ложных (визитов людей в этой сети)"
     },
     {
      "name": "n_ip",
@@ -2489,6 +2534,11 @@
      "name": "n_req",
      "type": "BIGINT",
      "ru": "запросов"
+    },
+    {
+     "name": "pos",
+     "type": "INTEGER",
+     "ru": "порядок строки"
     }
    ],
    "depends_on": [
@@ -2506,30 +2556,65 @@
    "group": "conclusion",
    "grain_ru": "мера по IP",
    "pk": [
-    "ip_id"
+    "ip"
    ],
    "columns": [
     {
+     "name": "ip",
+     "type": "VARCHAR",
+     "ru": "IP"
+    },
+    {
      "name": "ip_id",
      "type": "INTEGER",
-     "ru": "IP",
+     "ru": "IP в словаре",
      "fk": "dim_ip.ip_id"
     },
     {
      "name": "case_id",
      "type": "VARCHAR",
-     "ru": "дело",
+     "ru": "дело (пусто — свои)",
      "fk": "cases.case_id"
+    },
+    {
+     "name": "alias",
+     "type": "VARCHAR",
+     "ru": "кличка дела"
     },
     {
      "name": "verdict",
      "type": "VARCHAR",
-     "ru": "приговор: блокировать / наблюдать…"
+     "ru": "приговор: заблокировать / ограничить частоту / наблюдать / не трогать; пусто — у IP только визиты людей, строки в «Мерах по IP» нет"
     },
     {
      "name": "reason",
      "type": "VARCHAR",
      "ru": "основание"
+    },
+    {
+     "name": "subnet",
+     "type": "VARCHAR",
+     "ru": "подсеть"
+    },
+    {
+     "name": "network",
+     "type": "VARCHAR",
+     "ru": "сеть"
+    },
+    {
+     "name": "asn",
+     "type": "BIGINT",
+     "ru": "номер сети"
+    },
+    {
+     "name": "country",
+     "type": "VARCHAR",
+     "ru": "страна"
+    },
+    {
+     "name": "net_type",
+     "type": "VARCHAR",
+     "ru": "тип сети"
     },
     {
      "name": "n_visits",
@@ -2547,19 +2632,24 @@
      "ru": "отправок"
     },
     {
-     "name": "ts_first",
-     "type": "BIGINT",
-     "ru": "первый"
+     "name": "first_day",
+     "type": "VARCHAR",
+     "ru": "первый — как в отчёте"
     },
     {
-     "name": "ts_last",
-     "type": "BIGINT",
-     "ru": "последний"
+     "name": "last_day",
+     "type": "VARCHAR",
+     "ru": "последний — как в отчёте"
     },
     {
      "name": "has_people",
      "type": "BOOLEAN",
      "ru": "у IP есть обычные визиты людей: не блокировать, в STIX не выгружать"
+    },
+    {
+     "name": "pos",
+     "type": "INTEGER",
+     "ru": "порядок в «Мерах по IP»; пусто — строки в мерах нет"
     }
    ],
    "depends_on": [
@@ -2571,7 +2661,7 @@
    "built_in": "analyze",
    "replaces": "results.pkl (profiles.меры_ip, меры_ip_люди)",
    "rows_est": "2,7 тыс. / 0,7 млн",
-   "note_ru": "",
+   "note_ru": "Строки: все меры по IP (в порядке pos) и IP, у которых есть обычные визиты людей, но в мерах их нет (verdict и pos пусты). «Меры по IP» = строки с pos; список «меры_ip_люди» = строки с has_people.",
    "status": "agreed"
   },
   {
@@ -2595,7 +2685,7 @@
     {
      "name": "code",
      "type": "VARCHAR",
-     "ru": "код карточки"
+     "ru": "код карточки (вторая часть ключа)"
     },
     {
      "name": "severity",
@@ -2628,11 +2718,6 @@
      "ru": "что сделать"
     },
     {
-     "name": "main_number",
-     "type": "VARCHAR",
-     "ru": "главная цифра"
-    },
-    {
      "name": "sheet",
      "type": "VARCHAR",
      "ru": "лист с подробностями"
@@ -2640,7 +2725,7 @@
     {
      "name": "also_in",
      "type": "JSON",
-     "ru": "где ещё"
+     "ru": "где ещё (поле «также_в» как есть)"
     },
     {
      "name": "status",
@@ -2660,7 +2745,17 @@
     {
      "name": "params",
      "type": "JSON",
-     "ru": "числа карточки отдельно от текста — для сравнения проверок"
+     "ru": "числа карточки отдельно от текста: главная_цифра, было, стало, окно — для сравнения проверок"
+    },
+    {
+     "name": "extra",
+     "type": "JSON",
+     "ru": "остальные поля карточки, которых нет в колонках (факт, ещё_листы, калибровка, почему, отметка…)"
+    },
+    {
+     "name": "pos",
+     "type": "INTEGER",
+     "ru": "порядок карточки в results.pkl"
     }
    ],
    "depends_on": [
@@ -2672,7 +2767,7 @@
    "built_in": "analyze",
    "replaces": "results.pkl (findings)",
    "rows_est": "20–60",
-   "note_ru": "depends_on сводок не перечисляю: карточки читают почти все сводки и сущности.",
+   "note_ru": "Запись — в конце analyze и при сборке отчёта (после правок edits.json) модулем conclusions: таблица пересобирается целиком. Из таблицы восстанавливается тот же список карточек, что лежит в results.pkl (conclusions.read). Пустое значение колонки — поля у карточки нет.",
    "status": "agreed"
   },
   {

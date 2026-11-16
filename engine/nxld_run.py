@@ -41,6 +41,9 @@ def main():
     ovr = json.load(open(a.map_override, encoding='utf-8')) if a.map_override else None
     if a.stage in ('all', 'prepare'):
         prepare.run(a.logs, a.work, map_override=ovr)
+    if a.edits and a.stage in ('all', 'analyze') and os.path.exists(os.path.join(a.work, 'nxld.duckdb')):   # правки Детектива — в таблицы свидетельств (файл остаётся входом)
+        from nxld import conclusions
+        conclusions.load_edits(a.work, json.load(open(a.edits, encoding='utf-8')))
     if a.stage in ('all', 'analyze'):
         prev = json.load(open(a.prev, encoding='utf-8')) if a.prev else None
         analyze.run(a.work, sel, [x.strip() for x in a.check_ips.split(',') if x.strip()], marks, prev)

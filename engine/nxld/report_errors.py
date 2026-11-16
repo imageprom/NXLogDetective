@@ -35,6 +35,17 @@ def _d(v):
     except Exception: return str(v or '')
 
 
+_ISO_DAY = r'^\d{4}-\d{2}-\d{2}$'
+
+
+def _dser(s):
+    """_d по колонке целиком: даты вида 2026-09-01 — одним вызовом; пусто, другой вид или несуществующая дата — по значению, как _d."""
+    s = pd.Series(s)
+    txt = s.astype(str)
+    if not (s.notna() & txt.str.fullmatch(_ISO_DAY)).all() or pd.to_datetime(txt, format='%Y-%m-%d', errors='coerce').isna().any(): return s.map(_d)
+    return txt.str.slice(8, 10) + '.' + txt.str.slice(5, 7) + '.' + txt.str.slice(0, 4)
+
+
 def _t(v):
     try: return pd.to_datetime(v).strftime('%d.%m.%Y %H:%M')
     except Exception: return str(v or '')
@@ -62,7 +73,7 @@ def code_tab(wb, T, Sr, family):
     D = D.sort_values('запросов', ascending=False)
     d = pd.DataFrame({'Адрес': D['адрес'], 'Текущий статус': D['сейчас'], 'Основание': D['почему'], 'Запросов': D['запросов'].astype(int),
                       **{nm: D[nm].astype(int) for nm in WHO}, 'Уникальных IP': D['IP'].astype(int), 'Ошибки': D['коды'].map(fmt_codes),
-                      'Тип': D['тип'], 'Раздел': D['раздел'], 'Источники': D.get('источники', ''), 'Первый': D['первый'].map(_d), 'Последний': D['последний'].map(_d)})
+                      'Тип': D['тип'], 'Раздел': D['раздел'], 'Источники': D.get('источники', ''), 'Первый': _dser(D['первый']), 'Последний': _dser(D['последний'])})
     if family in ('404', '499'): d = d.drop(columns='Ошибки')   # код один — колонка ничего не добавляет
     fills = [fill_of(a, c) for a, c in zip(D['чужое'], D['критично'])]
     fonts = [None if a else font_of(ac, il) for a, ac, il in zip(D['чужое'], D['актуально'], D['болел'])]
@@ -85,7 +96,7 @@ def victims(wb, E):
     N = N.sort_values('запросов', ascending=False).reset_index(drop=True)
     d = pd.DataFrame({'Страница': N['адрес'], 'Текущий статус': N['сейчас'], 'Основание': N['почему'], 'История': N['статус'], 'Запросов': N['запросов'].astype(int),
                       'Люди': N['Люди'].astype(int), 'Поисковики': N['Поисковики'].astype(int), 'Свои': N['Свои'].astype(int), 'Ошибки': N['коды'].map(fmt_codes),
-                      'Раздел': N['раздел'], 'Источники': N.get('источники', ''), 'Первый': N['первый'].map(_d), 'Последний': N['последний'].map(_d)})
+                      'Раздел': N['раздел'], 'Источники': N.get('источники', ''), 'Первый': _dser(N['первый']), 'Последний': _dser(N['последний'])})
     fills = [fill_of(False, c) for c in N['критично']]
     fonts = [font_of(a, il) for a, il in zip(N['актуально'], N['болел'])]
     kpi = [('Страниц', len(d)), ('Критично', int(N['критично'].sum())), ('Не работают сейчас', int(N['актуально'].sum())), ('Починились', int((~N['актуально'] & N['болел']).sum()))]

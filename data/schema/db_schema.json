@@ -3190,22 +3190,34 @@
   {
    "name": "sum_links",
    "group": "summary",
-   "grain_ru": "переход: источник → цель × код",
+   "grain_ru": "переход: источник (страница сайта или внешний хост) → адрес × код × кто",
    "pk": [
+    "src_kind",
     "src",
+    "ref_host",
     "dst_path_id",
-    "status"
+    "status",
+    "is_ad",
+    "scope",
+    "category",
+    "fam",
+    "fam_verified"
    ],
    "columns": [
     {
-     "name": "src",
-     "type": "VARCHAR",
-     "ru": "шаблон страницы-источника или внешний хост"
-    },
-    {
      "name": "src_kind",
      "type": "VARCHAR",
-     "ru": "internal / external / script"
+     "ru": "откуда: site (страница сайта), external (другой сайт), none (без реферера — только ответы с ошибкой и конструкты)"
+    },
+    {
+     "name": "src",
+     "type": "VARCHAR",
+     "ru": "страница-источник (путь реферера) для site; хост реферера как записан в логе — для external; пусто — без реферера"
+    },
+    {
+     "name": "ref_host",
+     "type": "VARCHAR",
+     "ru": "хост реферера как записан в логе (dim_ref.ref_host; «nan» — не записан)"
     },
     {
      "name": "dst_path_id",
@@ -3216,7 +3228,33 @@
     {
      "name": "status",
      "type": "SMALLINT",
-     "ru": "код"
+     "ru": "код ответа"
+    },
+    {
+     "name": "is_ad",
+     "type": "BOOLEAN",
+     "ru": "в адресе метки рекламы (yclid, gclid, utm_*…)"
+    },
+    {
+     "name": "scope",
+     "type": "VARCHAR",
+     "ru": "область: site / server",
+     "enum": "scope"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория визита"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство визита после правил"
+    },
+    {
+     "name": "fam_verified",
+     "type": "VARCHAR",
+     "ru": "подлинность робота"
     },
     {
      "name": "n_req",
@@ -3224,66 +3262,131 @@
      "ru": "переходов"
     },
     {
+     "name": "n_ip",
+     "type": "INTEGER",
+     "ru": "разных IP (только на зерне)"
+    },
+    {
      "name": "n_visits",
      "type": "INTEGER",
-     "ru": "визитов"
+     "ru": "разных визитов (только на зерне)"
     },
     {
-     "name": "n_people",
-     "type": "INTEGER",
-     "ru": "людей (IP)"
-    },
-    {
-     "name": "n_search",
+     "name": "bytes",
      "type": "BIGINT",
-     "ru": "поисковиков"
+     "ru": "байт"
+    },
+    {
+     "name": "day_first",
+     "type": "DATE",
+     "ru": "первый день"
+    },
+    {
+     "name": "day_last",
+     "type": "DATE",
+     "ru": "последний день"
+    },
+    {
+     "name": "ts_first",
+     "type": "BIGINT",
+     "ru": "время первого запроса строки, секунды"
+    },
+    {
+     "name": "eid_first",
+     "type": "BIGINT",
+     "ru": "номер первого события строки"
     }
    ],
    "depends_on": [
     "access_events",
     "visits",
     "dim_ref",
+    "dim_query",
     "dim_path",
-    "dim_host"
+    "dim_host",
+    "dim_ua"
    ],
    "built_in": "analyze",
    "replaces": "",
-   "rows_est": "десятки тысяч",
-   "note_ru": "Листы: Битые внутренние, Битые внешние, Битые из скриптов, хотлинк.",
+   "rows_est": "≈ 0,15 млн на 3 млн запросов (все ответы с ошибкой, все переходы с внешних сайтов, все запросы к адресам-конструктам)",
+   "note_ru": "Листы: Битые внутренние, Битые внешние, Битые адреса из скриптов (конструкты), Хотлинк. В сводке — только: ответы 4xx и 5xx (все, в том числе 499), любые ответы на переход с другого сайта и все запросы к адресам формы «конструкт» (dim_path.shape). Области site и server; контексты чтения — как у sum_time. n_ip и n_visits верны только на зерне (по паре «откуда → куда» разные визиты — запрос по событиям). Порядок равных — по (ts_first, eid_first).",
    "status": "agreed",
    "rebuild": "always"
   },
   {
    "name": "sum_params",
    "group": "summary",
-   "grain_ru": "шаблон адреса × параметр × значение",
+   "grain_ru": "строка параметров × раздел × кто × признаки запроса",
    "pk": [
-    "tpl",
-    "key",
-    "value",
-    "scope"
+    "query_id",
+    "section",
+    "scope",
+    "category",
+    "fam",
+    "fam_cat",
+    "ref_internal",
+    "is_page",
+    "is_embedded",
+    "is_get",
+    "is_err"
    ],
    "columns": [
     {
-     "name": "tpl",
-     "type": "VARCHAR",
-     "ru": "шаблон адреса"
+     "name": "query_id",
+     "type": "INTEGER",
+     "ru": "строка параметров",
+     "fk": "dim_query.query_id"
     },
     {
-     "name": "key",
+     "name": "section",
      "type": "VARCHAR",
-     "ru": "параметр"
-    },
-    {
-     "name": "value",
-     "type": "VARCHAR",
-     "ru": "значение (длинные и редкие — свёрнуты)"
+     "ru": "раздел: первый уровень адреса («/catalog/»); пусто — адрес без раздела"
     },
     {
      "name": "scope",
      "type": "VARCHAR",
-     "ru": "область",
+     "ru": "область: site / server",
      "enum": "scope"
+    },
+    {
+     "name": "category",
+     "type": "VARCHAR",
+     "ru": "категория визита"
+    },
+    {
+     "name": "fam",
+     "type": "VARCHAR",
+     "ru": "семейство визита после правил"
+    },
+    {
+     "name": "fam_cat",
+     "type": "VARCHAR",
+     "ru": "категория семейства по словарю dim_ua"
+    },
+    {
+     "name": "ref_internal",
+     "type": "BOOLEAN",
+     "ru": "реферер — страница сайта"
+    },
+    {
+     "name": "is_page",
+     "type": "BOOLEAN",
+     "ru": "просмотр страницы"
+    },
+    {
+     "name": "is_embedded",
+     "type": "BOOLEAN",
+     "ru": "подгружаемый блок страницы"
+    },
+    {
+     "name": "is_get",
+     "type": "BOOLEAN",
+     "ru": "метод GET"
+    },
+    {
+     "name": "is_err",
+     "type": "BOOLEAN",
+     "ru": "ответ 4xx или 5xx"
     },
     {
      "name": "n_req",
@@ -3291,27 +3394,30 @@
      "ru": "запросов"
     },
     {
-     "name": "n_ip_people",
+     "name": "n_ip",
      "type": "INTEGER",
-     "ru": "людей (IP)"
+     "ru": "разных IP (только на зерне)"
     },
     {
      "name": "n_visits",
      "type": "INTEGER",
-     "ru": "визитов"
+     "ru": "разных визитов (только на зерне)"
     }
    ],
    "depends_on": [
     "access_events",
-    "query_params",
+    "access_events#flags",
     "visits",
+    "dim_ua",
+    "dim_ref",
+    "dim_query",
     "dim_path",
     "dim_host"
    ],
    "built_in": "analyze",
    "replaces": "",
-   "rows_est": "сотни тысяч",
-   "note_ru": "Листы: Параметры запросов, Фасеты, Атаки в параметрах, Токены в адресах, Паразитные адреса.",
+   "rows_est": "≈ 0,1 млн на 90 тыс. разных строк параметров",
+   "note_ru": "Листы: Параметры запросов (01) — все счётчики по строке параметров: запросы, переходы по страницам, люди со страниц сайта, подгрузки, сотрудники, сканеры, ошибки, разделы, роботы. Только запросы с непустой строкой параметров. Значения параметров — в query_params (разобраны один раз на значение словаря), поэтому по значениям сводка не дробится: длинные и редкие значения в неё не попадают. Разные визиты людей по группе строк и счётчики по префиксам системных папок и закрытых зон — запросами по событиям (папки известны только после «Анатомии»). Области site и server; контексты — как у sum_time.",
    "status": "agreed",
    "rebuild": "always"
   },

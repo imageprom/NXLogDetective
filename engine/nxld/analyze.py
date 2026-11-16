@@ -337,7 +337,7 @@ def run(workdir, selected=None, check_ips=(), marks=None, prev=None, log=print):
         allref = reference.Reference([n_ for n_ in reference.all_engine_names()], (), site_)
         ref.other = allref
         ref.foreign_paths = reference.foreign_paths(allref, ref)
-        Pr = recon.query_params_inventory(Rs, cs.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(cs.rg == 'Свои'), zone_prefixes=zones_, T=T_)
+        Pr = recon.query_params_inventory(Rs, cs.human, PARAM_GROUPS, navk, sysp, ref, staff=np.asarray(cs.rg == 'Свои'), zone_prefixes=zones_, T=T_, sums=getattr(cs, 'sums', None))
         res['params'] = Pr.to_dict('records')
         # незнакомые: нет в справочнике (или запись из поиска устарела) и заметное число запросов — Детектив ищет их в сети
         unk = Pr[(Pr['источник'] == 'дедукция') & ~Pr['группа'].isin(['Атаки и зонды', 'Логика сайта']) & (Pr['запросов'] >= T_('незнакомый_ключ'))

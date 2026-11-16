@@ -12,6 +12,10 @@
 Где блоку нужно «разных IP по адресу и коду», — отдельный запрос по событиям (Sums.events), а не сумма по строкам сводки.
 «Кто» — признаки визита: все запросы визита попадают в одну строку «кто» своего часа.
 
+Сводки переходов и параметров:
+  sum_links — переход: источник (страница сайта или внешний хост) → адрес × код × кто: все ответы с ошибкой, все переходы с внешних сайтов и все запросы к адресам-конструктам;
+  sum_params — строка параметров × раздел × кто × признаки запроса: всё, из чего строится перечень «Параметры запросов».
+
 Сводки по адресам:
   sum_path_status — адрес × хост × код × кто × откуда запрос; первое появление строки — (ts_first, eid_first): по нему при равных счётах
     воспроизводится порядок «кто встретился раньше», как у value_counts по таблице запросов;
@@ -20,7 +24,7 @@ import os
 import numpy as np, pandas as pd
 from . import db
 
-TABLES = ('sum_time', 'sum_minute', 'sum_path_status', 'sum_path_day')
+TABLES = ('sum_time', 'sum_minute', 'sum_path_status', 'sum_path_day', 'sum_links', 'sum_params')
 CONTEXTS = {'site': "scope = 'site'", 'all': "NOT (scope = 'server' AND category = 'Люди')"}
 SEARCH_FAMS = ('YandexBot', 'Googlebot', 'YandexRenderResourcesBot', 'Googlebot-Image', 'Bingbot')   # подлинные поисковые роботы: тот же список, что blocks.Ctx.search_ok
 DAY = "strftime(day, '%Y-%m-%d')"
@@ -114,6 +118,30 @@ FROM (SELECT *, max(CASE WHEN NOT staff THEN struct_pack(t := ts, i := eid, s :=
 GROUP BY ALL ORDER BY ALL"""
 
 
+EXTERNAL = "NOT coalesce(r.is_internal, false) AND coalesce(r.ref_host, 'nan') NOT IN ('', '-', 'nan')"
+SQL_LINKS = f"""CREATE OR REPLACE TABLE sum_links AS
+SELECT src_kind, src, ref_host, dst_path_id, status, is_ad, scope, category, fam, fam_verified,
+       CAST(count(*) AS BIGINT) AS n_req, CAST(count(DISTINCT ip_id) AS INTEGER) AS n_ip, CAST(count(DISTINCT vid) AS INTEGER) AS n_visits, CAST(coalesce(sum(bytes), 0) AS BIGINT) AS bytes,
+       {EPOCH_DAY.format(ts='min(ts)')} AS day_first, {EPOCH_DAY.format(ts='max(ts)')} AS day_last, CAST(f.t AS BIGINT) AS ts_first, CAST(f.i AS BIGINT) AS eid_first
+FROM (SELECT *, min(struct_pack(t := ts, i := eid)) OVER (PARTITION BY src_kind, src, ref_host, dst_path_id, status, is_ad, scope, category, fam, fam_verified) AS f
+      FROM (SELECT CASE WHEN coalesce(r.is_internal, false) THEN 'site' WHEN coalesce(r.ref_host, 'nan') IN ('', '-', 'nan') THEN 'none' ELSE 'external' END AS src_kind,
+                   CASE WHEN coalesce(r.is_internal, false) THEN coalesce(r.ref_path, 'nan') WHEN coalesce(r.ref_host, 'nan') NOT IN ('', '-', 'nan') THEN coalesce(r.ref_host, 'nan') ELSE '' END AS src,
+                   coalesce(r.ref_host, 'nan') AS ref_host, e.path_id AS dst_path_id, e.status AS status, coalesce(regexp_matches(q.query, '{AD_MARK}'), false) AS is_ad,
+                   coalesce(h.scope, 'site') AS scope, coalesce(v.category, '') AS category, coalesce(v.fam, u.fam, '') AS fam, coalesce(v.fam_verified, '') AS fam_verified,
+                   e.ip_id AS ip_id, e.vid AS vid, e.bytes AS bytes, e.ts AS ts, e.eid AS eid
+            FROM {EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off' AND (e.status >= 400 OR ({EXTERNAL}) OR p.shape = 'конструкт')))
+GROUP BY ALL ORDER BY ALL"""
+
+SQL_PARAMS = f"""CREATE OR REPLACE TABLE sum_params AS
+SELECT query_id, section, scope, category, fam, fam_cat, ref_internal, is_page, is_embedded, is_get, is_err,
+       CAST(count(*) AS BIGINT) AS n_req, CAST(count(DISTINCT ip_id) AS INTEGER) AS n_ip, CAST(count(DISTINCT vid) AS INTEGER) AS n_visits
+FROM (SELECT e.query_id AS query_id, regexp_extract(p.path, '^(/[^/?]*/?)', 1) AS section, coalesce(h.scope, 'site') AS scope, coalesce(v.category, '') AS category,
+             coalesce(v.fam, u.fam, '') AS fam, coalesce(u.fam_cat, '') AS fam_cat, coalesce(r.is_internal, false) AS ref_internal, coalesce(e.is_page, false) AS is_page,
+             coalesce(e.is_embedded, false) AS is_embedded, coalesce(e.method = 'GET', false) AS is_get, e.status >= 400 AS is_err, e.ip_id AS ip_id, e.vid AS vid
+      FROM {EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off' AND q.query <> '' AND q.query <> 'nan')
+GROUP BY ALL ORDER BY ALL"""
+
+
 def enabled():
     """NXLD_SUMMARIES=0 — блоки считают по-старому, по таблицам в памяти (для сверки); сводки при этом всё равно строятся."""
     return os.environ.get('NXLD_SUMMARIES', '1') != '0'
@@ -126,7 +154,7 @@ def build(workdir, con=None, log=None):
     if own: con = db.connect(workdir)
     out = {}
     try:
-        for name, sql in (('sum_time', SQL_TIME), ('sum_minute', SQL_MINUTE), ('sum_path_status', SQL_PATH_STATUS), ('sum_path_day', SQL_PATH_DAY)):
+        for name, sql in (('sum_time', SQL_TIME), ('sum_minute', SQL_MINUTE), ('sum_path_status', SQL_PATH_STATUS), ('sum_path_day', SQL_PATH_DAY), ('sum_links', SQL_LINKS), ('sum_params', SQL_PARAMS)):
             t0 = time.time()
             con.execute(sql)
             out[name] = db.mark_built(con, name, seconds=time.time() - t0)
@@ -153,9 +181,11 @@ class Sums:
     def __init__(self, workdir, context):
         self.workdir, self.context, self.where = workdir, context, CONTEXTS[context]
 
-    def q(self, sql, params=None):
+    def q(self, sql, params=None, frames=None):
+        """Запрос к базе; frames — небольшие таблицы pandas, которые запрос видит по имени (список адресов и т. п.)."""
         con = db.connect(self.workdir, read_only=True)
         try:
+            for k, df in (frames or {}).items(): con.register(k, df)
             return con.execute(sql, params or []).df()
         finally:
             con.close()
@@ -166,6 +196,12 @@ class Sums:
 
     def minute(self, select, where=None):
         return self.q(f"SELECT {select} FROM sum_minute WHERE {self.where}{' AND (' + where + ')' if where else ''} GROUP BY ALL ORDER BY ALL")
+
+    def links(self, select, where=None, frames=None, params=None, group=False):
+        """Свёртка sum_links с адресом цели (p.path), его шаблоном (ps.tpl) и шаблоном страницы-источника (st.tpl — только для страниц сайта среди адресов контекста)."""
+        tpl = f"(SELECT DISTINCT p2.path AS path, ps2.tpl AS tpl FROM sum_path_status s2 JOIN dim_path p2 USING (path_id) JOIN path_site ps2 USING (path_id) WHERE {self.where})"
+        return self.q(f"SELECT {select} FROM sum_links s JOIN dim_path p ON p.path_id = s.dst_path_id LEFT JOIN path_site ps ON ps.path_id = s.dst_path_id LEFT JOIN {tpl} st ON st.path = s.src AND s.src_kind = 'site' "
+                      f"WHERE {self.where.replace('scope', 's.scope').replace('category', 's.category')}{' AND (' + where + ')' if where else ''}{' GROUP BY ALL' if group else ''}", params, frames)
 
     def path(self, select, where=None, having=None):
         """Свёртка sum_path_status (адрес — p.path из dim_path): группировка — по всем колонкам без сумм. Счётчики разных IP и визитов не складываются."""

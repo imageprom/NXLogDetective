@@ -808,6 +808,36 @@ TARGETS = [('WordPress', r'wp-|xmlrpc'), ('Утечки конфигов (.env, 
            ('Установщики Битрикс', r'restore\.php|bitrixsetup|install\.php|setup\.php'), ('Роутеры/IoT/почта', r'boaform|HNAP|owa|autodiscover|cgi-bin'), ('Прочее', r'.')]
 
 
+def _constructs_sums(c):
+    """Таблица конструктов из сводки переходов: запросы, коды, люди, страницы-источники — по адресу; разные IP — запросом по событиям."""
+    sm = c.sums
+    A_ = c.addr
+    cats = np.asarray(c.R['base'].cat.categories.astype(str))
+    allowed = pd.DataFrame({'path': cats[(A_['форма'] == 'конструкт').reindex(range(len(cats))).fillna(False).values.astype(bool)]})
+    L = sm.links("s.src_kind AS src_kind, s.src AS src, p.path AS base, s.status AS status, s.category AS category, s.n_req AS n, strftime(s.day_last, '%Y-%m-%d') AS d1, s.ts_first AS t, s.eid_first AS i",
+                 "p.path IN (SELECT path FROM allowed)", frames={'allowed': allowed})
+    if not len(L): return pd.DataFrame()
+    L['люди'] = L['category'].isin(['Люди', 'Свои']); L['роботы'] = L['category'] == 'Роботы'
+    site = L['src_kind'] == 'site'
+    self_ = site & (L['src'] == L['base'])
+    L['со_страниц'] = site & L['люди'] & ~self_
+    L['ref'] = L['src'].where(site & ~self_, '')
+    ips = sm.q(f"""SELECT p.path AS base, CAST(count(DISTINCT ev.ip_id) AS BIGINT) AS ip FROM (SELECT {summaries.EV_COLS} FROM {summaries.EV_FROM} WHERE coalesce(h.scope, 'site') <> 'off') ev
+                   JOIN dim_path p ON p.path_id = ev.path_id JOIN allowed a ON a.path = p.path WHERE {sm.where.replace('scope', 'ev.scope').replace('category', 'ev.category')} GROUP BY ALL""", frames={'allowed': allowed}).set_index('base')['ip']
+    rows = []
+    L['b'] = summaries.base_codes(c, L['base'])
+    for b, g in L.sort_values('b').groupby('b', sort=True):
+        C = g.groupby('status').agg(n=('n', 'sum')).reset_index()
+        C['f'] = [min(zip(g.loc[g['status'] == s_, 't'], g.loc[g['status'] == s_, 'i'])) for s_ in C['status']]
+        C = C.sort_values(['n', 'f'], ascending=[False, True], kind='stable')
+        pg_ = g[g['ref'].str.startswith('/')].groupby('ref')['n'].sum()
+        top = pg_[pg_ == pg_.max()].index.sort_values()[0] if len(pg_) else ''
+        rows.append(dict(адрес=str(g['base'].iloc[0]), запросов=int(g['n'].sum()), IP=int(ips.get(g['base'].iloc[0], 0)), люди=int(g.loc[g['люди'], 'n'].sum()), роботы=int(g.loc[g['роботы'], 'n'].sum()),
+                         со_страниц_сайта=int(g.loc[g['со_страниц'], 'n'].sum()), последний=str(g['d1'].max()),
+                         коды=', '.join(f"{int(k)}: {int(v)}" for k, v in list(zip(C['status'], C['n']))[:4]), страница=top))
+    return pd.DataFrame(rows)
+
+
 def constructs(c):
     """Конструкты из реестра адресов: это не адрес — шаблон JavaScript, склейка строк, кавычки, параметры без «?».
     Со страниц сайта у людей — битый код сайта (ошибка); у роботов — битая ссылка в сети; у посторонних — инъекции и зонды."""
@@ -815,7 +845,13 @@ def constructs(c):
     R = c.R
     kg = pd.DataFrame()
     A_ = getattr(c, 'addr', None)
-    if A_ is not None and (A_['форма'] == 'конструкт').any():
+    if A_ is not None and (A_['форма'] == 'конструкт').any() and getattr(c, 'sums', None) is not None:
+        kg = _constructs_sums(c)
+        if len(kg):
+            kg['вывод'] = np.select([kg['со_страниц_сайта'] > 0, kg['люди'] > 0, kg['роботы'] > 0],
+                                    ['битый код страницы: адрес собран скриптом сайта', 'у людей, без страницы сайта: битая ссылка снаружи', 'роботы: битая ссылка где-то в сети'], 'посторонние: инъекция или зонд')
+            kg = kg.sort_values(['со_страниц_сайта', 'запросов'], ascending=False)
+    elif A_ is not None and (A_['форма'] == 'конструкт').any():
         cc_ = R['base'].cat.codes.values
         km = (A_['форма'] == 'конструкт').reindex(range(len(R['base'].cat.categories))).fillna(False).values[cc_]
         K = R.loc[km, ['base', 'status', 'ip', 'ref_internal', 'ref_path', 'day']].assign(люди=c.human[km] | np.asarray(c.rg == 'Свои')[km], роботы=np.asarray(c.rg == 'Роботы')[km])
@@ -935,10 +971,16 @@ def load_security(c, F):
               f"Вместе {big_img['ГБ'].sum():.1f} ГБ трафика; пример {big_img.index[0]} ({int(big_img['средний_КБ'].iloc[0])} КБ)", 'контент/вёрстка', 'Сжать, перевести в WebP/AVIF, отдавать по размеру экрана', round(big_img['ГБ'].sum(), 1), 'Тяжёлые файлы')
     sm = R['is_static'].values & c.human
     share304 = (st[sm] == 304).mean() if sm.any() else 0
-    hot = R.loc[R['is_static'].values & ~R['ref_internal'].values & (R['ref_host'] != '').values & R['ext'].isin(['jpg', 'jpeg', 'png', 'webp', 'gif']).values, ['ref_host', 'bytes']]
-    hot = hot[~hot['ref_host'].astype(str).str.contains(r'yandex|google|bing|ya\.ru|mail\.ru|webvisor|metrika', regex=True)]
+    if sums_ is not None:   # картинки сайта по рефереру с другого сайта — из сводки переходов; порядок строк — по имени хоста, как у группировки (от него зависит порядок равных)
+        hot = sums_.links("s.ref_host AS ref_host, CAST(sum(s.n_req) AS BIGINT) AS size, CAST(sum(s.bytes) AS BIGINT) AS sum", "s.src_kind = 'external' AND p.is_static AND p.ext IN ('jpg', 'jpeg', 'png', 'webp', 'gif')", group=True)
+        hot = hot[~hot['ref_host'].astype(str).str.contains(r'yandex|google|bing|ya\.ru|mail\.ru|webvisor|metrika', regex=True)].sort_values('ref_host')
+        hot = hot.set_index('ref_host')[['size', 'sum']] if len(hot) else hot
+    else:
+        hot = R.loc[R['is_static'].values & ~R['ref_internal'].values & (R['ref_host'] != '').values & R['ext'].isin(['jpg', 'jpeg', 'png', 'webp', 'gif']).values, ['ref_host', 'bytes']]
+        hot = hot[~hot['ref_host'].astype(str).str.contains(r'yandex|google|bing|ya\.ru|mail\.ru|webvisor|metrika', regex=True)]
+        hot = hot.groupby('ref_host', observed=True)['bytes'].agg(['size', 'sum']) if len(hot) else hot
     if len(hot):
-        S['Хотлинк'] = hot.groupby('ref_host', observed=True)['bytes'].agg(['size', 'sum']).rename(columns={'size': 'запросов', 'sum': 'байт'}).sort_values('байт', ascending=False).head(50).reset_index()
+        S['Хотлинк'] = hot.rename(columns={'size': 'запросов', 'sum': 'байт'}).sort_values('байт', ascending=False).head(50).reset_index()
         hk = S['Хотлинк']; big = hk[hk['байт'] >= 50 * 1024 ** 2]
         if len(big):
             dev = big[big['ref_host'].astype(str).str.contains(r'dev|test|stage|staging|demo|local', regex=True)]

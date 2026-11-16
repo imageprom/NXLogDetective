@@ -1903,27 +1903,27 @@
     {
      "name": "category",
      "type": "VARCHAR",
-     "ru": "основная категория (по запросам)"
+     "ru": "основная категория: у самого большого по запросам визита этого IP"
     },
     {
      "name": "type",
      "type": "VARCHAR",
-     "ru": "основной тип"
-    },
-    {
-     "name": "who",
-     "type": "VARCHAR",
-     "ru": "подпись «кто»"
+     "ru": "тип того же визита"
     },
     {
      "name": "n_categories",
      "type": "SMALLINT",
-     "ru": "сколько разных категорий у IP"
+     "ru": "сколько разных категорий у визитов IP"
     },
     {
      "name": "is_live",
      "type": "BOOLEAN",
-     "ru": "живой посетитель (люди, свои — кроме сервера сайта)"
+     "ru": "живой посетитель: основная категория «Люди» или «Свои», кроме сервера сайта"
+    },
+    {
+     "name": "has_people",
+     "type": "BOOLEAN",
+     "ru": "у IP есть обычные визиты людей: такой IP не блокируется и не выгружается в STIX"
     },
     {
      "name": "n_visits",
@@ -1961,34 +1961,14 @@
      "ru": "дней с запросами"
     },
     {
-     "name": "n_probe",
-     "type": "BIGINT",
-     "ru": "зондов"
-    },
-    {
-     "name": "n_attack",
-     "type": "BIGINT",
-     "ru": "запросов с атакой в параметрах"
-    },
-    {
-     "name": "n_leak_ok",
-     "type": "BIGINT",
-     "ru": "успешных скачиваний утёкших файлов"
-    },
-    {
-     "name": "n_login",
-     "type": "BIGINT",
-     "ru": "обращений к точкам входа"
-    },
-    {
      "name": "n_submits",
      "type": "BIGINT",
-     "ru": "отправок форм"
+     "ru": "отправок целей"
     },
     {
      "name": "n_refused",
      "type": "BIGINT",
-     "ru": "отказов 403/429/444"
+     "ru": "отказов 403 / 429 / 444"
     },
     {
      "name": "n_errlog",
@@ -1998,17 +1978,15 @@
    ],
    "depends_on": [
     "visits",
-    "access_events",
     "access_events#flags",
     "error_events",
-    "dim_path",
-    "dim_query"
+    "ip_measures"
    ],
    "built_in": "analyze",
    "replaces": "common.ip_profile, profiles.ip_features (в памяти)",
    "rows_est": "46 тыс. / 1,1 млн",
-   "note_ru": "Список счётчиков уточняется при переводе дел и мер по IP (круг 4d/5): сейчас их набор задан кодом profiles.ip_features.",
-   "status": "draft"
+   "note_ru": "Копии сайта на других доменах не входят. Список счётчиков расширяется по мере перевода блоков.",
+   "status": "agreed"
   },
   {
    "name": "testimony",
@@ -2386,7 +2364,6 @@
    ],
    "depends_on": [
     "visits",
-    "ip_period",
     "case_overrides"
    ],
    "built_in": "analyze",
@@ -2655,13 +2632,12 @@
    "depends_on": [
     "cases",
     "case_members",
-    "ip_period",
     "ip_overrides"
    ],
    "built_in": "analyze",
    "replaces": "results.pkl (profiles.меры_ip, меры_ip_люди)",
    "rows_est": "2,7 тыс. / 0,7 млн",
-   "note_ru": "Строки: все меры по IP (в порядке pos) и IP, у которых есть обычные визиты людей, но в мерах их нет (verdict и pos пусты). «Меры по IP» = строки с pos; список «меры_ip_люди» = строки с has_people.",
+   "note_ru": "Только IP, по которым есть мера. IP с визитами людей без дела — в ip_period (has_people).",
    "status": "agreed"
   },
   {
@@ -2761,7 +2737,6 @@
    "depends_on": [
     "finding_overrides",
     "visits",
-    "ip_period",
     "cases"
    ],
    "built_in": "analyze",

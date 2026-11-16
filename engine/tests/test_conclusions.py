@@ -72,15 +72,18 @@ def test_numbers_of_card_are_kept_apart_from_text(run):
 
 
 def test_people_ip_measures_and_stix(run):
+    """В ip_measures — только IP, по которым есть мера; «у IP есть обычные визиты людей» — признак в ip_period и в строке меры."""
     con = db.connect(run['work'], read_only=True)
     M = con.execute("SELECT ip, case_id, verdict, has_people, pos FROM ip_measures").fetchdf()
+    P = con.execute("SELECT i.ip, p.* FROM ip_period p JOIN dim_ip i USING (ip_id)").fetchdf()
     con.close()
-    ppl = M[M['has_people']]
-    assert PEOPLE_IP in set(ppl['ip'])
-    inc = ppl[ppl['pos'].notna() & ppl['case_id'].notna()]
+    assert M['pos'].notna().all() and M['verdict'].notna().all()   # строк «без меры» в таблице мер нет
+    ppl = P[P['has_people']]
+    assert PEOPLE_IP in set(ppl['ip']) and len(ppl) > len(M[M['has_people']])   # IP людей без дела — только в ip_period
+    assert set(M.loc[M['has_people'], 'ip']) <= set(ppl['ip'])
+    inc = M[M['has_people'] & M['case_id'].notna()]
     assert len(inc), 'IP с визитами людей в деле — случай, который проверяем'
     assert set(inc['verdict']) == {'не трогать'}
-    assert set(M.loc[~M['has_people'] & M['pos'].notna(), 'ip']).isdisjoint(set(ppl['ip']))
     assert not M[M['has_people'] & M['verdict'].isin(['заблокировать', 'ограничить частоту'])].shape[0]
     # в STIX таких IP нет — ни объектом, ни в шаблонах
     out = os.path.join(run['d'], 'out')
@@ -181,3 +184,24 @@ def test_learned_in_table_and_in_engine_folder(run, edited):
     got = {(r.kind, r.key): r.source for r in L.itertuples()}
     assert got.get(('param', 'yhid')) == 'detective' and got.get(('extension', 'glb')) == 'detective' and got.get(('monitor', 'Overseer')) == 'detective'
     assert any(k == 'signature' for k, _ in got)   # сигнатуры дел — тоже найденное прогоном
+
+
+def test_ip_period_counters_match_visits_and_events(run):
+    """IP за период: счётчики равны посчитанным по итоговым визитам и событиям; строка на каждый IP с визитами."""
+    con = db.connect(run['work'], read_only=True)
+    P = con.execute("SELECT i.ip, p.* FROM ip_period p JOIN dim_ip i USING (ip_id)").fetchdf().set_index('ip')
+    V = con.execute("SELECT i.ip, v.category, v.type, v.n_req, v.n_pages, v.bytes, v.ts_start, v.ts_end FROM visits v JOIN dim_ip i USING (ip_id)").fetchdf()
+    E = con.execute("SELECT i.ip, e.ts, e.status, e.form_key FROM access_events e JOIN dim_ip i USING (ip_id) WHERE e.vid IS NOT NULL").fetchdf()
+    G = con.execute("SELECT i.ip, count(*) n FROM error_events e JOIN dim_ip i USING (ip_id) GROUP BY 1").fetchdf().set_index('ip')['n']
+    con.close()
+    assert len(P) == V['ip'].nunique() and P.index.is_unique
+    g = V.groupby('ip')
+    for col, want in (('n_visits', g.size()), ('n_req', g['n_req'].sum()), ('n_pages', g['n_pages'].sum()), ('bytes', g['bytes'].sum()), ('ts_first', g['ts_start'].min()),
+                      ('ts_last', g['ts_end'].max()), ('n_categories', g['category'].nunique()), ('n_days', E.groupby('ip')['ts'].apply(lambda s: (s // 86400).nunique())),
+                      ('n_submits', E[E['form_key'].notna()].groupby('ip').size()), ('n_refused', E[E['status'].isin([403, 429, 444])].groupby('ip').size()), ('n_errlog', G)):
+        assert (P[col].astype('int64') == want.reindex(P.index).fillna(0).astype('int64')).all(), col
+    top = V.sort_values('n_req', ascending=False).drop_duplicates('ip').set_index('ip')
+    one = P.index[P['n_visits'] == 1]   # у IP с одним визитом основная категория однозначна
+    assert (P.loc[one, 'category'] == top.loc[one, 'category']).all()
+    assert (P['is_live'] == (P['category'].isin(['Люди', 'Свои']) & (P['type'].fillna('') != 'сервер сайта'))).all()
+    assert P.loc[PEOPLE_IP, 'n_categories'] >= 2 and bool(P.loc[PEOPLE_IP, 'has_people'])

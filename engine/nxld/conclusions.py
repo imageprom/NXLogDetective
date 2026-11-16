@@ -12,7 +12,7 @@ import json, os, re
 import numpy as np, pandas as pd
 from . import db
 
-CONCLUSIONS = ('findings', 'cases', 'case_members', 'signatures', 'ip_measures')
+CONCLUSIONS = ('findings', 'cases', 'case_members', 'signatures', 'ip_measures', 'ip_period')
 EVIDENCE = ('testimony', 'experiments', 'net_checks', 'ip_overrides', 'case_overrides', 'finding_overrides')
 # поле карточки → колонка
 FINDING_TEXT = {'блок': 'block', 'важность': 'severity', 'заголовок': 'title', 'что_происходит': 'what', 'факты': 'facts', 'где_править': 'where_fix', 'что_сделать': 'action',
@@ -150,9 +150,6 @@ def write(workdir, res, con=None):
             df = _by_columns(MI, MEASURE_COLS); df['pos'] = np.arange(len(df))
             df['case_id'] = df['case_id'].where(df['case_id'].astype(str) != '', None) if 'case_id' in df else None
         else: df = pd.DataFrame({'ip': pd.Series(dtype=object)})
-        have = set(df['ip'].astype(str))   # один раз: на сотнях тысяч IP людей пересборка множества на каждый IP — минуты
-        only = [ip for ip in people if ip not in have]
-        if only: df = pd.concat([df, pd.DataFrame({'ip': only})], ignore_index=True)
         if len(df):
             df['has_people'] = df['ip'].astype(str).isin(people)
             df['ip_id'] = _ip_ids(con, df['ip']).values
@@ -160,10 +157,32 @@ def write(workdir, res, con=None):
                 if c not in df: df[c] = None
         else: df = pd.DataFrame(columns=cols)
         _insert(con, 'ip_measures', df, cols)
+        ip_period(con, people)
         out = {t: con.execute(f'SELECT count(*) FROM {t}').fetchone()[0] for t in CONCLUSIONS}
     finally:
         if own: con.close()
     return out
+
+
+def ip_period(con, people):
+    """IP за период проверки: основная категория, счётчики по визитам и событиям, признак «есть обычные визиты людей».
+    Считается по итогу правил (visits); копии сайта на других доменах не входят."""
+    con.register('ppl_df', pd.DataFrame({'ip': np.asarray(sorted(people), dtype=object)}))
+    con.execute('CREATE OR REPLACE TEMP TABLE ppl_tmp AS SELECT i.ip_id FROM ppl_df p JOIN dim_ip i ON i.ip = p.ip')
+    con.unregister('ppl_df')
+    con.execute('DELETE FROM ip_period')
+    con.execute("""INSERT INTO ip_period (ip_id, category, type, n_categories, is_live, has_people, n_visits, n_req, n_pages, bytes, ts_first, ts_last, n_days, n_submits, n_refused, n_errlog)
+        WITH v AS (SELECT ip_id, arg_max(category, n_req) category, arg_max(type, n_req) type, count(DISTINCT category) n_categories, count(*) n_visits,
+                          sum(n_req) n_req, sum(n_pages) n_pages, sum(bytes) bytes, min(ts_start) ts_first, max(ts_end) ts_last
+                   FROM visits GROUP BY ip_id),
+             e AS (SELECT ip_id, count(DISTINCT ts // 86400) n_days, count(*) FILTER (form_key IS NOT NULL) n_submits, count(*) FILTER (status IN (403, 429, 444)) n_refused
+                   FROM access_events WHERE vid IS NOT NULL GROUP BY ip_id),
+             g AS (SELECT ip_id, count(*) n FROM error_events WHERE ip_id IS NOT NULL GROUP BY ip_id)
+        SELECT v.ip_id, v.category, v.type, v.n_categories, v.category IN ('Люди', 'Свои') AND coalesce(v.type, '') <> 'сервер сайта',
+               v.ip_id IN (SELECT ip_id FROM ppl_tmp), v.n_visits, v.n_req, v.n_pages, v.bytes, v.ts_first, v.ts_last, coalesce(e.n_days, 0), coalesce(e.n_submits, 0),
+               coalesce(e.n_refused, 0), coalesce(g.n, 0)
+        FROM v LEFT JOIN e USING (ip_id) LEFT JOIN g USING (ip_id)""")
+    con.execute('DROP TABLE ppl_tmp')
 
 
 # ---------- выводы: чтение ----------
@@ -199,10 +218,10 @@ def read(workdir, con=None):
         S = con.execute('SELECT * FROM signatures ORDER BY pos').fetchdf()
         S = S[list(SIG_COLS.values())].rename(columns={v: k for k, v in SIG_COLS.items()})[list(SIG_COLS)]
         I = con.execute('SELECT * FROM ip_measures').fetchdf()
-        MI = I[I['pos'].notna()].sort_values('pos')
+        MI = I.sort_values('pos')
         MI = MI[list(MEASURE_COLS.values())].rename(columns={v: k for k, v in MEASURE_COLS.items()})[list(MEASURE_COLS)].reset_index(drop=True)
         MI['дело'] = MI['дело'].fillna('')
-        people = sorted(I.loc[I['has_people'] == True, 'ip'].astype(str))
+        people = sorted(con.execute('SELECT i.ip FROM ip_period p JOIN dim_ip i USING (ip_id) WHERE p.has_people').fetchnumpy()['ip'].astype(str))
     finally:
         if own: con.close()
     return dict(findings=findings, профили=dict(дела=cases, состав=M.reset_index(drop=True), сигнатуры=S.reset_index(drop=True), меры_ip=MI, меры_ip_люди=people))

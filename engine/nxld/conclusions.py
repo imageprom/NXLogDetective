@@ -150,7 +150,8 @@ def write(workdir, res, con=None):
             df = _by_columns(MI, MEASURE_COLS); df['pos'] = np.arange(len(df))
             df['case_id'] = df['case_id'].where(df['case_id'].astype(str) != '', None) if 'case_id' in df else None
         else: df = pd.DataFrame({'ip': pd.Series(dtype=object)})
-        only = [ip for ip in people if ip not in set(df['ip'].astype(str))]
+        have = set(df['ip'].astype(str))   # один раз: на сотнях тысяч IP людей пересборка множества на каждый IP — минуты
+        only = [ip for ip in people if ip not in have]
         if only: df = pd.concat([df, pd.DataFrame({'ip': only})], ignore_index=True)
         if len(df):
             df['has_people'] = df['ip'].astype(str).isin(people)
